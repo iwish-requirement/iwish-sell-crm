@@ -1,0 +1,316 @@
+---
+description: 
+alwaysApply: true
+enabled: true
+updatedAt: 2025-12-12T07:27:31.888Z
+provider: 
+---
+
+可以。Zip 里这个 v0 原型我已经看过了：当前是 **Next.js App Router**，核心界面在 `app/page.tsx` 用 `activeView` 在同一页切换（Sidebar/TopBar + Dashboard/LeadKanban/PublicPool/AnalyticsDashboard/SystemSettings 组件），认证页当前路由是 `/login`、`/register`、`/pending-approval`（来自 `app/(auth)/*`）。接下来我给你一份**“贴到 AI IDE 的项目规则（Project Rules）”**，它会强约束 AI IDE：**必须按你 PRD 的准入 + RLS + RPC + 权限颗粒化**实现，同时**最大化复用你现有 v0 UI 原型组件**，禁止随意改结构。
+
+你可以原样复制到 Cursor/Windsurf/Claude Code 的 Rules / Project Instructions / System Prompt（或保存为仓库根目录 `PROJECT_RULES.md` / `.cursorrules`）。
+
+---
+
+# Iwish（AI IDE 开发规则｜严格 PRD + 复用 v0 原型）
+
+## 0. 项目事实（不可更改）
+
+1. 本仓库是 **Next.js App Router** 项目（目录 `app/`），UI 原型组件主要在 `components/`。
+2. 当前主页是单页视图切换：`app/page.tsx` 通过 `activeView` 渲染：
+
+   * `components/dashboard.tsx`
+   * `components/lead-kanban.tsx`
+   * `components/public-pool.tsx`
+   * `components/analytics-dashboard.tsx`
+   * `components/system-settings.tsx`
+3. 当前认证页在 `app/(auth)/`，实际访问路径为：
+
+   * `/login`（`app/(auth)/login/page.tsx`）
+   * `/register`（`app/(auth)/register/page.tsx`）
+   * `/pending-approval`（`app/(auth)/pending-approval/page.tsx`）
+
+> AI IDE 必须在上述事实基础上开发，禁止“大重构 UI”，只能做“路由化 + 接入 Supabase + 安全落地”的必要改动。
+
+---
+
+## 1. 总原则（Hard Rules）
+
+1. **PRD 是唯一事实源**：任何表结构、RLS、RPC、权限点、账号状态机、准入逻辑必须以 PRD 为准。
+2. **UI 原型优先复用**：必须复用 `components/` 内现有 UI（Sidebar/TopBar/SystemSettings/LeadKanban 等），不允许重写同样的 UI；允许把数据源从 mock 切换为真实数据。
+3. **后端强制安全**：权限/范围/字段级控制必须由 **Postgres RLS + 安全视图 + RPC** 强制；前端仅做“入口可见性/按钮禁用/体验提示”，不能作为安全边界。
+4. **不加需求**：不得新增 PRD 未定义的业务模块；如果为了落地“公海池/业务规则”等原型已存在内容需要补权限点或字段，可在 PRD 语义范围内补齐，但必须记录变更。
+5. **必须审计**：审批、禁用、权限变更、线索分配/转移/关闭、敏感字段变更等必须写 `audit_logs`。
+
+---
+
+## 2. 路由与页面（必须满足 PRD 语义，同时兼容当前原型）
+
+### 2.1 PRD 语义路由（必须可访问）
+
+必须提供以下路由（即使原型当前没有，也必须新增路由壳层来承接）：
+
+**Auth**
+
+* `/auth/login`
+* `/auth/register`
+* `/auth/forgot-password`
+* `/auth/reset-password`
+
+**Onboarding**
+
+* `/onboarding/pending`
+* `/onboarding/disabled`
+* `/onboarding/rejected`
+
+**App**
+
+* `/dashboard`
+* `/leads`
+* `/leads/[id]`
+* `/settings`
+* `/settings/organization`
+* `/settings/organization/pending`
+* `/settings/security`
+* `/audit`
+* `/reports`
+
+### 2.2 原型现有路由（必须继续可用）
+
+以下路由必须保留可用（不能 404）：
+
+* `/login` `/register` `/pending-approval` `/`
+
+### 2.3 路由兼容方式（强制）
+
+* **禁止复制粘贴整页代码到多处**。必须使用“壳路由 + 复用组件”的方式兼容：
+
+  * 新建 `app/auth/login/page.tsx` 直接 `export { default } from "@/app/(auth)/login/page"`（或抽成独立组件再复用）
+  * 同理为 `/auth/register`、`/onboarding/pending`（映射当前 `/pending-approval`）、其他 onboarding 页
+* `app/page.tsx` 可以保留作为“默认入口”，但必须改为 **重定向到 `/dashboard`** 或渲染 `/dashboard` 同款组件（取决于最终路由方案），且必须受准入与鉴权保护。
+
+---
+
+## 3. 准入与账号生命周期（必须实现）
+
+### 3.1 profiles.status 状态机（Hard Contract）
+
+* `pending`：只能访问 onboarding/pending（以及本人 profile 查询）
+* `active`：可进入系统（受权限与 scope 约束）
+* `disabled`：必须强制登出并提示禁用
+* `rejected`：只能访问 onboarding/rejected（可展示驳回原因）
+
+### 3.2 注册流程（必须）
+
+* 注册字段：`email + password + full_name + phone`
+* 注册后必须创建 profile，默认 `status='pending'`（Trigger 自动插入为首选）
+* 注册成功后跳转 `/onboarding/pending`
+
+### 3.3 登录拦截（必须：Next.js Middleware）
+
+* 未登录访问受保护路由 → `/auth/login`
+* 登录后读取 profile.status 并强制跳转：
+
+  * pending → `/onboarding/pending`
+  * disabled → 清 session → `/onboarding/disabled`
+  * rejected → `/onboarding/rejected`
+  * active → 放行
+
+> 禁止仅在客户端 useEffect 做拦截而不做 Middleware。
+
+---
+
+## 4. 数据访问安全（RLS + View + RPC 强制）
+
+### 4.1 必须启用 RLS 的表
+
+`profiles, profiles_public, leads, lead_notes, teams, roles, permissions, role_permissions, user_permissions, field_policies, custom_scope_sets, audit_logs`
+以上所有表必须开启 RLS，并满足 PRD：
+
+* `pending/disabled/rejected`：禁止读取任何业务表（leads/teams/settings 等）
+* `profiles_public`：active 用户可读全员公开信息（用于下拉选人）
+* `leads`：按 permission + scope 控制行级访问
+
+### 4.2 读取数据的唯一允许入口（Hard Rule）
+
+* 线索读取：必须从 `public.leads_secure_view` 读取（禁止直接 select `public.leads` 将敏感字段原值返回前端）
+* 人员下拉：必须从 `public.profiles_public` 读取（禁止对所有 active 放开 `profiles` 的全字段 select）
+
+### 4.3 写操作的唯一允许入口（Hard Rule）
+
+以下必须 RPC（禁止直接 update 关键字段）：
+
+* `rpc_lead_create`
+* `rpc_lead_update`
+* `rpc_lead_assign`
+* `rpc_lead_transfer`
+* `rpc_lead_close`
+* `rpc_auth_approve / rpc_auth_reject / rpc_auth_disable / rpc_auth_restore`
+* 角色权限/用户覆盖/字段策略/scope set 的所有增删改（可拆多个 RPC，但必须后端校验权限并审计）
+
+### 4.4 字段级控制（必须达成）
+
+* `leads.fields.read_sensitive` 不具备时：电话/邮箱脱敏、预算/地址为 null（由 secure view 输出）
+* `leads.fields.write_sensitive` 不具备时：RPC 更新电话/邮箱/预算/地址必须拒绝
+* internal 字段同理：`leads.fields.read_internal/write_internal`
+
+---
+
+## 5. 权限系统（可配置 + 颗粒级：必须实现并替换原型的“布尔权限”）
+
+### 5.1 权限计算优先级（Hard Contract）
+
+1. user deny（未过期）
+2. user allow（未过期）
+3. role deny
+4. role allow
+5. 默认 deny
+
+### 5.2 Scope 必须可配置（Hard Contract）
+
+每个 permission 都必须支持：`self / team / org / custom`
+`custom` 必须通过 `custom_scope_sets` + `scope_rule.scope_set_id` 生效。
+
+### 5.3 原型 UI（SystemSettings）到 PRD 权限点的映射（必须按此落地）
+
+原型 `components/system-settings.tsx` 中 `Role.permissions` 里的布尔字段，必须映射为 PRD 权限点（不得继续停留在前端 mock 布尔开关）：
+
+| 原型开关/字段                 | 必须映射的权限点（permission key）                                                      | 说明                         |
+| ----------------------- | ----------------------------------------------------------------------------- | -------------------------- |
+| dataScope: all/team/own | 影响 `leads.read/leads.update/leads.assign...` 的 `scope_type`                   | all=org，team=team，own=self |
+| viewUnmaskedPhone       | `leads.fields.read_sensitive`                                                 | 决定 secure view 是否脱敏        |
+| exportData              | `leads.export` +（可选）`reports.export`                                          | 导出必须写审计                    |
+| assignLeads             | `leads.assign`                                                                | 仅同范围分配                     |
+| deleteLeads             | `leads.delete`                                                                | 删除通常仅 admin                |
+| returnToPool            | `leads.pool.return`（如你 PRD 已定义则用 PRD key；否则新增该 key 但必须同步 seed+配置 UI+RLS/RPC）  | “退回公海”属于业务动作，必须受权限控制并审计    |
+| manageTeams             | `teams.manage` + `profiles.manage`（必要时拆分）                                     | 组织与成员管理                    |
+| editSettings            | `settings.*.manage`（至少 `settings.security.manage`、`settings.pipeline.manage`） | 设置项必须分域                    |
+
+> 若 PRD 中未出现 `leads.pool.return`，但 UI 原型明确存在“公海池/退回公海”语义，则允许新增该 permission key；但必须：
+>
+> 1. 写入 `permissions` seed
+> 2. 提供 role 配置入口
+> 3. 在 RPC/RLS 中强制校验
+> 4. 写审计
+
+### 5.4 必须提供的配置后台能力（落在现有 SystemSettings UI 上）
+
+SystemSettings 中必须实现：
+
+* 待审核列表：approve（必选 team+role）、reject（必填 reason）
+* 角色权限矩阵：Allow/Deny/Unset + scope 选择 + custom scope set 绑定
+* 用户覆盖权限：allow/deny + expires_at + reason
+* 字段策略：field_policies 可配置
+* scope sets：custom_scope_sets 可配置
+* 审计日志：audit_logs 列表 + 筛选（可放 `/audit`）
+
+---
+
+## 6. 审计（Hard Rule）
+
+以下动作必须写 `audit_logs`（before/after/actor/target/reason）：
+
+* 审批/驳回/禁用/恢复用户
+* 修改用户 team/role
+* 修改 role_permissions / user_permissions / field_policies / custom_scope_sets / settings
+* leads：create/update（含敏感字段）、assign/transfer/close、pool.return、export、bulk
+
+---
+
+## 7. 代码与目录约束（针对本仓库）
+
+### 7.1 必须保留并复用的 UI 组件（禁止重写）
+
+* `components/sidebar.tsx`
+* `components/top-bar.tsx`
+* `components/system-settings.tsx`
+* `components/lead-kanban.tsx`
+* `components/public-pool.tsx`
+* `components/dashboard.tsx`
+* `components/analytics-dashboard.tsx`
+
+允许改动范围：
+
+* 将“onViewChange + activeView”改为“基于 pathname 的路由高亮 + Link 跳转”
+* 将 mock 数据改为 Supabase 查询结果
+* 将按钮事件改为 RPC 调用
+* 增加必要的 loading/error/empty state（优先复用现有 skeleton）
+
+### 7.2 必须新增的基础设施目录（统一规范）
+
+* `src/lib/supabase/`：supabase client/ssr/middleware helper
+* `src/lib/auth/`：获取 profile、校验 status、重定向工具
+* `supabase/migrations/`：SQL 迁移（DDL/RLS/Functions/Views/RPC/Seed 分文件）
+* `src/lib/rpc/`：RPC 调用封装（类型 + 错误码解析）
+
+> 如果当前仓库没有 `src/`，允许直接用 `lib/` 放在根目录，但必须保持结构一致性。
+
+### 7.3 依赖约束
+
+允许新增（且建议新增）：
+
+* `@supabase/supabase-js`
+* `@supabase/ssr`
+
+禁止新增：
+
+* Prisma / Drizzle / 任意额外后端 ORM（PRD 明确使用 Supabase Postgres + RLS）
+* 未经要求的状态管理库（Redux 等）
+
+---
+
+## 8. 实现顺序（强制：先安全后功能）
+
+1. **Supabase SQL**：types/tables → trigger → functions → views → RLS policies → RPC → seed
+2. **Middleware**：鉴权 + status 拦截
+3. **Auth 页面接 Supabase**：login/register/forgot/reset
+4. **Onboarding 页面**：pending/disabled/rejected
+5. **Leads（读 view + 写 RPC）**：列表/详情/新增/编辑/分配/转移/关闭/公海
+6. **Settings**：审批、组织架构、权限矩阵、字段策略、scope sets
+7. **Audit**：审计页
+8. **Reports**：分析页改为真实数据（可先留占位，但必须受权限控制）
+
+---
+
+## 9. AI IDE 每次输出与自检（强制执行）
+
+### 9.1 每次生成代码前必须输出
+
+* **Plan**：本次覆盖 PRD 哪些章节 + 本仓库哪些组件/路由
+* **Files**：将修改/新增的文件清单
+* **DB**：需要执行的 SQL 文件列表（若无 DB 改动需说明原因）
+* **Validation**：至少 5 条可执行自测（含 2 条“应被拒绝”的权限用例）
+
+### 9.2 Definition of Done（本项目统一完成标准）
+
+一个功能点算完成，必须同时满足：
+
+1. UI 可用（对齐原型）
+2. 后端强制（RLS/RPC/view 生效）
+3. 无权限访问能被拒绝（真实拒绝，不是前端隐藏）
+4. 关键动作写审计
+5. 有最小自测用例脚本/步骤说明
+
+---
+
+## 10. Hard NO（任何情况下都禁止）
+
+* 直接从 `public.leads` 读取敏感字段原值返回前端（必须 secure view）
+* 直接 update `owner_id/team_id`（必须 RPC：assign/transfer/pool return）
+* 仅用前端权限判断作为安全边界
+* 新增 permission key 但不做 seed/管理页/后端校验/审计
+* pending/disabled/rejected 能读到任何业务数据
+* 把“审批/禁用/权限变更”放在前端假数据里不落库
+
+---
+
+## 11. 变更记录（必须）
+
+任何为了落地必须新增/调整的点（例如：公海池权限 key、字段映射），必须在仓库新增 `CHANGELOG_AI.md`，每次写入：
+
+* 变更点
+* 变更原因（对应 PRD 或原型）
+* 影响范围（DB/RLS/RPC/UI）
+* 回滚方式（如适用）
+
+---
