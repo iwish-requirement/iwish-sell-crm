@@ -5,7 +5,97 @@
 
 ## 2025-12-30
 
+### leads-lifecycle-stage-limits: 线索生命周期阶段约束与推进规则
+
+**变更点**
+- 新增 `supabase/migrations/025_lead_stage_lifecycle.sql`：
+  - 将历史数据中 `stage = 'new'` 的线索统一迁移为 `L1`，与当前前端默认阶段保持一致，避免旧数据游离在标准生命周期之外；
+  - 为 `public.leads.stage` 增加 `leads_stage_valid` 校验约束，仅允许 `L1/L2/L3/L4/Won` 五个阶段值，并将默认值设置为 `L1`，将生命周期“写死”在数据库层；
+  - 重新定义 `iwish.rpc_lead_update(uuid, jsonb, text)` 与 `public.rpc_lead_update` 包装：
+    - 在更新前对阶段变更做校验，禁止在通用更新 RPC 中对已关闭线索修改阶段；
+    - 建立简单的阶段顺序（L1→L2→L3→L4→Won），只允许“向前”推进，禁止任何形式的降级（否则抛出 `ERR_INVALID_STAGE_TRANSITION:cannot_downgrade`）；
+    - 若检测到阶段从低阶推进到高阶，则强制要求 `p_reason` 非空（否则抛出 `ERR_VALIDATION:stage_reason_required`），确保每次升级都有审计理由；
+    - 保留并复用原有字段级权限校验（敏感字段、内部字段）与“退回公海”专有权限 `leads.pool.return` 的逻辑。
+  - 重新定义 `iwish.rpc_lead_close(uuid, text, text)`：
+    - 仍然要求 `p_result` 只能为 `won/lost`，并通过 `leads.close` 权限与 `iwish.in_scope_for_lead` 进行范围校验；
+    - 在关闭线索时，将 `status` 置为 `closed`，并在 `p_result = 'won'` 时自动将 `stage` 更新为 `Won`，使已成交线索在生命周期与看板上落到“成交”阶段，而丢单线索保留原阶段便于复盘；
+    - 所有关闭操作继续写入 `audit_logs`，包含前后镜像与关闭原因。
+
+**变更原因（对应 PRD/原型）**
+- PRD 要求线索生命周期采用标准化阶段（L1 询盘 → L2 意向 → L3 关键意向 → L4 谈判 → 成交），且阶段推进必须“有凭有据”，不可随意来回拖动；
+- 现有实现中 `stage` 为自由文本，既可以降级也缺少后端级约束，前端看板虽然有 L1–L4+成交 UI，但无法防止绕过 UI 的错误写入或脚本修改；
+- 通过在 DB 层限制合法阶段集合、在 RPC 中禁止降级并强制记录升级原因，同时在成交时自动把阶段落到 `Won`，可以让生命周期成为一个可审计、可依赖的“骨架”，为后续在设置页配置“阶段必填字段规则”和在报表中做 L1→L4→成交漏斗分析提供可靠基础。
+
+**影响范围**
+- DB / RLS / RPC：
+  - `public.leads.stage` 现在受 `leads_stage_valid` 约束，任何直接 SQL 或 RPC 试图写入非 L1–L4/Won 的阶段值都会失败，避免出现非标准状态；
+  - `iwish.rpc_lead_update` 与 `iwish.rpc_lead_close` 的调用签名保持不变（前者仍为 `(uuid, jsonb, text)`，后者为 `(uuid, text, text)`），但在阶段相关更新时会多抛出几类业务错误码（例如阶段无效、禁止降级、缺少推进原因）；
+  - 不修改现有 RLS 与权限点集合，只在现有权限体系之上增强了生命周期的状态机和审计约束。
+- 前端 / 业务体验：
+  - `components/lead-kanban.tsx` 中“推进阶段”按钮本身已经要求用户填写推进原因，并通过 `p_reason` 传给 `rpc_lead_update`，与本次后端约束天然兼容；
+  - 成交/丢单操作继续通过 `rpc_lead_close` 完成，但成交后该线索会自动进入“成交”列，并从风险提醒统计中排除，更贴近销售看板的直觉；
+  - 若后续有脚本或后台工具试图对 closed 线索重新调整阶段，将被数据库拒绝，避免生命周期被静默篡改。
+
+**回滚方式**
+- 如需回滚生命周期约束，可在新的迁移中：
+  - 执行 `alter table public.leads drop constraint if exists leads_stage_valid;` 取消阶段合法值校验，并视需要将默认值改回 `new` 或其他值；
+  - 使用 `create or replace function` 将 `iwish.rpc_lead_update` 与 `iwish.rpc_lead_close` 恢复为本次修改前的定义（可从 Git 历史或 004/017/023 迁移文件中还原）；
+  - 如不再需要 `Won` 阶段，也可以配合前端调整，从看板阶段配置中移除对应列。
+
+### leads-structured-fields: 线索结构化字段（客户级别、来源分层、标签）
+
+### leads-grade-and-source-settings: 客户级别与来源渠道配置默认种子
+
+
+**变更点**
+- 新增 `supabase/migrations/024_leads_grade_and_source_settings.sql`：
+  - 向 `public.settings` 中插入 `leads.grade_definitions` 配置项（仅在不存在时插入），包含 S/A/B/C 四个客户级别的 `key/label/description`，分别描述“强成交 / 立即跟进、重点培育 / 近期可成交、普通意向 / 需持续教育、低优先级 / 长期培育”的业务含义；
+  - 向 `public.settings` 中插入 `leads.source_tree` 配置项（仅在不存在时插入），以树形 JSON 形式预置一级渠道（广告投放、内容与私域、线下活动、官网与表单、渠道合作/代理商、老客与转介绍、内部线索）及其二级子项（如抖音广告、视频号广告、展会、官网表单等），用于前端线索录入时提供标准的来源分层选项。
+
+**变更原因（对应 PRD/原型）**
+- PRD 要求客户级别 S/A/B/C 与来源渠道枚举都应“可配置”，而不是写死在代码里，以便随着业务发展调整各级别说明和渠道列表；
+- 现有系统中尚未存在这两类配置项，导致线索分层和来源统计只能依赖自由文本或硬编码判断，不利于后续按级别/来源维度做意向分层、保护策略和 ROI 分析；
+- 通过在 `settings` 中预置这两类配置，后续只需在 SystemSettings 中提供编辑 UI，即可让你或上级在不改代码的情况下，灵活调整客户级别文案与渠道树结构。
+
+**影响范围**
+- DB / 配置：
+  - 仅向 `public.settings` 表插入两条新配置记录，使用 `on conflict (key) do nothing` 保证不会覆盖你手动调整后的配置；
+  - 触发 `iwish.audit_settings_change` 审计函数，在 `audit_logs` 中记录新增配置，满足“设置变更必须可追溯”的要求。
+- UI / 业务逻辑：
+  - 当前前端尚未读取 `leads.grade_definitions` 和 `leads.source_tree`，所有现有页面与接口行为保持不变；
+  - 为后续在 SystemSettings 中增加“客户级别配置”和“来源渠道配置”入口、以及在线索表单中用下拉选择替代自由文本输入提供了数据基础。
+
+**回滚方式**
+- 如需回滚，可在后续迁移中执行 `delete from public.settings where key in ('leads.grade_definitions','leads.source_tree');` 删除这两条配置记录，并视需要删除 `024_leads_grade_and_source_settings.sql` 迁移文件或在数据库层手动清理；
+- 回滚后，线索结构字段 `customer_grade/source_level1/source_level2` 仍然存在，但前端若开始依赖这些配置项，需要对应恢复或改为使用本地枚举。
+
+
+**变更点**
+- 新增 `supabase/migrations/023_leads_structured_fields.sql`：
+  - 为 `public.leads` 增加 `customer_grade text`（S/A/B/C 客户级别）、`source_level1 text`（一级来源渠道）、`source_level2 text`（二级活动/行业/合作方）以及 `tags text[]`（标签数组，默认空数组），用于支撑后续的客户分层、来源分层与多标签管理；
+  - 基于现有实现重新定义 `public.leads_secure_view`，在保持电话/邮箱/地址/预算脱敏逻辑不变的前提下，追加暴露 `customer_grade/source_level1/source_level2/tags` 字段，避免影响依赖旧列顺序的客户端；
+  - 基于 `017_lead_stage_reason_audit.sql` 的版本重写 `iwish.rpc_lead_update`，在保留退回公海专有权限与 `p_reason` 审计原因的基础上，支持通过 `patch` 更新上述新字段（含 tags 数组），并保证仍然走同一套权限与审计流程。
+
+**变更原因（对应 PRD/原型）**
+- 上级在 PRD 中强调需要按“客户级别 S/A/B/C + 标签 + 来源渠道（一级/二级）”进行结构化管理，以支撑后续按级别、渠道、责任人维度的意向分层、转化率与 ROI 分析；
+- 现有实现仅有单一 `source` 文本字段与少量基础信息，无法直接表达来源层级、客户分级与多标签，导致在报表和业务规则（比如不同等级不同保护期）上需要大量硬编码判断，不利于后续扩展；
+- 通过在 DB 层添加结构化字段并在 secure view 中统一暴露，为之后在前端表单/看板/报表中逐步接入这些字段、以及在 RLS/RPC 中基于来源/级别做更精细控制打下基础。
+
+**影响范围**
+- DB / RLS / 视图：
+  - `public.leads` 表结构向后兼容扩展，旧数据的 `customer_grade/source_level* /tags` 默认为 null/空数组，不影响现有查询与统计；
+  - `public.leads_secure_view` 列表尾部新增 4 个字段，保持敏感字段脱敏策略与现有 RLS 策略不变，所有前端仍通过视图访问线索数据，不会绕开字段级控制；
+- RPC：
+  - `iwish.rpc_lead_update` 的签名保持为 `(uuid, jsonb, text)`，所有已有调用方无需修改；
+  - 新增只是在 update 语句中允许通过 `patch` 写入 `customer_grade/source_level1/source_level2/tags`，且继续复用原有的权限校验与审计逻辑。
+
+**回滚方式**
+- DB：
+  - 如需彻底回滚，可在后续迁移中执行 `alter table public.leads drop column customer_grade, drop column source_level1, drop column source_level2, drop column tags;`，并重新创建 `public.leads_secure_view` 与 `iwish.rpc_lead_update` 为 017 之前的定义；
+  - 或直接通过 Git 回滚 `023_leads_structured_fields.sql` 并重新运行迁移，使数据库恢复到本次变更前的结构。
+
 ### roles-role-type-and-recommended-templates: 角色类型字段与推荐权限模板
+
 
 **变更点**
 - 新增 `supabase/migrations/022_roles_role_type_and_templates.sql`：
