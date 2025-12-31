@@ -84,6 +84,74 @@ export function mapRpcError(
 
   const validation = rawMessage.match(/ERR_VALIDATION:([a-zA-Z0-9_.-]+)/)
   if (validation) {
+    const code = validation[1]
+
+    if (code === "assign_cross_team_use_transfer") {
+      return {
+        kind: "validation",
+        title: "请使用“跨团队转移”",
+        description:
+          "当前操作会把线索从一个团队分配到另一个团队，请改用“跨团队转移”功能，确保团队归属和权限范围正确。",
+        canRetry: false,
+        rawMessage,
+      }
+    }
+
+    if (code === "assign_requires_team") {
+      return {
+        kind: "validation",
+        title: "目标成员未配置团队",
+        description:
+          "被分配的成员还没有关联到任何团队，请先在「系统设置 - 组织与成员」中为其设置团队后再尝试分配。",
+        canRetry: false,
+        rawMessage,
+      }
+    }
+
+    if (code === "transfer_requires_team") {
+      return {
+        kind: "validation",
+        title: "新团队信息不完整",
+        description:
+          "跨团队转移线索时需要为新负责人选择所在团队，请在操作面板中补全团队信息后再试。",
+        canRetry: false,
+        rawMessage,
+      }
+    }
+
+    if (code === "new_owner_team_mismatch") {
+      return {
+        kind: "validation",
+        title: "新负责人不属于目标团队",
+        description:
+          "你选择的新负责人所在团队与目标团队不一致，请重新选择团队或负责人，保证两者属于同一团队。",
+        canRetry: false,
+        rawMessage,
+      }
+    }
+
+    if (code === "owner_requires_team") {
+      return {
+        kind: "validation",
+        title: "负责人未配置团队",
+        description:
+          "线索负责人还没有关联到任何团队，请先在「系统设置 - 组织与成员」中为其设置团队后再创建或更新线索。",
+        canRetry: false,
+        rawMessage,
+      }
+    }
+
+    if (code === "team_mismatch_on_create") {
+      return {
+        kind: "validation",
+        title: "创建线索超出团队范围",
+        description:
+          "在“本人/本团队数据”范围下，只能为本团队创建线索，请确认负责人归属团队或调整数据范围后再试。",
+        canRetry: false,
+        rawMessage,
+      }
+    }
+
     return {
       kind: "validation",
       title: "参数校验失败",
@@ -92,6 +160,7 @@ export function mapRpcError(
       rawMessage,
     }
   }
+
 
   const invalidStatus = rawMessage.match(/ERR_INVALID_STATUS:([a-zA-Z0-9_.-]+)/)
   if (invalidStatus) {

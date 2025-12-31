@@ -3,7 +3,47 @@
 > 本文件用于记录 AI 助手在本仓库内做出的重要结构/逻辑变更，方便你审计、回顾与回滚。
 > 按时间倒序追加；同一天多次修改可在同一日期下追加小节。
 
+## 2025-12-31
+
+### leads-team-and-owner-consistency: 线索团队归属与负责人一致性收紧
+
+**变更点**
+- 新增 `supabase/migrations/033_leads_team_consistency_enforcement.sql`：
+  - 将 `iwish.rpc_lead_create` 改为永远根据 `owner_id` 推导 `team_id`，不再信任前端传入的团队字段，并在 `self/team` scope 下强制要求“创建人和负责人在同一团队”；
+  - 将 `iwish.rpc_lead_assign` 收紧为仅允许“同团队内换负责人”，若尝试跨团队分配则抛出 `ERR_VALIDATION:assign_cross_team_use_transfer`，引导使用跨团队转移；
+  - 将 `iwish.rpc_lead_transfer` 收紧为“新负责人必须属于目标团队”，否则抛出 `ERR_VALIDATION:new_owner_team_mismatch`，同时统一更新 `team_id + owner_id` 并写入审计；
+  - 扩展 `iwish.rpc_profile_update_org`，在成员调组时自动把其名下所有未关闭线索的 `team_id` 一并迁移到新团队，避免再次依赖一次性脚本修脏数据；
+  - 新增触发器 `iwish.leads_sync_team_with_owner`，对所有非公海/非关闭线索，在 `owner_id/status` 变更时自动将 `team_id` 同步为当前负责人团队，作为防御性兜底。
+- 更新 `lib/rpc-error-mapper.ts`：
+  - 针对上述 RPC 抛出的 `ERR_VALIDATION:*` 错误码（如 `assign_cross_team_use_transfer/assign_requires_team/new_owner_team_mismatch/team_mismatch_on_create/owner_requires_team/transfer_requires_team`），返回更贴近业务的中文文案，明确提示“请使用跨团队转移”“先为成员配置团队”等具体操作建议，而不再只是笼统的“参数校验失败”。
+- 更新 `components/lead-kanban.tsx` 与 `components/public-pool.tsx` 所在的交互：
+  - 保留 Supabase Realtime 订阅，修复了详情抽屉在同步最新数据时的无限更新问题，并在列表刷新时同步更新已打开的详情内容；
+  - 调整看板加载逻辑，仅在首次进入页面时显示骨架屏，后续 Realtime 或轮询触发的数据刷新都在后台静默完成，避免整页频繁“闪一下”的非产品级体验；
+  - 为公海池和看板的分配/认领/删除等操作统一使用 `mapRpcError` 的增强文案，让权限/范围/校验失败时，前端提示更符合业务语义。
+
+**变更原因（对应 PRD/原型）**
+- PRD 明确要求“线索归属团队与负责人必须在后端层面强一致”，不能通过 UI 或脚本制造出“看起来归我团队、实际 team_id 还在别的团队”的脏状态，尤其是在人员调组、跨团队转移和公海往返这些高风险操作下；
+- 之前依赖一次性修复脚本 + 宽松的 assign/transfer 规则，容易在团队结构变化后再次出现 out-of-scope 报错，本次通过 RLS/RPC/触发器从结构上锁死“team_id = owner.team”的不变式；
+- 在多人实时协作场景下，原有 Realtime 刷新会让整个看板频繁切换骨架屏，给人“页面一直在刷新”的不稳定感，需要通过“首屏 skeleton + 后台静默刷新”的方式，做到既实时又不打断视线；
+- 对于这些更严格的校验和权限规则，产品希望在 UI 中用更贴近业务的话解释（例如明确告诉销售“跨团队分配请用转移”，而不是一行技术向错误码），降低学习成本。
+
+**影响范围**
+- DB / RLS / RPC：
+  - 所有线索创建/指派/跨团队转移/成员调组入口现在都会确保非公海线索满足 `team_id = owner 当前团队`，并在违反规则时抛出结构化错误码供前端解析，`in_scope_for_lead` 与 RLS 的 team 范围判定因此更可靠；
+  - 触发器 `leads_sync_team_with_owner` 提供了“最后一道防线”，即便有遗漏入口错误写入，也会在写入时自动纠正 team_id，减少人工修复的机会；
+- 前端 / 用户体验：
+  - 看板与公海在多人操作时会在几秒内自动同步最新数据，但不会再整页闪烁，仅更新受影响的卡片和详情内容；
+  - 当因为团队配置缺失或错误用法（用 assign 做跨团队分配）导致操作失败时，提示文案会直接告诉用户应该怎么做，而不是让你去猜错误含义；
+- 审计与排查：
+  - 所有调组、跨团队转移、公海退回/认领等操作仍然写入 `audit_logs`，结合新的错误码和更清晰的前端提示，便于后续定位问题来源和回溯历史变动。
+
+**回滚方式**
+- 如需回滚团队一致性收紧，可在后续迁移中用 `create or replace function` 恢复 `iwish.rpc_lead_create/iwish.rpc_lead_assign/iwish.rpc_lead_transfer/iwish.rpc_profile_update_org` 为本次修改前版本，并删除触发器 `trg_leads_sync_team_with_owner` 与函数 `iwish.leads_sync_team_with_owner`；
+- 如不再需要细分的校验错误文案，可在 `lib/rpc-error-mapper.ts` 中移除针对 `ERR_VALIDATION:*` 的特例分支，让所有校验错误重新回退为统一的“参数校验失败”提示；
+- 若认为 Realtime 行为不再需要，也可在 `components/lead-kanban.tsx` 和 `components/public-pool.tsx` 中移除订阅与静默刷新逻辑，改为完全手动刷新（不推荐，会明显降低多人协作体验）。
+
 ## 2025-12-30
+
 
 ### leads-lifecycle-stage-limits: 线索生命周期阶段约束与推进规则
 

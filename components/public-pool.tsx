@@ -54,6 +54,8 @@ interface PoolLead {
   returnReason: string
   daysInPool: number
   returnedAt: string
+  returnedById: string | null
+  importedById: string | null
 }
 
 interface SalesRep {
@@ -186,6 +188,7 @@ export function PublicPool() {
   const [searchQuery, setSearchQuery] = useState("")
   const [importDialogOpen, setImportDialogOpen] = useState(false)
   const [assignDialogOpen, setAssignDialogOpen] = useState(false)
+  const [claimingLeadId, setClaimingLeadId] = useState<string | null>(null)
   const [selectedLeads, setSelectedLeads] = useState<string[]>([])
   const [assignToRep, setAssignToRep] = useState("")
   const [assignmentNote, setAssignmentNote] = useState("")
@@ -231,7 +234,7 @@ export function PublicPool() {
         const { data, error } = await supabase
           .from("leads_secure_view")
           .select(
-            "id, name, stage, status, source, customer_name, customer_phone, budget, updated_at",
+            "id, name, stage, status, source, customer_name, customer_phone, budget, updated_at, created_by",
           )
           .eq("status", "pool")
           .order("updated_at", { ascending: false })
@@ -259,13 +262,14 @@ export function PublicPool() {
           {
             reason: string | null
             returnedAt: string | null
+            returnedById: string | null
           }
         > = {}
 
         if (ids.length > 0) {
           const { data: auditRows, error: auditError } = await supabase
             .from("audit_logs")
-            .select("target_id, reason, created_at, action")
+            .select("target_id, reason, created_at, action, actor_id")
             .eq("target_type", "lead")
             .in("action", ["return_lead_to_pool"])
             .in("target_id", ids)
@@ -280,6 +284,7 @@ export function PublicPool() {
                 reasonsByLeadId[leadId] = {
                   reason: ((row as any).reason as string | null) ?? null,
                   returnedAt: ((row as any).created_at as string | null) ?? null,
+                  returnedById: ((row as any).actor_id as string | null) ?? null,
                 }
               }
             }
@@ -323,6 +328,8 @@ export function PublicPool() {
                 returnedAtDate != null
                   ? returnedAtDate.toISOString().split("T")[0]
                   : "",
+              returnedById: reasonInfo?.returnedById ?? null,
+              importedById: (row.created_by as string | null) ?? null,
             }
           }) ?? []
 
@@ -491,6 +498,42 @@ export function PublicPool() {
     }
   }, [reloadToken, retryLoad])
 
+  // 订阅 Supabase Realtime，监听线索状态进出公海池，实现公海池的实时刷新
+  useEffect(() => {
+    const supabase = getBrowserSupabaseClient()
+
+    const channel = supabase
+      .channel("public-pool-realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "leads" },
+        (payload: { new: any; old: any }) => {
+          const nextStatus = (payload.new as any)?.status as string | null | undefined
+          const prevStatus = (payload.old as any)?.status as string | null | undefined
+
+          // 只在与公海池相关的状态变更时刷新：
+          // - 有线索进入公海（status 变为 pool）
+          // - 有线索从公海被认领/分配走（status 从 pool 变为其他）
+          if (nextStatus === "pool" || prevStatus === "pool") {
+            retryLoad()
+          }
+        },
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [retryLoad])
+
+  const repNameById = useMemo(() => {
+    const map: Record<string, string> = {}
+    salesReps.forEach((rep) => {
+      map[rep.id] = rep.name
+    })
+    return map
+  }, [salesReps])
+
   const filteredLeads = leads.filter(
     (lead) =>
       lead.company.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -581,10 +624,51 @@ export function PublicPool() {
   const isSomeSelected = selectedLeads.length > 0 && selectedLeads.length < filteredLeads.length
 
   const handleAssign = (leadId?: string) => {
+    if (!canAssignLeads) {
+      toast.error("没有分配线索的权限", {
+        description: "请联系管理员在系统设置 → 角色权限中开启“线索分配/认领”相关权限。",
+      })
+      return
+    }
+
     if (leadId) {
       setSelectedLeads([leadId])
     }
     setAssignDialogOpen(true)
+  }
+
+  const handleClaimToMe = async (leadId: string) => {
+    if (!leadId) return
+
+    try {
+      setClaimingLeadId(leadId)
+      const supabase = getBrowserSupabaseClient()
+      const { error } = await supabase.rpc("rpc_lead_claim_from_pool", {
+        p_lead_id: leadId,
+        p_reason: "从公海池认领到我的线索",
+      })
+
+      if (error) {
+        const friendly = mapRpcError(error, {
+          title: "认领失败",
+          description: "从公海池认领线索失败，请稍后重试",
+        })
+        toast.error(friendly.title, { description: friendly.description })
+        return
+      }
+
+      setLeads((prev) => prev.filter((l) => l.id !== leadId))
+      toast.success("认领成功", {
+        description: "该线索已进入“我的线索”，并归属到当前账号",
+      })
+    } catch (err) {
+      console.error("Failed to claim lead from pool", err)
+      toast.error("认领失败", {
+        description: "请稍后重试或联系管理员",
+      })
+    } finally {
+      setClaimingLeadId(null)
+    }
   }
 
   const confirmAssignment = async () => {
@@ -977,13 +1061,42 @@ export function PublicPool() {
           <p className="text-sm text-muted-foreground mt-1">共 {leads.length} 条待分配线索</p>
         </div>
         <div className="flex items-center gap-3">
+          {canAssignLeads && (
+            <Button
+              variant="default"
+              disabled={selectedLeads.length === 0}
+              onClick={() => {
+                if (selectedLeads.length === 0) return
+                handleAssign()
+              }}
+            >
+              <Users className="w-4 h-4 mr-2" />
+              分配给销售 {selectedLeads.length > 0 && `(${selectedLeads.length})`}
+            </Button>
+          )}
           <Button
-            variant="default"
+            variant="outline"
             disabled={selectedLeads.length === 0 || !canAssignLeads}
-            onClick={() => handleAssign()}
+            onClick={async () => {
+              if (!canAssignLeads) {
+                toast.error("没有认领线索的权限", {
+                  description:
+                    "请联系管理员在系统设置 → 角色权限中开启“线索分配/认领”相关权限。",
+                })
+                return
+              }
+
+              if (selectedLeads.length === 1) {
+                await handleClaimToMe(selectedLeads[0]!)
+              } else {
+                for (const id of selectedLeads) {
+                  await handleClaimToMe(id)
+                }
+              }
+            }}
           >
-            <Users className="w-4 h-4 mr-2" />
-            批量分配 {selectedLeads.length > 0 && `(${selectedLeads.length})`}
+            <UserPlus className="w-4 h-4 mr-2" />
+            认领到我的线索 {selectedLeads.length > 0 && `(${selectedLeads.length})`}
           </Button>
           <Button variant="outline" onClick={() => setImportDialogOpen(true)}>
             <Upload className="w-4 h-4 mr-2" />
@@ -1248,6 +1361,7 @@ export function PublicPool() {
                 <TableHead className="min-w-[80px]">预算</TableHead>
                 <TableHead className="min-w-[100px]">最后阶段</TableHead>
                 <TableHead className="min-w-[120px]">退回原因</TableHead>
+                <TableHead className="min-w-[120px]">最近退回人</TableHead>
                 <TableHead className="text-center min-w-[100px]">
                   <div className="flex items-center justify-center gap-1">
                     <Clock className="w-4 h-4" />
@@ -1278,6 +1392,17 @@ export function PublicPool() {
                     <Badge variant="secondary">{lead.lastStage}</Badge>
                   </TableCell>
                   <TableCell className="text-muted-foreground text-sm">{lead.returnReason}</TableCell>
+                  <TableCell>
+                    {lead.returnedById ? (
+                      <span className="text-sm">{repNameById[lead.returnedById] ?? "未知成员"}</span>
+                    ) : lead.importedById ? (
+                      <span className="text-xs text-muted-foreground">
+                        由 {repNameById[lead.importedById] ?? "未知成员"} 导入
+                      </span>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">--</span>
+                    )}
+                  </TableCell>
                   <TableCell className="text-center">{getDaysInPoolBadge(lead.daysInPool)}</TableCell>
                   <TableCell className="text-right">
                     <DropdownMenu>
@@ -1287,10 +1412,29 @@ export function PublicPool() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => handleAssign(lead.id)} disabled={!canAssignLeads}>
-                          <UserPlus className="w-4 h-4 mr-2" />
-                          分配给...
+                        <DropdownMenuItem
+                          onClick={() => {
+                            if (!canAssignLeads) {
+                              toast.error("没有认领线索的权限", {
+                                description:
+                                  "请联系管理员在系统设置 → 角色权限中开启“线索分配/认领”相关权限。",
+                              })
+                              return
+                            }
+                            void handleClaimToMe(lead.id)
+                          }}
+                        >
+                          <UserPlus className="w-4 h-4 mr-2" /> 认领到我的线索
                         </DropdownMenuItem>
+                        {canAssignLeads && (
+                          <DropdownMenuItem
+                            onClick={() => {
+                              handleAssign(lead.id)
+                            }}
+                          >
+                            <Users className="w-4 h-4 mr-2" /> 分配给销售
+                          </DropdownMenuItem>
+                        )}
                         <DropdownMenuItem
                           onClick={() => {
                             void openDetailDialog(lead)
@@ -1328,7 +1472,7 @@ export function PublicPool() {
               ))}
               {filteredLeads.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={10} className="h-24 text-center text-muted-foreground">
+                  <TableCell colSpan={11} className="h-24 text-center text-muted-foreground">
                     暂无符合条件的线索
                   </TableCell>
                 </TableRow>

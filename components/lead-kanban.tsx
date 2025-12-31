@@ -1,6 +1,7 @@
 "use client"
 
-import React, { useCallback, useState, useEffect, useMemo } from "react"
+import React, { useCallback, useState, useEffect, useMemo, useRef } from "react"
+
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -81,9 +82,27 @@ interface SalesRep {
   teamId?: number | null
 }
 
+interface LeadViewFilters {
+  searchQuery: string
+  stageFilter: string
+  sourceFilter: string
+  ownerFilter: string
+  timeFilter: string
+  gradeFilter: string
+  tagFilter: string
+  sortOption: string
+}
+
+interface LeadViewPreset {
+  id: string
+  name: string
+  filters: LeadViewFilters
+  isDefault: boolean
+}
 
 // 线索初始列表由 Supabase 加载，这里保留一个空数组占位，防止误以为还有本地 mock 数据
 const initialLeads: Lead[] = [
+
   {
     id: 1,
     company: "深圳市科技公司",
@@ -462,11 +481,23 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
   const [sourceFilter, setSourceFilter] = useState<string>("all")
   const [ownerFilter, setOwnerFilter] = useState<string>("all")
   const [timeFilter, setTimeFilter] = useState<string>("all")
+  const [gradeFilter, setGradeFilter] = useState<string>("all")
+  const [tagFilter, setTagFilter] = useState<string>("")
   const [sortOption, setSortOption] = useState<string>("recent")
   const [currentPage, setCurrentPage] = useState(1)
 
+  const [viewPresets, setViewPresets] = useState<LeadViewPreset[]>([])
+  const [activeViewId, setActiveViewId] = useState<string>("default")
+  const [isSaveViewDialogOpen, setIsSaveViewDialogOpen] = useState(false)
+  const [newViewName, setNewViewName] = useState("")
+  const [isSavingView, setIsSavingView] = useState(false)
+  const [isAdvancedFilterOpen, setIsAdvancedFilterOpen] = useState(false)
+
   const [isLoading, setIsLoading] = useState(true)
+  const hasLoadedOnceRef = useRef(false)
+
   const [loadError, setLoadError] = useState<RpcErrorFriendly | null>(null)
+
   const [reloadToken, setReloadToken] = useState(0)
   const retryLoad = useCallback(() => setReloadToken((t) => t + 1), [])
 
@@ -485,7 +516,10 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     let isMounted = true
 
     async function loadLeads() {
-      setIsLoading(true)
+      // 只有第一次加载时才显示骨架屏，后续通过 Realtime/刷新在后台悄悄拉数据
+      if (!hasLoadedOnceRef.current) {
+        setIsLoading(true)
+      }
       setLoadError(null)
 
       try {
@@ -565,8 +599,9 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
           setLeads([])
         }
       } finally {
-        if (isMounted) {
+        if (isMounted && !hasLoadedOnceRef.current) {
           setIsLoading(false)
+          hasLoadedOnceRef.current = true
         }
       }
     }
@@ -578,7 +613,61 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     }
   }, [reloadToken, retryLoad])
 
+
+  // 订阅 Supabase Realtime，监听线索表变更，实现多人实时同步
   useEffect(() => {
+    const supabase = getBrowserSupabaseClient()
+
+    const channel = supabase
+      .channel("leads-kanban-realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "leads" },
+        () => {
+          // 任意线索变更后，触发一次重载，保证当前视图与服务器一致
+          retryLoad()
+        },
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [retryLoad])
+
+  // 兜底：即使部分浏览器环境下 Realtime 被插件/网络拦截，也每 10 秒在后台静默刷新一次
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      retryLoad()
+    }, 10000)
+
+    return () => {
+      window.clearInterval(id)
+    }
+  }, [retryLoad])
+
+  // 当列表数据发生变化时，如果当前有打开的线索详情，自动用最新数据同步详情（保留已加载的跟进记录）
+  useEffect(() => {
+    setSelectedLead((prev) => {
+      if (!prev) return prev
+
+      const fresh = leads.find((l) => l.id === prev.id)
+      if (!fresh) return prev
+
+      return {
+        ...prev,
+        ...fresh,
+        interactions: prev.interactions,
+      }
+    })
+  }, [leads])
+
+
+  useEffect(() => {
+
+
+
+
     let isMounted = true
 
     async function loadSalesReps() {
@@ -668,7 +757,8 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
   useEffect(() => {
     setCurrentPage(1)
-  }, [searchQuery, stageFilter, sourceFilter, ownerFilter, timeFilter, sortOption])
+  }, [searchQuery, stageFilter, sourceFilter, ownerFilter, timeFilter, gradeFilter, tagFilter, sortOption])
+
 
   const activeLeadsByOwnerId = useMemo(() => {
     const counts = new Map<string, number>()
@@ -686,7 +776,47 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
   const currentUserId = currentProfile?.id ?? null
   const currentTeamId = currentProfile?.teamId ?? null
 
+  const applyFiltersFromPreset = (preset: LeadViewPreset) => {
+    const f = preset.filters
+
+    setSearchQuery(f.searchQuery ?? "")
+    setStageFilter(f.stageFilter ?? "all")
+    setSourceFilter(f.sourceFilter ?? "all")
+    setOwnerFilter(f.ownerFilter ?? "all")
+    setTimeFilter(f.timeFilter ?? "all")
+    setGradeFilter(f.gradeFilter ?? "all")
+    setTagFilter(f.tagFilter ?? "")
+    setSortOption(f.sortOption ?? "recent")
+  }
+
+  const handleViewSelect = (value: string) => {
+    if (value === "default") {
+      setActiveViewId("default")
+      setSearchQuery("")
+      setStageFilter("all")
+      setSourceFilter("all")
+      setTimeFilter("all")
+      setGradeFilter("all")
+      setTagFilter("")
+      setSortOption("recent")
+
+      if (leadScopeType === "self" && currentUserId) {
+        setOwnerFilter(currentUserId)
+      } else {
+        setOwnerFilter("all")
+      }
+      return
+    }
+
+    const preset = viewPresets.find((p) => p.id === value)
+    if (!preset) return
+
+    setActiveViewId(preset.id)
+    applyFiltersFromPreset(preset)
+  }
+
   const ownerOptions = useMemo(() => {
+
     if (leadScopeType === "self") {
       if (!currentUserId) {
         return []
@@ -716,7 +846,73 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     }
   }, [leadScopeType, currentUserId, ownerFilter])
 
+  useEffect(() => {
+    if (!currentProfile?.id) {
+      return
+    }
+
+    let isMounted = true
+
+    async function loadViewPresets() {
+      try {
+        const supabase = getBrowserSupabaseClient()
+        const { data, error } = await supabase
+          .from("lead_view_presets")
+          .select("id, name, filters, is_default")
+          .eq("profile_id", currentProfile.id)
+          .order("created_at", { ascending: true })
+
+        if (!isMounted) {
+          return
+        }
+
+        if (error) {
+          console.error("Failed to load lead view presets", error)
+          return
+        }
+
+        const normalized: LeadViewPreset[] =
+          data?.map((row: any) => {
+            const filters = (row.filters as any) || {}
+            return {
+              id: row.id as string,
+              name: (row.name as string) ?? "未命名视图",
+              filters: {
+                searchQuery: (filters.searchQuery as string) ?? "",
+                stageFilter: (filters.stageFilter as string) ?? "all",
+                sourceFilter: (filters.sourceFilter as string) ?? "all",
+                ownerFilter: (filters.ownerFilter as string) ?? "all",
+                timeFilter: (filters.timeFilter as string) ?? "all",
+                gradeFilter: (filters.gradeFilter as string) ?? "all",
+                tagFilter: (filters.tagFilter as string) ?? "",
+                sortOption: (filters.sortOption as string) ?? "recent",
+              },
+              isDefault: (row.is_default as boolean) ?? false,
+            }
+          }) ?? []
+
+        setViewPresets(normalized)
+
+        const defaultPreset = normalized.find((p) => p.isDefault)
+        if (defaultPreset) {
+          setActiveViewId(defaultPreset.id)
+          applyFiltersFromPreset(defaultPreset)
+        }
+      } catch (err) {
+        console.error("Failed to load lead view presets", err)
+      }
+    }
+
+    loadViewPresets()
+
+    return () => {
+      isMounted = false
+    }
+  }, [currentProfile?.id])
+
+
   const handleAddLead = async () => {
+
     if (!newLead.company || !newLead.phone) {
       toast.error("请填写必填字段", {
         description: "公司名称和联系电话为必填项",
@@ -1290,10 +1486,14 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
           : prev,
       )
 
+      // 为了保证列表与详情和看板完全同步，这里在本地更新后触发一次数据重载
+      retryLoad()
+
       setIsEditing(false)
       toast.success("线索信息已更新", {
         description: "基础信息已成功保存",
       })
+
     } catch (err) {
       console.error("Failed to update lead details", err)
       const friendly = mapRpcError(err as any, {
@@ -1369,6 +1569,11 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     return null
   }
 
+  const normalizedTagKeywords = tagFilter
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter((tag) => tag.length > 0)
+
   const filteredLeads = leads.filter((lead) => {
     const query = searchQuery.trim().toLowerCase()
 
@@ -1394,6 +1599,22 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       return false
     }
 
+    if (gradeFilter !== "all") {
+      if (!lead.grade || lead.grade !== gradeFilter) {
+        return false
+      }
+    }
+
+    if (normalizedTagKeywords.length > 0) {
+      const tags = lead.tags ?? []
+      const hasAnyTag = normalizedTagKeywords.some((keyword) =>
+        tags.some((tag) => tag.toLowerCase().includes(keyword.toLowerCase())),
+      )
+      if (!hasAnyTag) {
+        return false
+      }
+    }
+
     if (timeFilter !== "all") {
       const days = lead.lastInteraction
       if (timeFilter === "3d" && days > 3) {
@@ -1409,6 +1630,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
     return true
   })
+
 
   const sortedLeads = [...filteredLeads].sort((a, b) => {
     if (sortOption === "recent") {
@@ -1589,8 +1811,219 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
         />
       )}
 
+      <Dialog open={isSaveViewDialogOpen} onOpenChange={setIsSaveViewDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>保存当前筛选为视图</DialogTitle>
+            <DialogDescription>
+              将当前的筛选条件保存为命名视图，方便下次一键切换。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <Label htmlFor="view-name">视图名称</Label>
+            <Input
+              id="view-name"
+              value={newViewName}
+              onChange={(e) => setNewViewName(e.target.value)}
+              placeholder="例如：我的 S 级高预算线索"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsSaveViewDialogOpen(false)}>
+              取消
+            </Button>
+            <Button
+              onClick={async () => {
+                if (!currentProfile?.id) {
+                  toast.error("无法保存视图", { description: "未获取到当前用户信息" })
+                  return
+                }
+
+                if (!newViewName.trim()) {
+                  toast.error("请填写视图名称")
+                  return
+                }
+
+                try {
+                  setIsSavingView(true)
+
+                  const supabase = getBrowserSupabaseClient()
+                  const filters: LeadViewFilters = {
+                    searchQuery,
+                    stageFilter,
+                    sourceFilter,
+                    ownerFilter,
+                    timeFilter,
+                    gradeFilter,
+                    tagFilter,
+                    sortOption,
+                  }
+
+                  const { data, error } = await supabase
+                    .from("lead_view_presets")
+                    .insert({
+                      profile_id: currentProfile.id,
+                      name: newViewName.trim(),
+                      filters,
+                      is_default: false,
+                    })
+                    .select("id, name, filters, is_default")
+                    .single()
+
+                  if (error) {
+                    console.error("Failed to save lead view preset", error)
+                    toast.error("保存视图失败", { description: "请稍后重试或联系管理员" })
+                    return
+                  }
+
+                  const created: LeadViewPreset = {
+                    id: (data as any).id as string,
+                    name: ((data as any).name as string) ?? newViewName.trim(),
+                    filters: (data as any).filters as LeadViewFilters,
+                    isDefault: ((data as any).is_default as boolean) ?? false,
+                  }
+
+                  setViewPresets((prev) => [...prev, created])
+                  setActiveViewId(created.id)
+                  setIsSaveViewDialogOpen(false)
+                  setNewViewName("")
+
+                  toast.success("视图已保存", {
+                    description: "下次可以在视图下拉中一键切换到该筛选组合",
+                  })
+                } catch (err) {
+                  console.error("Failed to save lead view preset", err)
+                  toast.error("保存视图失败", { description: "请稍后重试或联系管理员" })
+                } finally {
+                  setIsSavingView(false)
+                }
+              }}
+              disabled={isSavingView}
+            >
+              {isSavingView ? "保存中..." : "确认保存"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Sheet open={isAdvancedFilterOpen} onOpenChange={setIsAdvancedFilterOpen}>
+        <SheetContent side="right" className="w-full sm:w-[480px] sm:max-w-[540px] overflow-y-auto p-0">
+          <div className="p-6 space-y-4">
+            <SheetHeader className="px-0">
+              <SheetTitle>高级筛选</SheetTitle>
+            </SheetHeader>
+
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground">来源</p>
+                <Select value={sourceFilter} onValueChange={setSourceFilter}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="全部来源" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">全部来源</SelectItem>
+                    {sources.map((source) => (
+                      <SelectItem key={source} value={source}>
+                        {source}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground">客户级别</p>
+                <Select value={gradeFilter} onValueChange={setGradeFilter}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="全部级别" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">全部级别</SelectItem>
+                    <SelectItem value="S">S 级</SelectItem>
+                    <SelectItem value="A">A 级</SelectItem>
+                    <SelectItem value="B">B 级</SelectItem>
+                    <SelectItem value="C">C 级</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground">标签关键词</p>
+                <Input
+                  placeholder="按标签关键词筛选，多个用逗号分隔"
+                  value={tagFilter}
+                  onChange={(e) => setTagFilter(e.target.value)}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground">排序方式</p>
+                <Select value={sortOption} onValueChange={setSortOption}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="排序方式" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="recent">按最近跟进</SelectItem>
+                    <SelectItem value="risk">按风险高优先</SelectItem>
+                    <SelectItem value="budget_desc">预算从高到低</SelectItem>
+                    <SelectItem value="budget_asc">预算从低到高</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground">视图</p>
+                <Select value={activeViewId} onValueChange={handleViewSelect}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="选择视图" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="default">基础视图（全部）</SelectItem>
+                    {viewPresets.map((preset) => (
+                      <SelectItem key={preset.id} value={preset.id}>
+                        {preset.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="flex items-center justify-between pt-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setSourceFilter("all")
+                    setGradeFilter("all")
+                    setTagFilter("")
+                    setSortOption("recent")
+                  }}
+                >
+                  重置高级筛选
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="inline-flex items-center gap-1"
+                  onClick={() => {
+                    setNewViewName("")
+                    setIsSaveViewDialogOpen(true)
+                  }}
+                >
+                  <Filter className="w-3 h-3" />
+                  保存当前视图
+                </Button>
+              </div>
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
+
       {/* Filters Row */}
+
+
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+
         <div className="relative w-full md:max-w-xs">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
@@ -1629,20 +2062,6 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
             </SelectContent>
           </Select>
 
-          <Select value={sourceFilter} onValueChange={setSourceFilter}>
-            <SelectTrigger className="w-[140px]">
-              <SelectValue placeholder="来源筛选" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">全部来源</SelectItem>
-              {sources.map((source) => (
-                <SelectItem key={source} value={source}>
-                  {source}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
           <Select value={timeFilter} onValueChange={setTimeFilter}>
             <SelectTrigger className="w-[150px]">
               <SelectValue placeholder="时间筛选" />
@@ -1655,21 +2074,21 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
             </SelectContent>
           </Select>
 
-          <Select value={sortOption} onValueChange={setSortOption}>
-            <SelectTrigger className="w-[160px]">
-              <SelectValue placeholder="排序方式" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="recent">按最近跟进</SelectItem>
-              <SelectItem value="risk">按风险高优先</SelectItem>
-              <SelectItem value="budget_desc">预算从高到低</SelectItem>
-              <SelectItem value="budget_asc">预算从低到高</SelectItem>
-            </SelectContent>
-          </Select>
+          <Button
+            variant="outline"
+            size="sm"
+            className="inline-flex items-center gap-1"
+            onClick={() => setIsAdvancedFilterOpen(true)}
+          >
+            <Filter className="w-3 h-3" />
+            高级筛选
+          </Button>
         </div>
+
       </div>
 
       {/* Risk Alert（仅统计未成交线索） */}
+
       {(() => {
         const activeLeadsForRisk = filteredLeads.filter((lead) => lead.stage !== "Won")
         const urgentCount = activeLeadsForRisk.filter((lead) => lead.lastInteraction >= 7).length
