@@ -5,7 +5,51 @@
 
 ## 2025-12-31
 
+### leads-lock-and-protection: 锁单与保护期、公海保护规则
+
+**变更点**
+- 新增 `supabase/migrations/034_lead_lock_and_protection.sql`：
+  - 为 `public.leads` 增加 `first_contact_at/locked_by/locked_until/protected_until` 字段，并为 `first_contact_at/locked_until/protected_until` 建立索引；
+  - 新增配置项 `settings.leads.lock_and_protection`（如首次有效联系锁单小时数、按阶段/客户级别的保护期天数），并提供 `iwish.get_lead_lock_and_protection_config()` 读取默认/自定义配置；
+  - 定义触发器函数 `iwish.leads_apply_lock_and_protection`，在 open 线索首次写入 `last_contact_at` 时记录 `first_contact_at/locked_by`，并按配置自动计算 `locked_until/protected_until`，后续更新阶段或客户级别时只做“向前延长”，不回缩已有的锁单/保护期；
+  - 重写 `public.leads_secure_view`，在原有字段与脱敏逻辑不变的前提下，追加暴露只读的 `first_contact_at/locked_by/locked_until/protected_until` 字段，供前端展示锁单与保护期状态；
+  - 调整 `public.leads` 的 update/delete RLS 策略：对于 `status='open'` 且仍在 `protected_until` 之前的线索，仅允许 `owner_id = auth.uid()` 的本人更新或删除，其他人需等待保护期结束后才可操作。
+- 更新 `components/system-settings.tsx`：
+  - 在“业务规则” Tab 下新增“锁单与保护期”配置卡片，从 `settings.leads.lock_and_protection` 读取并保存首次有效联系锁单小时数、按阶段保护期天数（L1/L2/L3/L4/Won）和按客户级别保护期天数（S/A/B/C），权限错误时复用 `settings.pipeline.manage` 的提示逻辑；
+  - 管理员调整配置后，后端会在下一次首触达或阶段/级别变更时按新规则向后延长保护期，前端详情页实时展示更新后的锁单/保护期时间。
+- 更新 `components/lead-kanban.tsx`：
+
+  - 从 `leads_secure_view` 拉取 `first_contact_at/locked_until/protected_until` 并映射到本地 `Lead` 类型，在详情抽屉顶部新增“锁单与保护期状态”条，直观展示首次有效联系时间、锁单结束时间与保护期结束日期；
+  - 计算 `isSelectedLeadProtectedForOthers`，用于判断“当前线索为 open 且仍在保护期内、且当前用户不是负责人”的场景，并在这种情况下：
+    - 在详情顶部状态条中显示黄色提示文案，说明“当前线索处于保护期，仅负责人可在保护期内重新分配、跨团队转移或退回公海”；
+    - 在“重新分配”“跨团队转移”“退回公海”按钮点击时，前端直接弹出友好提示并阻止打开弹窗，避免用户在保护期内频繁收到低层错误；
+    - 在实际执行退回公海的 `handleReturnToPool` 中再次加一层保护期判断，确保并发/状态变化下也不会误发请求。
+- 公海池 `components/public-pool.tsx` 不改变既有行为：
+  - 继续只展示 `status = 'pool'` 的线索，认领/分配操作仍通过 `rpc_lead_claim_from_pool` 与 `rpc_lead_assign + rpc_lead_update` 完成；
+  - 保护期约束仅对非公海的 open 线索生效，保证“未退回公海的保护期线索只能由本人处理”，而一旦退回公海则回到当前的公海规则。
+
+**变更原因（对应 PRD/原型）**
+- PRD 强调“首次有效联系锁单 + 多维保护期”（按阶段、客户级别等），确保销售在完成首触达后的一段时间内对线索有稳定的归属，避免同一线索在保护期内被频繁争抢或退回公海；
+- 需要在后端通过字段 + 触发器 + RLS 强制保护期规则，而不是仅在前端做按钮禁用，否则可以通过脚本或绕过 UI 写入不符合保护期的更新；
+- 为了让一线销售和主管能感知锁单/保护期状态，需在线索详情中提供清晰的时间信息和操作提示；同时对于处于保护期但又不在本人名下的线索，应在分配/退回入口给出明确的“不允许操作”原因，降低“莫名其妙失败”的体验。
+
+**影响范围**
+- DB / RLS / 视图：
+  - `public.leads` 新增锁单/保护期相关字段并随 open 线索的首次有效联系与阶段/级别变化自动维护，保证保护期计算在数据库层统一、可审计；
+  - `public.leads_secure_view` 增加只读的锁单/保护期字段，前端继续从视图而非底表读取线索信息，敏感字段脱敏策略保持不变；
+  - 更新后的 RLS 策略使得在保护期内，除负责人外任何账号（包括团队经理）都无法直接通过通用 update/delete 操作修改 open 线索，前端若强行调用将收到 RLS 拒绝。
+- 前端 / 业务体验：
+  - 线索详情顶部可以清晰看到“首次有效联系”“锁单至 / 保护期至”的时间信息，帮助销售判断当前线索是否在锁单/保护期内；
+  - 在保护期且不属于当前账户的线索上尝试“重新分配/跨团队转移/退回公海”时，前端会直接提示“当前线索处于保护期，仅负责人可操作”，避免频繁触发底层错误；
+  - 公海池的认领与分配流程保持不变，保护期更多作用于“从公海分配出去之后”的持有阶段，不影响现有的导入、公海认领体验。
+
+**回滚方式**
+- 如需回滚锁单与保护期规则，可在新的迁移中移除 `first_contact_at/locked_by/locked_until/protected_until` 字段及相关索引，并恢复旧版 `public.leads_secure_view` 定义；
+- 同时可删除触发器及函数 `trg_leads_lock_and_protection/iwish.leads_apply_lock_and_protection`，并将 `leads_update_scope/leads_delete_scope` RLS 策略还原为本次变更前的版本；
+- 前端如不再需要显示锁单/保护期状态，可在 `components/lead-kanban.tsx` 中移除相关字段映射与状态条、保护期前端拦截逻辑，恢复原有的操作入口行为。
+
 ### leads-team-and-owner-consistency: 线索团队归属与负责人一致性收紧
+
 
 **变更点**
 - 新增 `supabase/migrations/033_leads_team_consistency_enforcement.sql`：

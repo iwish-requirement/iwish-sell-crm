@@ -62,8 +62,14 @@ interface Lead {
   teamId?: number | null
   grade?: string | null
   tags?: string[] | null
+  firstContactAt?: string | null
+  lockedUntil?: string | null
+  protectedUntil?: string | null
+  createdAt?: string | null
   interactions: Interaction[]
 }
+
+
 
 interface Interaction {
   id: number
@@ -308,7 +314,10 @@ function LeadCard({ lead, onClick }: { lead: Lead; onClick: () => void }) {
   const lastContactLabel = lead.lastInteraction === 0 ? "今天" : `${lead.lastInteraction}天前`
   const lastContactDateLabel = lead.lastContactAt
     ? new Date(lead.lastContactAt).toISOString().split("T")[0]
-    : "未记录时间"
+    : lead.createdAt
+      ? new Date(lead.createdAt).toISOString().split("T")[0]
+      : "未记录时间"
+
   const allTags = lead.tags ?? []
   const displayedTags = allTags.slice(0, 2)
   const remainingTagsCount = allTags.length - displayedTags.length
@@ -527,8 +536,10 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
         const { data, error } = await supabase
           .from("leads_secure_view")
           .select(
-            "id, team_id, name, source, stage, status, customer_name, customer_phone, customer_email, budget, last_contact_at, next_contact_at, owner_id, customer_grade, tags",
+            "id, team_id, name, source, stage, status, customer_name, customer_phone, customer_email, budget, last_contact_at, next_contact_at, owner_id, customer_grade, tags, first_contact_at, locked_until, protected_until, created_at",
           )
+
+
           .in("status", ["open", "closed"]) 
           .order("updated_at", { ascending: false })
 
@@ -552,12 +563,14 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
         const mapped: Lead[] =
           (data ?? []).map((row: any) => {
               const lastContactAt = row.last_contact_at ? new Date(row.last_contact_at) : null
-              const daysSinceLast =
-                lastContactAt != null
+              const createdAt = row.created_at ? new Date(row.created_at) : null
+              const baseDate = lastContactAt ?? createdAt
+              const daysSinceBase =
+                baseDate != null
                   ? Math.max(
                       0,
                       Math.floor(
-                        (Date.now() - lastContactAt.getTime()) / (1000 * 60 * 60 * 24),
+                        (Date.now() - baseDate.getTime()) / (1000 * 60 * 60 * 24),
                       ),
                     )
                   : 0
@@ -573,7 +586,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                   row.budget != null
                     ? `¥${Number(row.budget).toLocaleString("zh-CN")}`
                     : "待确认",
-                lastInteraction: daysSinceLast,
+                lastInteraction: daysSinceBase,
                 lastContactAt: (row.last_contact_at as string | null) ?? null,
                 stage: row.stage ?? "L1",
                 status: (row.status as string | null) === "closed" ? "closed" : "open",
@@ -582,9 +595,15 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                 teamId: (row.team_id as number | null) ?? null,
                 grade: (row.customer_grade as string | null) ?? null,
                 tags: (row.tags as string[] | null) ?? null,
+                firstContactAt: (row.first_contact_at as string | null) ?? null,
+                lockedUntil: (row.locked_until as string | null) ?? null,
+                protectedUntil: (row.protected_until as string | null) ?? null,
+                createdAt: (row.created_at as string | null) ?? null,
                 interactions: [],
               }
+
             }) ?? []
+
 
         setLeads(mapped)
       } catch (err) {
@@ -776,7 +795,17 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
   const currentUserId = currentProfile?.id ?? null
   const currentTeamId = currentProfile?.teamId ?? null
 
+  const isSelectedLeadProtectedForOthers =
+    selectedLead != null &&
+    selectedLead.status === "open" &&
+    selectedLead.protectedUntil != null &&
+    new Date(selectedLead.protectedUntil) > new Date() &&
+    selectedLead.ownerId != null &&
+    currentUserId != null &&
+    selectedLead.ownerId !== currentUserId
+
   const applyFiltersFromPreset = (preset: LeadViewPreset) => {
+
     const f = preset.filters
 
     setSearchQuery(f.searchQuery ?? "")
@@ -1116,10 +1145,18 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       return
     }
 
+    if (isSelectedLeadProtectedForOthers) {
+      toast.error("当前线索处于保护期", {
+        description: "在保护期内，仅负责人可以退回公海，请联系该线索负责人或等待保护期结束。",
+      })
+      return
+    }
+
     if (!returnToPoolReason.trim()) {
       toast.error("请填写退回公海的原因")
       return
     }
+
 
     try {
       setIsReturningToPool(true)
@@ -2204,9 +2241,19 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => setReassignDialogOpen(true)}
+                    onClick={() => {
+                      if (isSelectedLeadProtectedForOthers) {
+                        toast.error("当前线索处于保护期", {
+                          description:
+                            "在保护期内，仅负责人可以重新分配或退回公海，请联系该线索负责人或等待保护期结束。",
+                        })
+                        return
+                      }
+                      setReassignDialogOpen(true)
+                    }}
                     disabled={!canAssignLeads}
                   >
+
                     <UserPlus className="w-4 h-4 mr-1" />
                     重新分配
                   </Button>
@@ -2227,11 +2274,19 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                     variant="destructive"
                     size="sm"
                     onClick={() => {
+                      if (isSelectedLeadProtectedForOthers) {
+                        toast.error("当前线索处于保护期", {
+                          description:
+                            "在保护期内，仅负责人可以重新分配、跨团队转移或退回公海，请联系该线索负责人或等待保护期结束。",
+                        })
+                        return
+                      }
                       setReturnToPoolReason("")
                       setReturnToPoolDialogOpen(true)
                     }}
                     disabled={!canReturnToPool}
                   >
+
                     退回公海
                   </Button>
                   <Button
@@ -2249,8 +2304,42 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
               </SheetHeader>
 
               <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                {/* 锁单与保护期状态 */}
+                {selectedLead && selectedLead.firstContactAt && (
+                  <div className="flex flex-wrap items-center gap-3 rounded-md bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
+                    <span>
+                      首次有效联系：
+                      <span className="font-medium text-foreground">
+                        {new Date(selectedLead.firstContactAt).toLocaleString("zh-CN", { hour12: false })}
+                      </span>
+                    </span>
+                    {selectedLead.lockedUntil && (
+                      <span>
+                        锁单至：
+                        <span className="font-medium text-foreground">
+                          {new Date(selectedLead.lockedUntil).toLocaleString("zh-CN", { hour12: false })}
+                        </span>
+                      </span>
+                    )}
+                    {selectedLead.protectedUntil && (
+                      <span>
+                        保护期至：
+                        <span className="font-medium text-foreground">
+                          {new Date(selectedLead.protectedUntil).toLocaleDateString("zh-CN")}
+                        </span>
+                      </span>
+                    )}
+                    {isSelectedLeadProtectedForOthers && (
+                      <span className="text-amber-700">
+                        当前线索处于保护期，仅负责人可在保护期内重新分配、跨团队转移或退回公海。
+                      </span>
+                    )}
+                  </div>
+                )}
+
                 {/* Key Info Grid */}
                 <div className="grid grid-cols-2 gap-4">
+
                   <div className="space-y-1">
                     <p className="text-xs text-muted-foreground flex items-center gap-1">
                       <User className="w-3 h-3" /> 联系人
