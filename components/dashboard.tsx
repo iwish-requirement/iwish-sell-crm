@@ -8,6 +8,7 @@ import { SalesFunnel } from "@/components/sales-funnel"
 import { RecentActivityTable } from "@/components/recent-activity-table"
 import { KPICardSkeleton, ChartSkeleton, TableSkeleton } from "@/components/skeleton-loaders"
 import { fetchDashboardSummary } from "@/lib/services/dashboard"
+import { RecentDealsCard } from "@/components/recent-deals-card"
 import { getBrowserSupabaseClient } from "@/lib/supabase/client"
 import { MePermissionsContext } from "@/components/app-root"
 import { fetchCurrentUserProfile } from "@/lib/auth/profile"
@@ -20,6 +21,7 @@ interface DashboardSummary {
 }
 
 type DashboardCardKey = "totalLeads" | "winRate" | "monthlyRevenue" | "riskLeads"
+
 
 interface DashboardCardDefinition {
   key: DashboardCardKey
@@ -310,7 +312,7 @@ export function Dashboard() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Sales Funnel */}
-        <Card className="lg:col-span-1">
+        <Card>
           <CardHeader>
             <CardTitle>销售漏斗</CardTitle>
           </CardHeader>
@@ -319,15 +321,10 @@ export function Dashboard() {
           </CardContent>
         </Card>
 
-        {/* Recent Activity */}
-        <Card className="lg:col-span-1">
-          <CardHeader>
-            <CardTitle>最近动态</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <RecentActivityTable />
-          </CardContent>
-        </Card>
+        {/* Recent Deals */}
+        <div>
+          <RecentDealsCard />
+        </div>
       </div>
     </div>
   )

@@ -3,18 +3,20 @@
 import React, { useContext, useState } from "react"
 import Image from "next/image"
 import { usePathname, useRouter } from "next/navigation"
-import { LayoutDashboard, Users, Globe, Settings, Sparkles, BarChart3, Menu } from "lucide-react"
+import { LayoutDashboard, Users, Globe, Settings, Sparkles, BarChart3, Menu, DollarSign, RefreshCcw } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { MePermissionsContext } from "@/components/app-root"
 
-type NavItemId = "dashboard" | "leads" | "pool" | "analytics" | "settings" | "audit"
+type NavItemId = "dashboard" | "leads" | "pool" | "deals" | "renewals" | "analytics" | "settings" | "audit"
 
 const navItems: { id: NavItemId; label: string; icon: typeof LayoutDashboard; href: string }[] = [
   { id: "dashboard", label: "仪表盘", icon: LayoutDashboard, href: "/dashboard" },
   { id: "leads", label: "我的线索", icon: Users, href: "/leads" },
   { id: "pool", label: "公海池", icon: Globe, href: "/pool" },
+  { id: "deals", label: "成交中心", icon: DollarSign, href: "/deals" },
+  { id: "renewals", label: "续费中心", icon: RefreshCcw, href: "/renewals" },
   { id: "analytics", label: "数据分析", icon: BarChart3, href: "/reports" },
   { id: "audit", label: "审计中心", icon: Sparkles, href: "/audit" },
   { id: "settings", label: "系统设置", icon: Settings, href: "/settings" },
@@ -27,6 +29,14 @@ function getActiveViewFromPathname(pathname: string): NavItemId {
 
   if (pathname.startsWith("/settings")) {
     return "settings"
+  }
+
+  if (pathname.startsWith("/deals")) {
+    return "deals"
+  }
+
+  if (pathname.startsWith("/renewals")) {
+    return "renewals"
   }
 
   if (pathname.startsWith("/reports")) {
@@ -52,19 +62,23 @@ interface SidebarContentProps {
 
 function SidebarContent({ activeView, onNavigate, onItemClick }: SidebarContentProps) {
   const mePermissions = useContext(MePermissionsContext)
-
+  
   const canViewPublicPool = mePermissions?.canViewPublicPool ?? false
   const canViewAnalytics = mePermissions?.canViewReports ?? false
   const canViewAudit = mePermissions?.canViewAudit ?? false
   const canViewSettings = mePermissions?.canViewSettings ?? false
+  const canViewDealsAndRenewals = mePermissions?.canReadContracts ?? false
 
   const visibleNavItems = navItems.filter((item) => {
     if (item.id === "pool") return canViewPublicPool
     if (item.id === "analytics") return canViewAnalytics
     if (item.id === "audit") return canViewAudit
     if (item.id === "settings") return canViewSettings
+    if (item.id === "deals") return canViewDealsAndRenewals
+    if (item.id === "renewals") return canViewDealsAndRenewals
     return true
   })
+
 
   return (
     <>
@@ -76,6 +90,7 @@ function SidebarContent({ activeView, onNavigate, onItemClick }: SidebarContentP
             width={160}
             height={40}
             className="w-full h-auto rounded-lg object-contain"
+            loading="eager"
           />
         </div>
         <p className="text-xs text-muted-foreground mt-1">销售线索管理系统</p>

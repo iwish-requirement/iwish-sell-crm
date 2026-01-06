@@ -33,7 +33,9 @@ import {
   UserPlus,
   Search,
   Filter,
+  Clock,
 } from "lucide-react"
+
 import { toast } from "sonner"
 import { KanbanSkeleton } from "@/components/skeleton-loaders"
 import { StatusBadge, StatusDot, getStageConfig } from "@/components/status-badge"
@@ -54,6 +56,9 @@ interface Lead {
   source: string
   budget: string
   lastInteraction: number
+  sourceLevel1?: string | null
+  sourceLevel2?: string | null
+
   lastContactAt: string | null
   stage: string
   status: "open" | "closed" | "pool"
@@ -66,8 +71,12 @@ interface Lead {
   lockedUntil?: string | null
   protectedUntil?: string | null
   createdAt?: string | null
+  closeResult?: string | null
+  closeReason?: string | null
   interactions: Interaction[]
 }
+
+
 
 
 
@@ -86,18 +95,25 @@ interface SalesRep {
   name: string
   activeLeads: number
   teamId?: number | null
+  avatarUrl?: string | null
+  isExcludedForAnalytics?: boolean
 }
+
 
 interface LeadViewFilters {
   searchQuery: string
   stageFilter: string
-  sourceFilter: string
+  sourceLevel1Filter: string
+  sourceLevel2Filter: string
   ownerFilter: string
   timeFilter: string
   gradeFilter: string
   tagFilter: string
   sortOption: string
+  // 兼容历史视图中保存的单一 sourceFilter 字段
+  sourceFilter?: string
 }
+
 
 interface LeadViewPreset {
   id: string
@@ -106,8 +122,33 @@ interface LeadViewPreset {
   isDefault: boolean
 }
 
+interface GradeDefinition {
+  key: string
+  label: string
+  description?: string
+}
+
+interface SourceTreeChild {
+  key: string
+  label: string
+}
+
+interface SourceChannel {
+  key: string
+  label: string
+  children?: SourceTreeChild[] | null
+}
+
+interface SourceOption {
+  key: string
+  label: string
+  level1Key?: string
+}
+
+
 // 线索初始列表由 Supabase 加载，这里保留一个空数组占位，防止误以为还有本地 mock 数据
 const initialLeads: Lead[] = [
+
 
   {
     id: 1,
@@ -284,9 +325,17 @@ const stages = [
   { id: "Won", label: "成交" },
 ]
 
-const sources = ["抖音", "展会", "官网", "转介绍", "电话", "其他"]
+const FALLBACK_SOURCES = ["抖音", "展会", "官网", "转介绍", "电话", "其他"]
+
+const FALLBACK_GRADES: GradeDefinition[] = [
+  { key: "S", label: "S级（强成交 / 立即跟进）" },
+  { key: "A", label: "A级（重点培育 / 近期可成交）" },
+  { key: "B", label: "B级（普通意向 / 需持续教育）" },
+  { key: "C", label: "C级（低优先级 / 长期培育）" },
+]
 
 const PAGE_SIZE = 20
+
 
 function parseBudgetLabel(budget: string): number | null {
   const digits = budget.replace(/[^\d.-]/g, "")
@@ -295,21 +344,53 @@ function parseBudgetLabel(budget: string): number | null {
   return Number.isNaN(value) ? null : value
 }
 
-function LeadCard({ lead, onClick }: { lead: Lead; onClick: () => void }) {
-  const getRiskBadge = (lead: Lead) => {
-    // 已成交线索不再参与风险/需跟进提示
-    if (lead.stage === "Won") return null
+function LeadCard({ lead, onClick, riskConfig }: { lead: Lead; onClick: () => void; riskConfig: { warningHours: number; dangerHours: number } }) {
+  const getStatusBadge = () => {
+    if (lead.status === "closed") {
+      if (lead.closeResult === "won" || lead.closeResult === "成交") {
+        return (
+          <Badge variant="outline" className="text-xs border-emerald-500/60 text-emerald-700">
+            成交
+          </Badge>
+        )
+      }
+      return (
+        <Badge variant="outline" className="text-xs border-slate-300 text-slate-600">
+          丢单
+        </Badge>
+      )
+    }
+    return null
+  }
 
-    const days = lead.lastInteraction
-    if (days >= 7)
+  const getRiskBadge = (lead: Lead) => {
+    // 已成交或已丢单的线索不再参与风险/需跟进提示
+    if (lead.status === "closed" || lead.stage === "Won") return null
+
+    const lastContactAt = lead.lastContactAt ? new Date(lead.lastContactAt) : lead.createdAt ? new Date(lead.createdAt) : null
+    if (!lastContactAt) {
       return (
         <Badge variant="destructive" className="text-xs">
           风险
         </Badge>
       )
-    if (days >= 3) return <Badge className="bg-amber-100 text-amber-700 text-xs hover:bg-amber-100">需跟进</Badge>
+    }
+
+    const diffHours = (Date.now() - lastContactAt.getTime()) / (1000 * 60 * 60)
+    const { warningHours, dangerHours } = riskConfig
+
+    if (diffHours >= dangerHours)
+      return (
+        <Badge variant="destructive" className="text-xs">
+          风险
+        </Badge>
+      )
+    if (diffHours >= warningHours)
+      return <Badge className="bg-amber-100 text-amber-700 text-xs hover:bg-amber-100">需跟进</Badge>
     return null
   }
+
+
 
   const lastContactLabel = lead.lastInteraction === 0 ? "今天" : `${lead.lastInteraction}天前`
   const lastContactDateLabel = lead.lastContactAt
@@ -325,13 +406,17 @@ function LeadCard({ lead, onClick }: { lead: Lead; onClick: () => void }) {
   return (
     <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={onClick}>
       <CardContent className="p-4 space-y-3">
-        <div className="flex items-start justify-between">
+        <div className="flex items-start justify-between gap-2">
           <div>
             <p className="font-medium text-foreground">{lead.company}</p>
             <p className="text-sm text-muted-foreground">{lead.contact}</p>
           </div>
-          {getRiskBadge(lead)}
+          <div className="flex flex-col items-end gap-1">
+            {getStatusBadge()}
+            {getRiskBadge(lead)}
+          </div>
         </div>
+
         <div className="flex flex-wrap gap-2">
           <Badge variant="secondary" className="text-xs">
             {lead.source}
@@ -399,11 +484,16 @@ function InteractionItem({ interaction }: { interaction: Interaction }) {
     <div className="flex gap-3">
       <div className="flex flex-col items-center">
         <Avatar className="w-8 h-8">
-          <AvatarImage src={interaction.avatar || "/placeholder.svg"} />
-          <AvatarFallback className="text-xs bg-primary/10 text-primary">{interaction.user.slice(0, 1)}</AvatarFallback>
+          {interaction.avatar ? (
+            <AvatarImage src={interaction.avatar} />
+          ) : null}
+          <AvatarFallback className="text-xs bg-primary/10 text-primary">
+            {(interaction.user && interaction.user.length > 0 ? interaction.user : "?").slice(0, 1)}
+          </AvatarFallback>
         </Avatar>
         <div className="w-px h-full bg-border mt-2" />
       </div>
+
       <div className="flex-1 pb-6">
         <div className="flex items-center gap-2 mb-1">
           <Badge variant="outline" className="text-xs gap-1">
@@ -426,12 +516,14 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     company: "",
     contact: "",
     phone: "",
-    source: "",
+    sourceLevel1: "",
+    sourceLevel2: "",
     budget: "",
     owner: "",
     grade: "",
     tags: "",
   })
+
 
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null)
   const [sheetOpen, setSheetOpen] = useState(false)
@@ -487,12 +579,14 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
   const [searchQuery, setSearchQuery] = useState("")
   const [stageFilter, setStageFilter] = useState<string>("all")
-  const [sourceFilter, setSourceFilter] = useState<string>("all")
+  const [sourceLevel1Filter, setSourceLevel1Filter] = useState<string>("all")
+  const [sourceLevel2Filter, setSourceLevel2Filter] = useState<string>("all")
   const [ownerFilter, setOwnerFilter] = useState<string>("all")
   const [timeFilter, setTimeFilter] = useState<string>("all")
   const [gradeFilter, setGradeFilter] = useState<string>("all")
   const [tagFilter, setTagFilter] = useState<string>("")
   const [sortOption, setSortOption] = useState<string>("recent")
+
   const [currentPage, setCurrentPage] = useState(1)
 
   const [viewPresets, setViewPresets] = useState<LeadViewPreset[]>([])
@@ -502,8 +596,79 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
   const [isSavingView, setIsSavingView] = useState(false)
   const [isAdvancedFilterOpen, setIsAdvancedFilterOpen] = useState(false)
 
+  const [gradeDefinitions, setGradeDefinitions] = useState<GradeDefinition[]>([])
+  const [sourceChannels, setSourceChannels] = useState<SourceChannel[]>([])
+
+  const gradeOptions: GradeDefinition[] = gradeDefinitions.length > 0 ? gradeDefinitions : FALLBACK_GRADES
+
+  const level1Options: SourceChannel[] = useMemo(
+    () =>
+      sourceChannels.length > 0
+        ? sourceChannels
+        : FALLBACK_SOURCES.map((label) => ({ key: label, label, children: [] as SourceTreeChild[] })),
+    [sourceChannels],
+  )
+
+  const sourceOptions: SourceOption[] = useMemo(() => {
+
+    if (sourceChannels.length === 0) {
+      return FALLBACK_SOURCES.map((label) => ({ key: label, label, level1Key: "legacy" }))
+    }
+
+    const flattened: SourceOption[] = []
+
+    for (const channel of sourceChannels) {
+      const children = channel.children ?? []
+      if (children.length === 0) {
+        flattened.push({ key: channel.key, label: channel.label, level1Key: channel.key })
+      } else {
+        for (const child of children) {
+          flattened.push({
+            key: child.key,
+            label: `${channel.label} · ${child.label}`,
+            level1Key: channel.key,
+          })
+        }
+      }
+    }
+
+    return flattened
+  }, [sourceChannels])
+
+  const getChildrenForLevel1 = (level1Key: string): SourceTreeChild[] => {
+    const channel = level1Options.find((c) => c.key === level1Key)
+    return channel?.children ?? []
+  }
+
+  const resolveSourceLabel = (
+    level1Key: string | null | undefined,
+    level2Key: string | null | undefined,
+  ): string => {
+    if (level1Key && sourceChannels.length > 0) {
+      const channel = sourceChannels.find((c) => c.key === level1Key)
+      if (channel) {
+        if (level2Key) {
+          const child = (channel.children ?? []).find((ch) => ch.key === level2Key)
+          if (child) {
+            return child.label
+          }
+        }
+        return channel.label
+      }
+    }
+
+    if (sourceChannels.length === 0 && level1Key) {
+      return level1Key
+    }
+
+    return "其他"
+  }
+
   const [isLoading, setIsLoading] = useState(true)
+
+
   const hasLoadedOnceRef = useRef(false)
+
 
   const [loadError, setLoadError] = useState<RpcErrorFriendly | null>(null)
 
@@ -511,6 +676,8 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
   const retryLoad = useCallback(() => setReloadToken((t) => t + 1), [])
 
   const [isCreating, setIsCreating] = useState(false)
+  const riskConfigRef = useRef({ warningHours: 72, dangerHours: 168 })
+
   const [isReassigning, setIsReassigning] = useState(false)
   const [isAdvancingStage, setIsAdvancingStage] = useState(false)
   const [isReturningToPool, setIsReturningToPool] = useState(false)
@@ -533,15 +700,24 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
       try {
         const supabase = getBrowserSupabaseClient()
-        const { data, error } = await supabase
-          .from("leads_secure_view")
-          .select(
-            "id, team_id, name, source, stage, status, customer_name, customer_phone, customer_email, budget, last_contact_at, next_contact_at, owner_id, customer_grade, tags, first_contact_at, locked_until, protected_until, created_at",
-          )
+        const [
+          { data, error },
+          { data: businessRulesRpcResult, error: businessRulesError },
+        ] = await Promise.all([
+          supabase
+            .from("leads_secure_view")
+            .select(
+              "id, team_id, name, source, stage, status, close_result, close_reason, customer_name, customer_phone, customer_email, budget, last_contact_at, next_contact_at, owner_id, customer_grade, source_level1, source_level2, tags, first_contact_at, locked_until, protected_until, created_at, created_by",
+            )
+            .in("status", ["open", "closed"]) 
+            .order("updated_at", { ascending: false }),
+          supabase.rpc("rpc_get_pipeline_business_rules"),
+        ])
 
+        if (businessRulesError) {
+          console.error("Failed to load pipeline business rules via RPC for lead kanban", businessRulesError)
+        }
 
-          .in("status", ["open", "closed"]) 
-          .order("updated_at", { ascending: false })
 
 
         if (!isMounted) {
@@ -560,8 +736,27 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
           return
         }
 
+        const rows = (data ?? []) as any[]
+
+        const businessRulesValue = (businessRulesRpcResult as any) ?? null
+        if (businessRulesValue && typeof businessRulesValue === "object") {
+          const rawWarning = (businessRulesValue as any).warning_hours
+          const rawDanger = (businessRulesValue as any).danger_hours
+
+
+          if (typeof rawWarning === "number" && Number.isFinite(rawWarning) && rawWarning > 0) {
+            riskConfigRef.current.warningHours = rawWarning
+          }
+          if (typeof rawDanger === "number" && Number.isFinite(rawDanger) && rawDanger > 0) {
+            riskConfigRef.current.dangerHours = rawDanger
+          }
+        }
+
+
         const mapped: Lead[] =
-          (data ?? []).map((row: any) => {
+          rows.map((row: any) => {
+
+
               const lastContactAt = row.last_contact_at ? new Date(row.last_contact_at) : null
               const createdAt = row.created_at ? new Date(row.created_at) : null
               const baseDate = lastContactAt ?? createdAt
@@ -576,12 +771,16 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                   : 0
 
               return {
+
                 id: row.id,
                 company: row.name ?? "未命名线索",
                 contact: row.customer_name ?? "未填写联系人",
                 phone: row.customer_phone ?? "",
                 wechat: "",
                 source: row.source ?? "其他",
+                sourceLevel1: (row.source_level1 as string | null) ?? null,
+                sourceLevel2: (row.source_level2 as string | null) ?? null,
+
                 budget:
                   row.budget != null
                     ? `¥${Number(row.budget).toLocaleString("zh-CN")}`
@@ -599,7 +798,11 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                 lockedUntil: (row.locked_until as string | null) ?? null,
                 protectedUntil: (row.protected_until as string | null) ?? null,
                 createdAt: (row.created_at as string | null) ?? null,
+                closeResult: (row.close_result as string | null) ?? null,
+                closeReason: (row.close_reason as string | null) ?? null,
                 interactions: [],
+
+
               }
 
             }) ?? []
@@ -632,9 +835,82 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     }
   }, [reloadToken, retryLoad])
 
+  useEffect(() => {
+    let isMounted = true
+
+    async function loadLeadConfigs() {
+      try {
+        const supabase = getBrowserSupabaseClient()
+
+        const [gradeResult, sourceResult] = await Promise.all([
+          supabase
+            .from("settings")
+            .select("value")
+            .eq("key", "leads.grade_definitions")
+            .maybeSingle(),
+          supabase
+            .from("settings")
+            .select("value")
+            .eq("key", "leads.source_tree")
+            .maybeSingle(),
+        ])
+
+        if (!isMounted) {
+          return
+        }
+
+        if (!gradeResult.error && gradeResult.data && (gradeResult.data as any).value) {
+          const raw = (gradeResult.data as any).value as any
+          if (Array.isArray(raw.grades)) {
+            const normalized: GradeDefinition[] = raw.grades
+              .filter((g: any) => typeof g?.key === "string" && typeof g?.label === "string")
+              .map((g: any) => ({
+                key: g.key as string,
+                label: g.label as string,
+                description: typeof g.description === "string" ? (g.description as string) : undefined,
+              }))
+
+            if (normalized.length > 0) {
+              setGradeDefinitions(normalized)
+            }
+          }
+        }
+
+        if (!sourceResult.error && sourceResult.data && (sourceResult.data as any).value) {
+          const raw = (sourceResult.data as any).value as any
+          if (Array.isArray(raw.channels)) {
+            const normalized: SourceChannel[] = raw.channels
+              .filter((c: any) => typeof c?.key === "string" && typeof c?.label === "string")
+              .map((c: any) => ({
+                key: c.key as string,
+                label: c.label as string,
+                children: Array.isArray(c.children)
+                  ? (c.children as any[])
+                      .filter((child) => typeof child?.key === "string" && typeof child?.label === "string")
+                      .map((child) => ({ key: child.key as string, label: child.label as string }))
+                  : [],
+              }))
+
+            if (normalized.length > 0) {
+              setSourceChannels(normalized)
+            }
+          }
+        }
+      } catch (error) {
+        console.error("Failed to load lead configs", error)
+      }
+    }
+
+    loadLeadConfigs()
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
 
   // 订阅 Supabase Realtime，监听线索表变更，实现多人实时同步
   useEffect(() => {
+
     const supabase = getBrowserSupabaseClient()
 
     const channel = supabase
@@ -697,8 +973,9 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
           await Promise.all([
             supabase
               .from("profiles_public")
-              .select("id, full_name, team_id, status")
+              .select("id, full_name, avatar_url, team_id, status")
               .eq("status", "active"),
+
             supabase.from("teams").select("id, name").order("id", { ascending: true }),
             fetchCurrentUserProfile(supabase),
             supabase
@@ -743,14 +1020,15 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
         )
 
         const normalized: SalesRep[] =
-          data
-            ?.filter((row: any) => !excludedProfileIds.has(row.id as string))
-            .map((row: any) => ({
-              id: row.id as string,
-              name: (row.full_name as string) ?? "未命名成员",
-              activeLeads: 0,
-              teamId: (row.team_id as number | null) ?? null,
-            })) ?? []
+          (data ?? []).map((row: any) => ({
+            id: row.id as string,
+            name: (row.full_name as string) ?? "未命名成员",
+            activeLeads: 0,
+            teamId: (row.team_id as number | null) ?? null,
+            avatarUrl: (row.avatar_url as string | null) ?? null,
+            isExcludedForAnalytics: excludedProfileIds.has(row.id as string),
+          }))
+
 
         setSalesReps(normalized)
         setTeams(
@@ -776,7 +1054,18 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
   useEffect(() => {
     setCurrentPage(1)
-  }, [searchQuery, stageFilter, sourceFilter, ownerFilter, timeFilter, gradeFilter, tagFilter, sortOption])
+  }, [
+    searchQuery,
+    stageFilter,
+    sourceLevel1Filter,
+    sourceLevel2Filter,
+    ownerFilter,
+    timeFilter,
+    gradeFilter,
+    tagFilter,
+    sortOption,
+  ])
+
 
 
   const activeLeadsByOwnerId = useMemo(() => {
@@ -805,25 +1094,44 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     selectedLead.ownerId !== currentUserId
 
   const applyFiltersFromPreset = (preset: LeadViewPreset) => {
-
     const f = preset.filters
 
     setSearchQuery(f.searchQuery ?? "")
     setStageFilter(f.stageFilter ?? "all")
-    setSourceFilter(f.sourceFilter ?? "all")
     setOwnerFilter(f.ownerFilter ?? "all")
     setTimeFilter(f.timeFilter ?? "all")
     setGradeFilter(f.gradeFilter ?? "all")
     setTagFilter(f.tagFilter ?? "")
     setSortOption(f.sortOption ?? "recent")
+
+    // 视图中的渠道筛选拆分为一级/二级，兼容历史仅保存 sourceFilter 的视图
+    const legacySourceFilter = (f as any).sourceFilter as string | undefined
+    const level1FromPreset = (f as any).sourceLevel1Filter as string | undefined
+    const level2FromPreset = (f as any).sourceLevel2Filter as string | undefined
+
+    let nextLevel1 = level1FromPreset ?? "all"
+    let nextLevel2 = level2FromPreset ?? "all"
+
+    if (!level1FromPreset && !level2FromPreset && legacySourceFilter && legacySourceFilter !== "all") {
+      nextLevel2 = legacySourceFilter
+      const found = sourceOptions.find((option) => option.key === legacySourceFilter)
+      if (found?.level1Key) {
+        nextLevel1 = found.level1Key
+      }
+    }
+
+    setSourceLevel1Filter(nextLevel1)
+    setSourceLevel2Filter(nextLevel2)
   }
+
 
   const handleViewSelect = (value: string) => {
     if (value === "default") {
       setActiveViewId("default")
       setSearchQuery("")
       setStageFilter("all")
-      setSourceFilter("all")
+      setSourceLevel1Filter("all")
+      setSourceLevel2Filter("all")
       setTimeFilter("all")
       setGradeFilter("all")
       setTagFilter("")
@@ -844,8 +1152,8 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     applyFiltersFromPreset(preset)
   }
 
-  const ownerOptions = useMemo(() => {
 
+  const ownerOptions = useMemo(() => {
     if (leadScopeType === "self") {
       if (!currentUserId) {
         return []
@@ -855,16 +1163,19 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       return meRep ? [meRep] : []
     }
 
+    const selectableReps = salesReps.filter((rep) => !rep.isExcludedForAnalytics)
+
     if (leadScopeType === "team") {
       if (currentTeamId == null) {
-        return salesReps
+        return selectableReps
       }
 
-      return salesReps.filter((rep) => rep.teamId != null && rep.teamId === currentTeamId)
+      return selectableReps.filter((rep) => rep.teamId != null && rep.teamId === currentTeamId)
     }
 
-    return salesReps
+    return selectableReps
   }, [leadScopeType, currentUserId, currentTeamId, salesReps])
+
 
   const showAllOwnerOption =
     leadScopeType === "team" || leadScopeType === "org" || leadScopeType === "custom"
@@ -900,6 +1211,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
           return
         }
 
+
         const normalized: LeadViewPreset[] =
           data?.map((row: any) => {
             const filters = (row.filters as any) || {}
@@ -909,16 +1221,20 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
               filters: {
                 searchQuery: (filters.searchQuery as string) ?? "",
                 stageFilter: (filters.stageFilter as string) ?? "all",
-                sourceFilter: (filters.sourceFilter as string) ?? "all",
+                sourceLevel1Filter: (filters.sourceLevel1Filter as string) ?? "all",
+                sourceLevel2Filter: (filters.sourceLevel2Filter as string) ?? "all",
                 ownerFilter: (filters.ownerFilter as string) ?? "all",
                 timeFilter: (filters.timeFilter as string) ?? "all",
                 gradeFilter: (filters.gradeFilter as string) ?? "all",
                 tagFilter: (filters.tagFilter as string) ?? "",
                 sortOption: (filters.sortOption as string) ?? "recent",
+                // 兼容旧数据中的单一 sourceFilter 字段
+                sourceFilter: (filters.sourceFilter as string) ?? undefined,
               },
               isDefault: (row.is_default as boolean) ?? false,
             }
           }) ?? []
+
 
         setViewPresets(normalized)
 
@@ -949,7 +1265,15 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       return
     }
 
+    if (!newLead.sourceLevel1) {
+      toast.error("请选择一级渠道", {
+        description: "线索来源的一级渠道为必选项",
+      })
+      return
+    }
+
     const trimmedBudget = newLead.budget.trim()
+
     let budgetValue: number | null = null
 
     if (trimmedBudget) {
@@ -979,11 +1303,13 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       const canAssignLeads = mePermissions?.canAssignLeads ?? false
       const ownerId = canAssignLeads && newLead.owner ? newLead.owner : profile.id
 
+      const sourceLabel = resolveSourceLabel(newLead.sourceLevel1, newLead.sourceLevel2 || null)
+
       const payload: Record<string, unknown> = {
         team_id: profile.teamId,
         owner_id: ownerId,
         name: newLead.company,
-        source: newLead.source || "其他",
+        source: sourceLabel,
         stage: "L1",
         status: "open",
         customer_name: newLead.contact || "新联系人",
@@ -992,7 +1318,11 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
         budget: budgetValue,
         last_contact_at: new Date().toISOString(),
         customer_grade: newLead.grade || null,
+        source_level1: newLead.sourceLevel1,
+        source_level2: newLead.sourceLevel2 || null,
         tags:
+
+
           newLead.tags
             .split(",")
             .map((tag) => tag.trim())
@@ -1016,6 +1346,8 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       const budgetLabel =
         budgetValue != null ? `¥${budgetValue.toLocaleString("zh-CN")}` : "待确认"
 
+      const sourceLabelForLocal = resolveSourceLabel(newLead.sourceLevel1, newLead.sourceLevel2 || null)
+
       setLeads([
         ...leads,
         {
@@ -1024,7 +1356,9 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
           contact: newLead.contact || "新联系人",
           phone: newLead.phone,
           wechat: "",
-          source: newLead.source || "其他",
+          source: sourceLabelForLocal,
+          sourceLevel1: newLead.sourceLevel1 || null,
+          sourceLevel2: newLead.sourceLevel2 || null,
           budget: budgetLabel,
           lastInteraction: 0,
           lastContactAt: new Date().toISOString(),
@@ -1035,6 +1369,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
           teamId: profile.teamId,
           grade: newLead.grade || null,
           tags:
+
             newLead.tags
               .split(",")
               .map((tag) => tag.trim())
@@ -1042,7 +1377,18 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
           interactions: [],
         },
       ])
-      setNewLead({ company: "", contact: "", phone: "", source: "", budget: "", owner: "", grade: "", tags: "" })
+      setNewLead({
+        company: "",
+        contact: "",
+        phone: "",
+        sourceLevel1: "",
+        sourceLevel2: "",
+        budget: "",
+        owner: "",
+        grade: "",
+        tags: "",
+      })
+
       setDialogOpen(false)
       toast.success("线索添加成功", {
         description: `${newLead.company} 已添加到 L1 询盘阶段`,
@@ -1084,8 +1430,9 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       const interactionsFromDb: Interaction[] =
         data?.map((row: any, index: number) => {
           const authorId = (row.author_id as string | null) ?? null
-          const authorName =
-            (authorId && salesReps.find((rep) => rep.id === authorId)?.name) || "未知成员"
+          const authorRep = authorId ? salesReps.find((rep) => rep.id === authorId) : undefined
+          const authorName = authorRep?.name || "未知成员"
+          const avatarUrl = authorRep?.avatarUrl ?? undefined
 
           return {
             id: index + 1,
@@ -1096,9 +1443,11 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
             content: row.content ?? "",
             date: row.created_at ? new Date(row.created_at).toISOString().split("T")[0] : "",
             user: authorName,
+            avatar: avatarUrl,
             authorId: authorId ?? undefined,
           }
         }) ?? []
+
 
       setLeads((prevLeads) =>
         prevLeads.map((lead) =>
@@ -1264,6 +1613,8 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
       const authorRep = salesReps.find((rep) => rep.id === profile.id)
       const authorName = authorRep?.name ?? "当前用户"
+      const avatarUrl = authorRep?.avatarUrl ?? undefined
+
 
       const { error } = await supabase.from("lead_notes").insert({
         lead_id: selectedLead.id,
@@ -1322,8 +1673,10 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
         content: followUp.content,
         date: new Date().toISOString().split("T")[0],
         user: authorName,
+        avatar: avatarUrl,
         authorId: profile.id,
       }
+
 
       setLeads(
         leads.map((l) =>
@@ -1449,9 +1802,15 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     }
 
     const sourceValue = editLead.source
-    if (sourceValue && sourceValue !== selectedLead.source) {
-      patch.source = sourceValue
+    if (sourceValue && sourceValue !== selectedLead.sourceLevel2) {
+      const selectedOption = sourceOptions.find((option) => option.key === sourceValue)
+      if (selectedOption) {
+        patch.source = selectedOption.label
+        patch.source_level1 = selectedOption.level1Key
+        patch.source_level2 = selectedOption.key
+      }
     }
+
 
     const gradeValue = editLead.grade.trim()
     if (gradeValue && gradeValue !== (selectedLead.grade ?? "")) {
@@ -1493,6 +1852,11 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       const budgetLabel =
         budgetValue != null ? `¥${budgetValue.toLocaleString("zh-CN")}` : selectedLead.budget
 
+      const updatedSourceLabel =
+        editLead.source
+          ? sourceOptions.find((option) => option.key === editLead.source)?.label || selectedLead.source
+          : selectedLead.source
+
       setLeads((prev) =>
         prev.map((l) =>
           l.id === selectedLead.id
@@ -1502,7 +1866,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                 contact: editLead.contact.trim() || l.contact,
                 phone: editLead.phone.trim(),
                 wechat: editLead.wechat.trim() || l.wechat,
-                source: editLead.source || l.source,
+                source: updatedSourceLabel,
                 budget: budgetLabel,
               }
             : l,
@@ -1517,11 +1881,12 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
               contact: editLead.contact.trim() || prev.contact,
               phone: editLead.phone.trim(),
               wechat: editLead.wechat.trim() || prev.wechat,
-              source: editLead.source || prev.source,
+              source: updatedSourceLabel,
               budget: budgetLabel,
             }
           : prev,
       )
+
 
       // 为了保证列表与详情和看板完全同步，这里在本地更新后触发一次数据重载
       retryLoad()
@@ -1628,13 +1993,23 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       return false
     }
 
-    if (sourceFilter !== "all" && lead.source !== sourceFilter) {
-      return false
+    // 渠道筛选：一级与二级分别可选，语义与“新增线索”保持一致
+    if (sourceLevel1Filter !== "all") {
+      if (!lead.sourceLevel1 || lead.sourceLevel1 !== sourceLevel1Filter) {
+        return false
+      }
+    }
+
+    if (sourceLevel2Filter !== "all") {
+      if (!lead.sourceLevel2 || lead.sourceLevel2 !== sourceLevel2Filter) {
+        return false
+      }
     }
 
     if (ownerFilter !== "all" && lead.ownerId && lead.ownerId !== ownerFilter) {
       return false
     }
+
 
     if (gradeFilter !== "all") {
       if (!lead.grade || lead.grade !== gradeFilter) {
@@ -1769,20 +2144,47 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                 />
               </div>
             <div className="space-y-2">
-              <Label htmlFor="source">来源</Label>
-              <Select value={newLead.source} onValueChange={(value) => setNewLead({ ...newLead, source: value })}>
+              <Label htmlFor="source-level1">一级渠道 *</Label>
+              <Select
+                value={newLead.sourceLevel1}
+                onValueChange={(value) => setNewLead((prev) => ({ ...prev, sourceLevel1: value, sourceLevel2: "" }))}
+              >
                 <SelectTrigger>
-                  <SelectValue placeholder="选择来源" />
+                  <SelectValue placeholder="选择一级渠道" />
                 </SelectTrigger>
                 <SelectContent>
-                  {sources.map((source) => (
-                    <SelectItem key={source} value={source}>
-                      {source}
+                  {level1Options.map((channel) => (
+                    <SelectItem key={channel.key} value={channel.key}>
+                      {channel.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="source-level2">二级渠道（可选）</Label>
+              <Select
+                value={newLead.sourceLevel2}
+                onValueChange={(value) => setNewLead((prev) => ({ ...prev, sourceLevel2: value }))}
+                disabled={getChildrenForLevel1(newLead.sourceLevel1).length === 0}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder={
+                    getChildrenForLevel1(newLead.sourceLevel1).length === 0
+                      ? "当前一级渠道下暂无二级渠道"
+                      : "选择二级渠道（可选）"
+                  } />
+                </SelectTrigger>
+                <SelectContent>
+                  {getChildrenForLevel1(newLead.sourceLevel1).map((child) => (
+                    <SelectItem key={child.key} value={child.key}>
+                      {child.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
             <div className="space-y-2">
               <Label htmlFor="grade">客户级别</Label>
               <Select value={newLead.grade} onValueChange={(value) => setNewLead({ ...newLead, grade: value })}>
@@ -1790,13 +2192,15 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                   <SelectValue placeholder="可选：S/A/B/C" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="S">S级（强成交 / 立即跟进）</SelectItem>
-                  <SelectItem value="A">A级（重点培育 / 近期可成交）</SelectItem>
-                  <SelectItem value="B">B级（普通意向 / 需持续教育）</SelectItem>
-                  <SelectItem value="C">C级（低优先级 / 长期培育）</SelectItem>
+                  {gradeOptions.map((grade) => (
+                    <SelectItem key={grade.key} value={grade.key}>
+                      {grade.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
+
             <div className="space-y-2">
               <Label htmlFor="tags">标签</Label>
               <Input
@@ -1888,13 +2292,15 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                   const filters: LeadViewFilters = {
                     searchQuery,
                     stageFilter,
-                    sourceFilter,
+                    sourceLevel1Filter,
+                    sourceLevel2Filter,
                     ownerFilter,
                     timeFilter,
                     gradeFilter,
                     tagFilter,
                     sortOption,
                   }
+
 
                   const { data, error } = await supabase
                     .from("lead_view_presets")
@@ -1952,16 +2358,22 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
             <div className="space-y-4">
               <div className="space-y-2">
-                <p className="text-xs text-muted-foreground">来源</p>
-                <Select value={sourceFilter} onValueChange={setSourceFilter}>
+                <p className="text-xs text-muted-foreground">一级渠道</p>
+                <Select
+                  value={sourceLevel1Filter}
+                  onValueChange={(value) => {
+                    setSourceLevel1Filter(value)
+                    setSourceLevel2Filter("all")
+                  }}
+                >
                   <SelectTrigger>
-                    <SelectValue placeholder="全部来源" />
+                    <SelectValue placeholder="全部一级渠道" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">全部来源</SelectItem>
-                    {sources.map((source) => (
-                      <SelectItem key={source} value={source}>
-                        {source}
+                    <SelectItem value="all">全部一级渠道</SelectItem>
+                    {level1Options.map((channel) => (
+                      <SelectItem key={channel.key} value={channel.key}>
+                        {channel.label}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -1969,6 +2381,42 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
               </div>
 
               <div className="space-y-2">
+                <p className="text-xs text-muted-foreground">二级渠道</p>
+                <Select
+                  value={sourceLevel2Filter}
+                  onValueChange={setSourceLevel2Filter}
+                  disabled={
+                    sourceLevel1Filter === "all" ||
+                    getChildrenForLevel1(sourceLevel1Filter).length === 0
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue
+                      placeholder={
+                        sourceLevel1Filter === "all" ||
+                        getChildrenForLevel1(sourceLevel1Filter).length === 0
+                          ? "请选择一级渠道后筛选二级渠道"
+                          : "全部二级渠道"
+                      }
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">
+                      {getChildrenForLevel1(sourceLevel1Filter).length === 0
+                        ? "当前一级渠道下暂无二级渠道"
+                        : "全部二级渠道"}
+                    </SelectItem>
+                    {getChildrenForLevel1(sourceLevel1Filter).map((child) => (
+                      <SelectItem key={child.key} value={child.key}>
+                        {child.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+
                 <p className="text-xs text-muted-foreground">客户级别</p>
                 <Select value={gradeFilter} onValueChange={setGradeFilter}>
                   <SelectTrigger>
@@ -1976,13 +2424,15 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">全部级别</SelectItem>
-                    <SelectItem value="S">S 级</SelectItem>
-                    <SelectItem value="A">A 级</SelectItem>
-                    <SelectItem value="B">B 级</SelectItem>
-                    <SelectItem value="C">C 级</SelectItem>
+                    {gradeOptions.map((grade) => (
+                      <SelectItem key={grade.key} value={grade.key}>
+                        {grade.label}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
+
 
               <div className="space-y-2">
                 <p className="text-xs text-muted-foreground">标签关键词</p>
@@ -2030,11 +2480,13 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                   variant="outline"
                   size="sm"
                   onClick={() => {
-                    setSourceFilter("all")
+                    setSourceLevel1Filter("all")
+                    setSourceLevel2Filter("all")
                     setGradeFilter("all")
                     setTagFilter("")
                     setSortOption("recent")
                   }}
+
                 >
                   重置高级筛选
                 </Button>
@@ -2127,11 +2579,27 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       {/* Risk Alert（仅统计未成交线索） */}
 
       {(() => {
-        const activeLeadsForRisk = filteredLeads.filter((lead) => lead.stage !== "Won")
-        const urgentCount = activeLeadsForRisk.filter((lead) => lead.lastInteraction >= 7).length
-        const warningCount = activeLeadsForRisk.filter(
-          (lead) => lead.lastInteraction >= 3 && lead.lastInteraction < 7,
-        ).length
+        const activeLeadsForRisk = filteredLeads.filter((lead) => lead.status === "open" && lead.stage !== "Won")
+        const { warningHours, dangerHours } = riskConfigRef.current
+
+
+
+        const nowMs = Date.now()
+
+        const urgentCount = activeLeadsForRisk.filter((lead) => {
+          const lastContactAt = lead.lastContactAt ? new Date(lead.lastContactAt) : lead.createdAt ? new Date(lead.createdAt) : null
+          if (!lastContactAt) return true
+          const diffHours = (nowMs - lastContactAt.getTime()) / (1000 * 60 * 60)
+          return diffHours >= dangerHours
+        }).length
+
+        const warningCount = activeLeadsForRisk.filter((lead) => {
+          const lastContactAt = lead.lastContactAt ? new Date(lead.lastContactAt) : lead.createdAt ? new Date(lead.createdAt) : null
+          if (!lastContactAt) return false
+          const diffHours = (nowMs - lastContactAt.getTime()) / (1000 * 60 * 60)
+          return diffHours >= warningHours && diffHours < dangerHours
+        }).length
+
 
         if (urgentCount === 0 && warningCount === 0) {
           return (
@@ -2153,8 +2621,9 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                 {urgentCount} 条未成交线索需要紧急跟进
               </p>
               <p className="text-xs text-red-600">
-                超过 7 天未互动的在谈线索将被视为高风险，建议优先联系；3–6 天未互动的在谈线索共有 {warningCount} 条。
+                超过配置的红色风险阈值未互动的在谈线索将被视为高风险，建议优先联系；超过黄色预警阈值但尚未达到红色风险阈值的在谈线索共有 {warningCount} 条。
               </p>
+
             </div>
           </div>
         )
@@ -2177,8 +2646,9 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
               </div>
               <div className="space-y-3 min-h-[200px] md:min-h-[400px] p-2 rounded-lg">
                 {stageLeads.map((lead) => (
-                  <LeadCard key={lead.id} lead={lead} onClick={() => handleLeadClick(lead)} />
+                  <LeadCard key={lead.id} lead={lead} onClick={() => handleLeadClick(lead)} riskConfig={riskConfigRef.current} />
                 ))}
+
               </div>
             </div>
           )
@@ -2304,8 +2774,82 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
               </SheetHeader>
 
               <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                {/* 生命周期阶段视图 */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-muted-foreground">生命周期阶段</p>
+                    {selectedLead.status === "closed" && (
+                      <span className="text-[11px] text-muted-foreground">
+                        {selectedLead.closeResult === "won" || selectedLead.stage === "Won"
+                          ? "已成交"
+                          : "已关闭（未成交）"}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {stages.map((stage, index) => {
+                      const currentIndex = stages.findIndex((s) => s.id === selectedLead.stage)
+                      const isActive = stage.id === selectedLead.stage
+                      const isPassed = currentIndex !== -1 && index < currentIndex
+
+                      return (
+                        <div key={stage.id} className="flex items-center gap-2">
+                          <div
+                            className={
+                              isActive
+                                ? "w-6 h-6 rounded-full flex items-center justify-center text-[11px] bg-primary text-primary-foreground"
+                                : isPassed
+                                  ? "w-6 h-6 rounded-full flex items-center justify-center text-[11px] bg-primary/10 text-primary"
+                                  : "w-6 h-6 rounded-full flex items-center justify-center text-[11px] bg-muted text-muted-foreground"
+                            }
+                          >
+                            {index + 1}
+                          </div>
+                          <span
+                            className={
+                              isActive
+                                ? "text-[11px] text-foreground font-medium"
+                                : "text-[11px] text-muted-foreground"
+                            }
+                          >
+                            {getStageConfig(stage.id).label}
+                          </span>
+                          {index < stages.length - 1 && (
+                            <div
+                              className={
+                                currentIndex > index
+                                  ? "h-px w-6 bg-primary/70"
+                                  : "h-px w-6 bg-muted"
+                              }
+                            />
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                {selectedLead.status === "closed" && (
+                  <div className="mt-2 rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground flex flex-col gap-1">
+                    <span>
+                      关闭结果：
+                      <span className="font-medium text-foreground">
+                        {selectedLead.closeResult === "won" ? "成交" : "丢单"}
+                      </span>
+                    </span>
+                    {selectedLead.closeReason && (
+                      <span>
+                        关闭原因：
+                        <span className="font-medium text-foreground">{selectedLead.closeReason}</span>
+                      </span>
+                    )}
+                  </div>
+                )}
+
                 {/* 锁单与保护期状态 */}
+
                 {selectedLead && selectedLead.firstContactAt && (
+
                   <div className="flex flex-wrap items-center gap-3 rounded-md bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
                     <span>
                       首次有效联系：
@@ -2337,7 +2881,68 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                   </div>
                 )}
 
+                {/* 下一步行动模块：仅在在谈线索时展示，成交/丢单不再提示下一步行动 */}
+                {selectedLead && selectedLead.status === "open" && (
+                  <div className="space-y-2 rounded-md border border-primary/20 bg-primary/5 px-3 py-3 text-xs text-muted-foreground">
+
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="inline-flex items-center gap-1 font-medium text-primary">
+                        <Clock className="w-3 h-3" />
+                        下一步行动
+                      </p>
+                      {selectedLead.nextContactAt && (
+                        <span className="rounded-full bg-emerald-500/10 text-emerald-700 px-2 py-0.5 text-[11px]">
+                          下次跟进已安排
+                        </span>
+                      )}
+                    </div>
+                    <div className="space-y-1">
+                      {selectedLead.nextContactAt ? (
+                        <p className="text-xs">
+                          下次跟进日期：
+                          <span className="font-medium text-foreground">
+                            {new Date(selectedLead.nextContactAt).toLocaleDateString("zh-CN")}
+                          </span>
+                        </p>
+                      ) : (
+                        <p className="text-xs">
+                          当前尚未设置下一步行动，
+                          <span className="font-medium text-foreground">建议补充一个下次跟进日期</span>
+                          ，避免线索长时间无人触达。
+                        </p>
+                      )}
+                      {selectedLead.lastContactAt && (
+                        <p className="text-[11px] text-muted-foreground">
+                          最近一次跟进：
+                          {new Date(selectedLead.lastContactAt).toLocaleString("zh-CN", { hour12: false })}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pt-1">
+                      {!selectedLead.nextContactAt && (
+                        <p className="text-[11px] text-muted-foreground">
+                          在下方「记录跟进」时选择下次跟进日期，即可自动生成下一步行动。
+                        </p>
+                      )}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full sm:w-auto"
+                        onClick={() => {
+                          const el = document.getElementById("lead-followup-section")
+                          if (el) {
+                            el.scrollIntoView({ behavior: "smooth", block: "start" })
+                          }
+                        }}
+                      >
+                        立即记录一次跟进
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
                 {/* Key Info Grid */}
+
                 <div className="grid grid-cols-2 gap-4">
 
                   <div className="space-y-1">
@@ -2396,13 +3001,14 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                           <SelectValue placeholder="选择来源" />
                         </SelectTrigger>
                         <SelectContent>
-                          {sources.map((source) => (
-                            <SelectItem key={source} value={source}>
-                              {source}
+                          {sourceOptions.map((option) => (
+                            <SelectItem key={option.key} value={option.key}>
+                              {option.label}
                             </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
+
                     ) : (
                       <Badge variant="secondary">{selectedLead.source}</Badge>
                     )}
@@ -2428,13 +3034,14 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                         onValueChange={(value) => setEditLead({ ...editLead, grade: value })}
                       >
                         <SelectTrigger className="h-8 text-sm">
-                          <SelectValue placeholder="可选：S/A/B/C" />
+                          <SelectValue placeholder="选择客户级别" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="S">S级（强成交 / 立即跟进）</SelectItem>
-                          <SelectItem value="A">A级（重点培育 / 近期可成交）</SelectItem>
-                          <SelectItem value="B">B级（普通意向 / 需持续教育）</SelectItem>
-                          <SelectItem value="C">C级（低优先级 / 长期培育）</SelectItem>
+                          {gradeOptions.map((grade) => (
+                            <SelectItem key={grade.key} value={grade.key}>
+                              {grade.label}
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     ) : selectedLead.grade ? (
@@ -2443,6 +3050,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                       <p className="text-sm text-muted-foreground">未设置</p>
                     )}
                   </div>
+
                   <div className="space-y-1 col-span-2">
                     <p className="text-xs text-muted-foreground">标签</p>
                     {isEditing ? (
@@ -2488,9 +3096,12 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                   )}
                 </div>
 
-                {/* Log Follow-up Section */}
-                <div className="space-y-3">
+                {/* Log Follow-up Section：仅在在谈线索时允许新增跟进，成交/丢单仅保留历史记录 */}
+                {selectedLead?.status === "open" && (
+                  <div id="lead-followup-section" className="space-y-3">
+
                   <h4 className="text-sm font-semibold text-foreground">记录跟进</h4>
+
                   <Textarea
                     placeholder="输入跟进内容..."
                     value={followUp.content}
@@ -2530,8 +3141,10 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                     保存跟进记录
                   </Button>
                 </div>
+                )}
 
                 {/* Interaction Timeline */}
+
                 <div className="space-y-3">
                   <h4 className="text-sm font-semibold text-foreground">互动记录</h4>
                   <div className="space-y-0">

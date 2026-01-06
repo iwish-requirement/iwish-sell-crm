@@ -234,7 +234,7 @@ export function PublicPool() {
         const { data, error } = await supabase
           .from("leads_secure_view")
           .select(
-            "id, name, stage, status, source, customer_name, customer_phone, budget, updated_at, created_by",
+            "id, name, stage, status, source, customer_name, customer_phone, budget, updated_at, created_by, team_id, owner_id",
           )
           .eq("status", "pool")
           .order("updated_at", { ascending: false })
@@ -255,8 +255,11 @@ export function PublicPool() {
           return
         }
 
-        const ids =
-          data?.map((row: any) => row.id as string).filter((id: string | null) => !!id) ?? []
+        const rawRows = (data ?? []) as any[]
+
+        const ids = rawRows.map((row: any) => row.id as string).filter((id: string | null) => !!id) ?? []
+
+
         const reasonsByLeadId: Record<
           string,
           {
@@ -292,7 +295,9 @@ export function PublicPool() {
         }
 
         const mapped: PoolLead[] =
-          data?.map((row: any) => {
+          rawRows.map((row: any) => {
+
+
             const leadId = row.id as string
             const reasonInfo = reasonsByLeadId[leadId]
             const returnedAtDate =
@@ -355,10 +360,14 @@ export function PublicPool() {
     async function loadSalesReps() {
       try {
         const supabase = getBrowserSupabaseClient()
-        const [{ data, error }, exclusionResult] = await Promise.all([
+
+        const [
+          { data, error },
+          { data: exclusionRow, error: exclusionError },
+        ] = await Promise.all([
           supabase
             .from("profiles_public")
-            .select("id, full_name")
+            .select("id, full_name, status")
             .eq("status", "active"),
           supabase
             .from("settings")
@@ -378,12 +387,19 @@ export function PublicPool() {
           return
         }
 
+        if (exclusionError && exclusionError.code !== "PGRST116") {
+          console.error(
+            "Failed to load analytics excluded profiles for public pool assignees",
+            exclusionError,
+          )
+        }
+
         setLoadSalesRepsError(null)
 
         const excludedProfileIds = new Set<string>(
-          exclusionResult.data && (exclusionResult.data as any).value &&
-          Array.isArray(((exclusionResult.data as any).value as any).profile_ids)
-            ? (((exclusionResult.data as any).value as any).profile_ids as any[]).filter(
+          exclusionRow && (exclusionRow as any).value &&
+          Array.isArray(((exclusionRow as any).value as any).profile_ids)
+            ? (((exclusionRow as any).value as any).profile_ids as any[]).filter(
                 (v: any) => typeof v === "string",
               )
             : [],
@@ -420,6 +436,7 @@ export function PublicPool() {
         console.error("Failed to load sales reps", err)
       }
     }
+
 
     async function loadJobs() {
       try {

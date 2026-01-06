@@ -17,12 +17,18 @@ export interface LeadSecureRow {
   customer_name: string | null
   customer_phone: string | null
   customer_email: string | null
-  wechat: string | null
   address: string | null
   budget: number | null
   internal_score: number | null
   blacklist_reason: string | null
+  next_contact_at: string | null
+  wechat: string | null
+  customer_grade: string | null
+  source_level1: string | null
+  source_level2: string | null
+  tags: string[] | null
 }
+
 
 
 export interface LeadSecureQueryParams {
@@ -30,7 +36,9 @@ export interface LeadSecureQueryParams {
   teamId?: number
   ownerId?: string
   limit?: number
+  ids?: string[]
 }
+
 
 export async function fetchLeadsSecureView(params: LeadSecureQueryParams = {}): Promise<LeadSecureRow[]> {
   const supabase = getBrowserSupabaseClient()
@@ -38,8 +46,9 @@ export async function fetchLeadsSecureView(params: LeadSecureQueryParams = {}): 
   let query = supabase
     .from("leads_secure_view")
     .select(
-      "id, team_id, owner_id, created_by, name, source, stage, status, close_result, close_reason, last_contact_at, created_at, updated_at, customer_name, customer_phone, customer_email, wechat, address, budget, internal_score, blacklist_reason",
+      "id, team_id, owner_id, created_by, name, source, stage, status, close_result, close_reason, last_contact_at, created_at, updated_at, customer_name, customer_phone, customer_email, address, budget, internal_score, blacklist_reason, next_contact_at, wechat, customer_grade, source_level1, source_level2, tags",
     )
+
 
 
   if (params.status) {
@@ -54,9 +63,14 @@ export async function fetchLeadsSecureView(params: LeadSecureQueryParams = {}): 
     query = query.eq("owner_id", params.ownerId)
   }
 
+  if (params.ids && params.ids.length > 0) {
+    query = query.in("id", params.ids)
+  }
+
   if (params.limit !== undefined && params.limit > 0) {
     query = query.limit(params.limit)
   }
+
 
   const { data, error } = await query
 

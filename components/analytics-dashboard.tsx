@@ -56,6 +56,17 @@ type SourceConversionItem = {
   rate: number
 }
 
+type SourceRoiItem = {
+  source: string
+  leads: number
+  won: number
+  winRate: number
+  newAmount: number
+  renewalAmount: number
+  totalAmount: number
+  revenuePerLead: number
+}
+
 type TeamLeaderboardRow = {
   id: string
   name: string
@@ -92,9 +103,14 @@ export function AnalyticsDashboard() {
   const [funnelData, setFunnelData] = useState<FunnelItem[]>([])
   const [sourceVolumeData, setSourceVolumeData] = useState<SourceVolumeItem[]>([])
   const [sourceConversionData, setSourceConversionData] = useState<SourceConversionItem[]>([])
+  const [sourceRoiData, setSourceRoiData] = useState<SourceRoiItem[]>([])
   const [teamData, setTeamData] = useState<TeamLeaderboardRow[]>([])
   const [poolLeadsCount, setPoolLeadsCount] = useState<number | null>(null)
   const [currentProfile, setCurrentProfile] = useState<UserProfile | null>(null)
+  const [contractExpiringSoon, setContractExpiringSoon] = useState(0)
+  const [contractExpiredRecently, setContractExpiredRecently] = useState(0)
+  const [contractNewAmount, setContractNewAmount] = useState(0)
+  const [contractRenewalAmount, setContractRenewalAmount] = useState(0)
   const mePermissions = useContext(MePermissionsContext)
 
   const leadScopeType = mePermissions?.leadScopeType ?? "self"
@@ -179,6 +195,8 @@ export function AnalyticsDashboard() {
       const [
         { data, error },
         { data: teamExclusionRow, error: teamExclusionError },
+        { data: profileExclusionRow, error: profileExclusionError },
+        { data: contractRows, error: contractsError },
       ] = await Promise.all([
         supabase
           .from("leads_secure_view")
@@ -188,6 +206,14 @@ export function AnalyticsDashboard() {
           .select("value")
           .eq("key", "analytics.excluded_teams")
           .maybeSingle(),
+        supabase
+          .from("settings")
+          .select("value")
+          .eq("key", "analytics.excluded_profiles")
+          .maybeSingle(),
+        supabase
+          .from("contracts_secure_view")
+          .select("id, lead_id, end_date, is_renewal, amount, signed_at"),
       ])
 
       if (error) {
@@ -196,8 +222,15 @@ export function AnalyticsDashboard() {
         return
       }
 
+      if (contractsError) {
+        console.error("Failed to load contracts for analytics", contractsError)
+      }
+
       if (teamExclusionError && teamExclusionError.code !== "PGRST116") {
         console.error("Failed to load analytics excluded teams for analytics data", teamExclusionError)
+      }
+      if (profileExclusionError && profileExclusionError.code !== "PGRST116") {
+        console.error("Failed to load analytics excluded profiles for analytics data", profileExclusionError)
       }
 
       const excludedTeamIds = new Set<number>(
@@ -209,20 +242,42 @@ export function AnalyticsDashboard() {
           : [],
       )
 
+      const excludedProfileIds = new Set<string>(
+        profileExclusionRow && (profileExclusionRow as any).value &&
+        Array.isArray(((profileExclusionRow as any).value as any).profile_ids)
+          ? (((profileExclusionRow as any).value as any).profile_ids as any[]).filter(
+              (v: any) => typeof v === "string",
+            )
+          : [],
+      )
+
       const leads = (data ?? []) as LeadSecureRow[]
 
-      const poolCount = leads.filter((lead) => lead.status === "pool").length
+      const nonExcludedLeads = leads.filter((lead) => {
+        const teamId = (lead.team_id as number | null) ?? null
+        if (teamId != null && excludedTeamIds.has(teamId)) {
+          return false
+        }
+        const ownerId = (lead.owner_id as string | null) ?? null
+        if (ownerId && excludedProfileIds.has(ownerId)) {
+          return false
+        }
+        return true
+      })
+
+      const poolCount = nonExcludedLeads.filter((lead) => lead.status === "pool").length
       setPoolLeadsCount(poolCount)
 
-      const filteredLeads = leads.filter((lead) => {
-        // 只统计当前仍在个人名下的正常线索：排除公海池、配置排除的团队以及任何非 open/closed 状态
+      const now = new Date()
+      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+      const end30 = new Date(startOfToday.getTime() + 30 * 24 * 60 * 60 * 1000)
+
+      const filteredLeads = nonExcludedLeads.filter((lead) => {
+        // 只统计当前仍在个人名下的正常线索：排除公海池以及任何非 open/closed 状态
         if (lead.status === "pool") {
           return false
         }
         if (lead.status !== "open" && lead.status !== "closed") {
-          return false
-        }
-        if (lead.team_id != null && excludedTeamIds.has(lead.team_id)) {
           return false
         }
 
@@ -257,6 +312,82 @@ export function AnalyticsDashboard() {
         }
         return createdAt >= dateRange.from! && createdAt <= dateRange.to!
       })
+
+      if (filteredLeads.length === 0) {
+        setFunnelData([])
+        setSourceVolumeData([])
+        setSourceConversionData([])
+        setSourceRoiData([])
+        setTeamData([])
+        setIsLoading(false)
+        return
+      }
+
+      const contracts = (contractRows ?? []) as any[]
+      const leadById = new Map<string, LeadSecureRow>()
+      for (const lead of filteredLeads) {
+        const id = lead.id
+        if (typeof id === "string") {
+          leadById.set(id, lead)
+        }
+      }
+      const revenueBySource = new Map<string, { newAmount: number; renewalAmount: number }>()
+      let expiringSoon = 0
+      let expiredRecently = 0
+      let newAmount = 0
+      let renewalAmount = 0
+
+      if (contracts.length > 0 && dateRange?.from && dateRange?.to) {
+        const allowedLeadIds = new Set(filteredLeads.map((lead) => lead.id))
+
+        for (const row of contracts) {
+          const leadId = (row.lead_id as string | null) ?? null
+          if (!leadId || !allowedLeadIds.has(leadId)) {
+            continue
+          }
+
+          const endDateStr = row.end_date as string | null
+          const signedAtStr = row.signed_at as string | null
+          const isRenewal = Boolean(row.is_renewal)
+          const amount = (row.amount as number) ?? 0
+
+          if (endDateStr) {
+            const endDate = new Date(endDateStr)
+            if (endDate >= dateRange.from && endDate <= dateRange.to) {
+              if (endDate >= startOfToday && endDate <= end30) {
+                expiringSoon += 1
+              } else if (endDate < startOfToday) {
+                expiredRecently += 1
+              }
+            }
+          }
+
+          if (signedAtStr) {
+            const signedAt = new Date(signedAtStr)
+            if (signedAt >= dateRange.from && signedAt <= dateRange.to) {
+              const lead = leadById.get(leadId)
+              const sourceKey = lead && (lead as any).source ? ((lead as any).source as string) : "其他"
+              const currentRevenue =
+                revenueBySource.get(sourceKey) ?? { newAmount: 0, renewalAmount: 0 }
+
+              if (isRenewal) {
+                renewalAmount += amount
+                currentRevenue.renewalAmount += amount
+              } else {
+                newAmount += amount
+                currentRevenue.newAmount += amount
+              }
+
+              revenueBySource.set(sourceKey, currentRevenue)
+            }
+          }
+        }
+      }
+
+      setContractExpiringSoon(expiringSoon)
+      setContractExpiredRecently(expiredRecently)
+      setContractNewAmount(newAmount)
+      setContractRenewalAmount(renewalAmount)
 
       if (filteredLeads.length === 0) {
         setFunnelData([])
@@ -357,6 +488,7 @@ export function AnalyticsDashboard() {
       const palette = ["#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899", "#6366f1"]
       const nextSourceVolume: SourceVolumeItem[] = []
       const nextSourceConversion: SourceConversionItem[] = []
+      const nextSourceRoi: SourceRoiItem[] = []
       let colorIndex = 0
 
       for (const [source, value] of sourceCounts.entries()) {
@@ -373,7 +505,26 @@ export function AnalyticsDashboard() {
           converted: value.converted,
           rate: value.leads === 0 ? 0 : Number(((value.converted / value.leads) * 100).toFixed(1)),
         })
+
+        const revenue = revenueBySource.get(source) ?? { newAmount: 0, renewalAmount: 0 }
+        const totalAmount = revenue.newAmount + revenue.renewalAmount
+        const won = value.converted
+        const winRate = value.leads === 0 ? 0 : (won / value.leads) * 100
+        const revenuePerLead = value.leads === 0 ? 0 : totalAmount / value.leads
+
+        nextSourceRoi.push({
+          source,
+          leads: value.leads,
+          won,
+          winRate,
+          newAmount: revenue.newAmount,
+          renewalAmount: revenue.renewalAmount,
+          totalAmount,
+          revenuePerLead,
+        })
       }
+
+      nextSourceRoi.sort((a, b) => b.totalAmount - a.totalAmount || b.winRate - a.winRate)
 
       const ownerStats = new Map<string, { leads: number; won: number; value: number }>()
       for (const lead of filteredLeads) {
@@ -574,6 +725,7 @@ export function AnalyticsDashboard() {
       setFunnelData(nextFunnelData)
       setSourceVolumeData(nextSourceVolume)
       setSourceConversionData(nextSourceConversion)
+      setSourceRoiData(nextSourceRoi)
       setTeamData(nextTeamData)
 
       setIsLoading(false)
@@ -688,6 +840,29 @@ export function AnalyticsDashboard() {
           rep.value.toFixed(0),
         ])
       })
+    } else if (dataType === "source-roi") {
+      rows.push([
+        "来源渠道",
+        "线索数",
+        "成交数",
+        "成交率(%)",
+        "首单金额(元)",
+        "续费金额(元)",
+        "总金额(元)",
+        "单线索金额(元)",
+      ])
+      sourceRoiData.forEach((row) => {
+        rows.push([
+          row.source,
+          String(row.leads),
+          String(row.won),
+          row.leads === 0 ? "0" : row.winRate.toFixed(1),
+          row.newAmount.toFixed(0),
+          row.renewalAmount.toFixed(0),
+          row.totalAmount.toFixed(0),
+          row.leads === 0 ? "0" : row.revenuePerLead.toFixed(0),
+        ])
+      })
     }
 
     if (rows.length === 0) {
@@ -717,6 +892,7 @@ export function AnalyticsDashboard() {
       "source-volume": "lead-source-volume.csv",
       "source-conversion": "lead-source-conversion.csv",
       "team-leaderboard": "team-leaderboard.csv",
+      "source-roi": "lead-source-roi.csv",
     }
     link.download = fileNameMap[dataType] ?? "analytics-export.csv"
     document.body.appendChild(link)
@@ -826,6 +1002,58 @@ export function AnalyticsDashboard() {
             </SelectContent>
           </Select>
         )}
+      </div>
+
+      {/* 合同与续费概览 */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-semibold">未来 30 天到期合同</CardTitle>
+            <CardDescription>在当前筛选时间范围内，服务将在未来 30 天内到期的合同数量。</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-2xl font-semibold text-destructive">{contractExpiringSoon}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-semibold">已到期合同</CardTitle>
+            <CardDescription>在当前筛选时间范围内，已到期但仍在统计范围内的合同。</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-2xl font-semibold text-foreground">{contractExpiredRecently}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-semibold">新签 vs 续费金额</CardTitle>
+            <CardDescription>当前筛选时间内的合同签约金额拆分。</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-1 text-xs text-muted-foreground">
+              <div className="flex items-center justify-between">
+                <span>首单合同金额</span>
+                <span className="font-semibold text-foreground">
+                  {new Intl.NumberFormat("zh-CN", {
+                    style: "currency",
+                    currency: "CNY",
+                    maximumFractionDigits: 0,
+                  }).format(contractNewAmount || 0)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span>续费合同金额</span>
+                <span className="font-semibold text-emerald-600">
+                  {new Intl.NumberFormat("zh-CN", {
+                    style: "currency",
+                    currency: "CNY",
+                    maximumFractionDigits: 0,
+                  }).format(contractRenewalAmount || 0)}
+                </span>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       {/* Chart 1: Sales Funnel with Conversion Rates */}
@@ -972,6 +1200,91 @@ export function AnalyticsDashboard() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Source ROI Table */}
+      <Card>
+        <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between pb-2 gap-2">
+          <div>
+            <CardTitle className="text-base font-semibold">来源 ROI 指标</CardTitle>
+            <CardDescription>按来源贯通线索→成交→合同金额（首单 + 续费）。</CardDescription>
+          </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm">
+                <Download className="h-4 w-4 mr-2" />
+                导出
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => handleDownloadCSV("source-roi")}>
+                下载 CSV
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </CardHeader>
+        <CardContent className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>来源渠道</TableHead>
+                <TableHead className="text-right">线索数</TableHead>
+                <TableHead className="text-right">成交数</TableHead>
+                <TableHead className="text-right">成交率</TableHead>
+                <TableHead className="text-right">首单金额</TableHead>
+                <TableHead className="text-right">续费金额</TableHead>
+                <TableHead className="text-right">总金额</TableHead>
+                <TableHead className="text-right">单线索金额</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {sourceRoiData.map((row) => (
+                <TableRow key={row.source}>
+                  <TableCell>{row.source}</TableCell>
+                  <TableCell className="text-right">{row.leads}</TableCell>
+                  <TableCell className="text-right">{row.won}</TableCell>
+                  <TableCell className="text-right">
+                    {row.leads === 0 ? (
+                      <span className="text-muted-foreground">--</span>
+                    ) : (
+                      <span className="font-semibold">{row.winRate.toFixed(1)}%</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {new Intl.NumberFormat("zh-CN", {
+                      style: "currency",
+                      currency: "CNY",
+                      maximumFractionDigits: 0,
+                    }).format(row.newAmount || 0)}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {new Intl.NumberFormat("zh-CN", {
+                      style: "currency",
+                      currency: "CNY",
+                      maximumFractionDigits: 0,
+                    }).format(row.renewalAmount || 0)}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {new Intl.NumberFormat("zh-CN", {
+                      style: "currency",
+                      currency: "CNY",
+                      maximumFractionDigits: 0,
+                    }).format(row.totalAmount || 0)}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {row.leads === 0 ? (
+                      <span className="text-muted-foreground">--</span>
+                    ) : (
+                      <span>
+                        ¥{(row.revenuePerLead / 10000).toFixed(1)}万
+                      </span>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
 
       {/* Chart 3: Team Activity Leaderboard */}
       <Card>

@@ -3,7 +3,69 @@
 > 本文件用于记录 AI 助手在本仓库内做出的重要结构/逻辑变更，方便你审计、回顾与回滚。
 > 按时间倒序追加；同一天多次修改可在同一日期下追加小节。
 
+## 2026-01-04
+
+### contracts-entity-and-permissions: 新增合同实体并接入权限与 RLS
+
+**变更点**
+- 新增 `supabase/migrations/031_contracts_entity_and_permissions.sql`：
+  - 创建 `public.contracts` 表，作为与 `public.leads` 一对一关联的合同实体，字段包含 `contract_number/title/amount/currency/signed_at/start_date/end_date/is_renewal/original_contract_id/status`，并记录 `created_by/created_at/updated_at`，通过触发器复用通用的 `iwish.set_updated_at`；
+  - 定义枚举类型 `contract_status`（`pending/active/closed/cancelled`）用于约束合同状态字段，并为 `lead_id` 建立唯一约束与索引，确保每条线索至少可以挂一个主合同，后续如需多合同可以通过新增关联表扩展；
+  - 新增权限点 `contracts.read` 与 `contracts.manage`，并在 `role_permissions` 中为 `Sales/Manager/Admin/SuperAdmin` 预置合适的 scope：销售可在 self 范围读取合同，经理在 team 范围读写，Admin/SuperAdmin 在 org 范围读写；
+  - 启用 `public.contracts` 的 RLS，读策略要求当前用户具备 `contracts.read` 且对关联线索拥有 `leads.read` 和 in-scope 权限，写策略（插入/更新/删除）要求具备 `contracts.manage` 且仅能在对线索有 `leads.update` scope 的前提下操作，保证合同数据与线索范围强绑定；
+  - 提供只读视图 `public.contracts_secure_view`，用于前端统一从安全视图读取合同信息，避免直接暴露底表，实现方式与 `public.leads_secure_view` 保持一致风格。
+
+**变更原因（对应 PRD/原型）**
+- PRD 提出“独立成交与合同实体支撑提成和渠道 ROI 统计”，现有实现仅在 `leads` 上记录预算与成交结果，无法表达真实签约金额、起止日期、是否续费等合同语义，也不利于按合同维度做 ROI 分析和后续续费视图；
+- 通过将合同拆成独立实体并复用现有的权限与范围体系（`has_permission + in_scope_for_lead`），可以在不破坏现有线索生命周期的前提下，为后续的“合同详情页”“续费中心”“ROI 报表”提供稳定的数据骨架；
+- 新增的 `contracts.read/contracts.manage` 权限点也会自动出现在 SystemSettings 的角色权限矩阵中，方便你在不同角色之间细化“谁能看合同、谁能编辑合同”的边界。
+
+**影响范围**
+- DB / 权限 / RLS：
+  - 数据库新增 `public.contracts` 表和 `contract_status` 枚举类型，并开启 RLS，所有合同的读取/写入都需同时满足合同权限和线索范围校验；
+  - `permissions` 与 `role_permissions` 增加了两条合同相关权限及其默认角色绑定，不会影响现有 leads/notes 等模块的权限配置；
+  - 新建的 `public.contracts_secure_view` 为前端后续接入合同信息提供了统一入口，避免直接对底表做 select；
+- 前端 / 业务逻辑：
+  - 当前前端尚未读取或写入 `contracts` 表，成交中心与看板的行为保持不变；
+  - 后续在 DealCenter 或客户详情页中加“合同信息”区块时，可以直接基于 `contracts_secure_view` 查询合同数据，并在创建/编辑时遵循本次新增的权限与 RLS 规则。
+
+**回滚方式**
+- 如需回滚，可在新的迁移中依次执行：
+  - `drop view if exists public.contracts_secure_view;`
+  - `drop table if exists public.contracts;`
+  - `delete from public.role_permissions where permission_key in ('contracts.read','contracts.manage');`
+  - `delete from public.permissions where key in ('contracts.read','contracts.manage');`
+  - 如无其他依赖，可选择性删除 `contract_status` 枚举类型；
+- 同时从仓库中移除 `031_contracts_entity_and_permissions.sql` 或在后续迁移中覆盖其效果，前端如已接入合同视图，则需要一并调整，恢复为仅依赖 leads 的成交字段。
+
 ## 2025-12-31
+
+
+### leads-create-structured-fields: 新增线索时写入客户级别与标签
+
+**变更点**
+- 新增 `supabase/migrations/035_lead_create_structured_fields.sql`：
+  - 使用 `create or replace function iwish.rpc_lead_create(payload jsonb)` 扩展线索创建 RPC，在原有权限与范围校验不变的前提下，新增写入 `customer_grade/source_level1/source_level2/tags` 四类结构化字段，并将默认阶段由 `new` 对齐为标准生命周期的 `L1`；
+  - 对 `tags` 字段从 `payload->'tags'` 中安全解析为 `text[]`，未传入时使用空数组，保持与 `023_leads_structured_fields` 中的字段定义一致，避免出现 null/类型不一致问题；
+  - 继续通过 `iwish.audit` 记录创建前后镜像（after snapshot 包含新字段），满足“线索创建必须可审计”的要求。
+- 前端 `components/lead-kanban.tsx` 保持现有 `handleAddLead` 逻辑不变，新建线索时传入的客户级别与标签会通过上述 RPC 落库，刷新后仍能在卡片徽标和详情页中看到。
+
+**变更原因（对应 PRD/原型）**
+- PRD 要求“客户级别 S/A/B/C + 来源分层 + 多标签”形成闭环字段体系，且必须由后端结构化持久化，不能只停留在前端本地状态，否则刷新页面或切换设备时会丢失这些关键信息；
+- 之前只在 `rpc_lead_update` 中支持更新结构化字段，而创建 RPC 仍然只写入基础字段，导致“新增时选了客户级别/标签，刷新后就消失”的体验，与产品预期不符；
+- 通过统一在创建与更新 RPC 中支持这些字段，后续可以安全地在报表、保护期规则以及视图筛选中依赖它们。
+
+**影响范围**
+- DB / RPC：
+  - `iwish.rpc_lead_create` 的签名保持为 `(payload jsonb)`，所有既有调用方无需调整，只是新增解析结构化字段并写入 `public.leads`；
+  - 线索创建时若传入 `customer_grade/source_level1/source_level2/tags`，会与 `023_leads_structured_fields` 定义的字段保持一致，并出现在 `public.leads_secure_view` 的对应列中；
+- 前端 / 业务体验：
+  - 在“新增线索”弹窗中选择的客户级别和填写的标签，在创建成功并刷新数据后会稳定显示在看板卡片与详情页中，不再出现“只在当次会话生效”的情况；
+  - 视图筛选与保存（包括按客户级别和标签关键词筛选）逻辑保持不变，只是其背后的数据现在真正落在数据库中，更适合作为筛选与分析维度。
+
+**回滚方式**
+- 如需回滚，可在后续迁移中用早期版本的 `iwish.rpc_lead_create` 覆盖当前定义（可从 `004_rpc_and_audit.sql` 中还原），并视需要删除或标记 `035_lead_create_structured_fields.sql` 迁移文件；
+- 回滚后，创建线索时的客户级别、来源分层和标签将不再写入底表，但 update RPC 仍然保留对这些字段的支持，前端若需要一致行为需一并协调。
 
 ### leads-lock-and-protection: 锁单与保护期、公海保护规则
 
@@ -254,7 +316,37 @@
 
 ## 2025-12-24
 
+### dashboard-and-kanban-risk-thresholds-config-aligned: 仪表盘与看板风险阈值对齐业务规则配置
+
+**变更点**
+- 更新 `lib/services/dashboard.ts` 中 `fetchDashboardSummary` 的风险线索统计逻辑：
+  - 在原有排除 analytics.excluded_teams / analytics.excluded_profiles 的基础上，增加读取 `settings.key = 'pipeline.business_rules'`；
+  - 若配置中存在 `danger_hours` 且为正数，则将“风险线索” KPI 统计口径从固定的“最近 7 天未跟进”调整为“超过配置的红色风险阈值未跟进”的 open 线索；
+  - 未配置或无权限读取时回退到默认 168 小时（7 天），避免打断现有使用。
+- 更新 `components/lead-kanban.tsx` 中的风险/需跟进标记与顶部风险提醒：
+  - 在加载线索列表时并行读取 `pipeline.business_rules`，将 `warning_hours` / `danger_hours` 注入当前会话的风险配置；
+  - 卡片上的“风险/需跟进” Badge 以及顶部横幅统计不再使用硬编码的 3 天/7 天，而是基于配置的黄色预警阈值与红色风险阈值按小时精确判断，未配置时分别回退为 72 小时与 168 小时；
+  - 文案说明从“超过 7 天未互动视为高风险，3–6 天需跟进”调整为“超过配置的红色风险阈值视为高风险，超过黄色预警但未达红色风险的线索需跟进”，以与配置保持一致。
+
+**变更原因（对应 PRD/原型）**
+- PRD 与 SystemSettings 中已经提供 `pipeline.business_rules` 配置项用于控制公海掉落、预警与风险阈值，但仪表盘“风险线索”卡片与线索看板仍然使用固定的 3 天/7 天规则，导致当你修改阈值配置后界面指标与实际期望严重不符；
+- 将所有风险相关的前端计算统一挂靠在同一套业务规则上，可以避免“改了配置但 UI 还是旧逻辑”的隐性 Bug，也便于后续只通过调整配置来收紧或放宽风险判断标准。
+
+**影响范围**
+- UI / 统计口径：
+  - 仪表盘“风险线索”卡片数值将随 `danger_hours` 配置变化而变化，统计范围始终限定为当前非公海且状态为 open 的线索；
+  - 线索看板上“风险/需跟进”小标记与顶部风险提醒横幅的数量会随预警/风险阈值调整，项级标识与整体提示保持一致；
+  - 对未配置或无读取权限的账号，行为与之前保持一致（3 天预警、7 天风险）。
+- DB / RLS：
+  - 仅新增对 `public.settings` 中 `pipeline.business_rules` 的读取，不修改任何表结构、RLS 策略或 RPC 定义，仍然依赖现有 `settings.read` 权限控制。 
+
+**回滚方式**
+- 如需恢复为固定 3 天/7 天逻辑，可在后续提交中：
+  - 将 `fetchDashboardSummary` 中关于 `pipeline.business_rules` 的读取与 `danger_hours` 应用逻辑移除或注释，直接回退到基于 `diffDays >= 7` 的判断；
+  - 将 `components/lead-kanban.tsx` 中风险配置相关的 Supabase 调用与小时级计算去除，重新使用 `lead.lastInteraction` 的 3 天/7 天硬编码阈值；
+
 ### roles-rename-system-allowed: 系统角色名称支持自定义
+
 
 **变更点**
 - 更新 `components/system-settings.tsx`：

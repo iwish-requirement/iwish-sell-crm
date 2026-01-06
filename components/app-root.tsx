@@ -10,10 +10,16 @@ import { SystemSettings } from "@/components/system-settings"
 import { AnalyticsDashboard } from "@/components/analytics-dashboard"
 import { PublicPool } from "@/components/public-pool"
 import { AuditLog } from "@/components/audit-log"
+import { DealCenter } from "@/components/deal-center"
+import { RenewalCenter } from "@/components/renewal-center"
+
+
 import { getBrowserSupabaseClient } from "@/lib/supabase/client"
 
 
-export type AppView = "dashboard" | "leads" | "pool" | "analytics" | "settings" | "audit"
+export type AppView = "dashboard" | "leads" | "pool" | "deals" | "renewals" | "analytics" | "settings" | "audit"
+
+
 
 export type MePermissions = {
   canAssignLeads: boolean
@@ -24,8 +30,11 @@ export type MePermissions = {
   canViewReports: boolean
   canViewSettings: boolean
   canViewPublicPool: boolean
+  canReadContracts: boolean
+  canManageContracts: boolean
   leadScopeType: "self" | "team" | "org" | "custom"
 }
+
 
 
 
@@ -41,11 +50,21 @@ function getViewFromPathname(pathname: string): AppView {
     return "settings"
   }
 
+  if (pathname.startsWith("/deals")) {
+    return "deals"
+  }
+
+  if (pathname.startsWith("/renewals")) {
+    return "renewals"
+  }
+
   if (pathname.startsWith("/reports")) {
+
     return "analytics"
   }
 
   if (pathname.startsWith("/pool")) {
+
     return "pool"
   }
 
@@ -82,8 +101,11 @@ export function AppRoot() {
             canViewReports: false,
             canViewSettings: false,
             canViewPublicPool: false,
+            canReadContracts: false,
+            canManageContracts: false,
             leadScopeType: "self",
           })
+
           return
         }
 
@@ -97,8 +119,11 @@ export function AppRoot() {
           canViewReports: Boolean(value.canViewReports),
           canViewSettings: Boolean(value.canViewSettings),
           canViewPublicPool: Boolean(value.canViewPublicPool),
+          canReadContracts: Boolean(value.canReadContracts),
+          canManageContracts: Boolean(value.canManageContracts),
           leadScopeType: (value.leadScopeType as MePermissions["leadScopeType"]) ?? "self",
         })
+
       } catch (err) {
         console.error("Unexpected error while loading current user permissions", err)
         if (!isMounted) return
@@ -111,8 +136,11 @@ export function AppRoot() {
           canViewReports: false,
           canViewSettings: false,
           canViewPublicPool: false,
+          canReadContracts: false,
+          canManageContracts: false,
           leadScopeType: "self",
         })
+
       }
     }
 
@@ -133,9 +161,13 @@ export function AppRoot() {
             {activeView === "dashboard" && <Dashboard />}
             {activeView === "leads" && <LeadKanban />}
             {activeView === "pool" && <PublicPool />}
+            {activeView === "deals" && <DealCenter />}
+            {activeView === "renewals" && <RenewalCenter />}
             {activeView === "analytics" && <AnalyticsDashboard />}
+
             {activeView === "settings" && <SystemSettings />}
             {activeView === "audit" && <AuditLog />}
+
           </main>
         </div>
       </div>

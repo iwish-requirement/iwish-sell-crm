@@ -55,6 +55,8 @@ import { getBrowserSupabaseClient } from "@/lib/supabase/client"
 import { rpcGetRolePermissions, rpcRolePermissionsSetMatrix, type RolePermissionMatrixItem } from "@/lib/services/role-permissions"
 import { mapRpcError, type RpcErrorFriendly } from "@/lib/rpc-error-mapper"
 import { toast } from "sonner"
+import { LeadGradesAndSourcesSettingsCard } from "./lead-grades-and-sources-settings-card"
+
 
 // Types
 interface TeamMember {
@@ -98,7 +100,10 @@ interface RolePermissionFlags {
   editInternalFields: boolean
   viewReports: boolean
   viewAudit: boolean
+  viewContracts: boolean
+  manageContracts: boolean
 }
+
 
 interface Role {
   id: string
@@ -344,6 +349,8 @@ const RECOMMENDED_ROLE_TEMPLATES: Record<
       editInternalFields: false,
       viewReports: false,
       viewAudit: false,
+      viewContracts: true,
+      manageContracts: true,
     },
   },
   sales_manager: {
@@ -366,6 +373,8 @@ const RECOMMENDED_ROLE_TEMPLATES: Record<
       editInternalFields: false,
       viewReports: true,
       viewAudit: false,
+      viewContracts: true,
+      manageContracts: true,
     },
   },
   marketing: {
@@ -388,6 +397,8 @@ const RECOMMENDED_ROLE_TEMPLATES: Record<
       editInternalFields: false,
       viewReports: true,
       viewAudit: false,
+      viewContracts: false,
+      manageContracts: false,
     },
   },
   biz_owner: {
@@ -410,6 +421,8 @@ const RECOMMENDED_ROLE_TEMPLATES: Record<
       editInternalFields: true,
       viewReports: true,
       viewAudit: true,
+      viewContracts: true,
+      manageContracts: true,
     },
   },
   tech_maintainer: {
@@ -474,7 +487,10 @@ const PERMISSION_KEY_MAP = {
   editInternalFields: ["leads.fields.write_internal"] as const,
   viewReports: ["reports.read"] as const,
   viewAudit: ["audit.read"] as const,
+  viewContracts: ["contracts.read"] as const,
+  manageContracts: ["contracts.manage"] as const,
 } as const
+
 
 type PermissionToggleKey = keyof typeof PERMISSION_KEY_MAP
 
@@ -602,6 +618,18 @@ const PERMISSION_MATRIX_ROWS: PermissionMatrixRowConfig[] = [
     groupId: "management",
     label: "查看审计日志",
     description: "允许访问审计日志页面。",
+  },
+  {
+    key: "viewContracts",
+    groupId: "operation",
+    label: "查看合同信息",
+    description: "允许在成交详情等界面查看合同金额、周期等信息。",
+  },
+  {
+    key: "manageContracts",
+    groupId: "operation",
+    label: "管理合同信息",
+    description: "允许在成交详情等界面创建和编辑合同信息。",
   },
 ]
 
@@ -855,8 +883,10 @@ function BusinessRulesTab() {
             </Card>
 
             <LeadLockAndProtectionSettingsCard />
+            <LeadGradesAndSourcesSettingsCard />
           </div>
         </TabsContent>
+
 
         <TabsContent value="dashboard">
           <DashboardTextSettingsCard />
@@ -1359,11 +1389,12 @@ function LeadLockAndProtectionSettingsCard() {
     Won: "30",
   })
   const [gradeDays, setGradeDays] = useState({
-    S: "14",
-    A: "7",
-    B: "3",
-    C: "1",
+    S: "7",
+    A: "14",
+    B: "21",
+    C: "30",
   })
+
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -3492,7 +3523,10 @@ function PermissionsTab() {
             editInternalFields: deriveFlag(roleId, "editInternalFields"),
             viewReports: deriveFlag(roleId, "viewReports"),
             viewAudit: deriveFlag(roleId, "viewAudit"),
+            viewContracts: deriveFlag(roleId, "viewContracts"),
+            manageContracts: deriveFlag(roleId, "manageContracts"),
           }
+
 
 
             return {
@@ -3681,8 +3715,11 @@ function PermissionsTab() {
       pushToggle("editSensitiveFields", editingRole.permissions.editSensitiveFields)
       pushToggle("viewInternalFields", editingRole.permissions.viewInternalFields)
       pushToggle("editInternalFields", editingRole.permissions.editInternalFields)
+      pushToggle("viewContracts", editingRole.permissions.viewContracts)
+      pushToggle("manageContracts", editingRole.permissions.manageContracts)
 
       const { error: rpcError } = await rpcRolePermissionsSetMatrix(editingRole.id, items)
+
 
       if (rpcError) {
         console.error("Failed to save role permission matrix", rpcError)
@@ -3735,7 +3772,10 @@ function PermissionsTab() {
             editInternalFields: deriveFlagFromPerms("editInternalFields"),
             viewReports: deriveFlagFromPerms("viewReports"),
             viewAudit: deriveFlagFromPerms("viewAudit"),
+            viewContracts: deriveFlagFromPerms("viewContracts"),
+            manageContracts: deriveFlagFromPerms("manageContracts"),
           },
+
         }
       }
 
