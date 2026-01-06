@@ -103,6 +103,7 @@ export function DealCenter() {
 
   const sourceOptions = useMemo(() => {
 
+
     const sources = new Set<string>()
     deals.forEach((deal) => {
       if (deal.source) {
@@ -579,11 +580,13 @@ export function DealCenter() {
   if (!canReadContracts) {
     return (
       <div className="space-y-4">
-        <h1 className="text-xl font-semibold text-foreground">成交中心</h1>
-        <p className="text-xs text-muted-foreground">
-          当前账号没有权限查看成交中心。请联系管理员为你的角色开启合同读取相关权限后再访问。
+        <h1 className="text-2xl font-bold text-foreground">成交中心</h1>
+        <p className="text-sm text-muted-foreground">
+          当前账号无权访问成交中心。如需调整合同相关权限，请联系系统管理员后重试访问。
         </p>
+
       </div>
+
     )
   }
 
@@ -593,11 +596,12 @@ export function DealCenter() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
 
         <div>
-          <h1 className="text-xl font-semibold text-foreground">成交中心</h1>
-          <p className="text-xs text-muted-foreground mt-1">
+          <h1 className="text-2xl font-bold text-foreground">成交中心</h1>
+          <p className="text-sm text-muted-foreground mt-1">
             汇总查看当前范围内的成交机会，按时间维度快速回顾成交节奏与金额。
           </p>
         </div>
+
         <div className="flex items-center gap-3">
           {leadScopeType !== "self" && (
             <div className="flex items-center gap-2">
@@ -631,11 +635,12 @@ export function DealCenter() {
             </div>
           )}
           <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">时间范围</span>
+            <span className="text-sm text-muted-foreground">时间范围</span>
             <Select value={timeFilter} onValueChange={setTimeFilter}>
-              <SelectTrigger className="h-8 w-full sm:w-[140px] text-xs">
+              <SelectTrigger className="h-9 w-full sm:w-[140px] text-sm">
                 <SelectValue placeholder="选择时间范围" className="truncate" />
               </SelectTrigger>
+
 
               <SelectContent>
                 {TIME_FILTER_OPTIONS.map((option) => (
@@ -692,12 +697,12 @@ export function DealCenter() {
       <Card>
         <CardHeader>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <CardTitle className="text-sm font-semibold">成交明细</CardTitle>
+            <CardTitle className="text-base font-bold text-foreground">成交明细</CardTitle>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <div className="relative w-full sm:w-[200px]">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input
-                  className="h-8 pl-9 text-xs"
+                  className="h-9 pl-9 text-sm"
                   placeholder="搜索客户、公司或来源"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
@@ -705,9 +710,10 @@ export function DealCenter() {
               </div>
               <div className="flex items-center gap-2">
                 <Select value={sourceFilter} onValueChange={setSourceFilter}>
-                  <SelectTrigger className="h-8 w-full sm:w-[140px] text-xs">
+                  <SelectTrigger className="h-9 w-full sm:w-[140px] text-sm">
                     <SelectValue placeholder="来源筛选" className="truncate" />
                   </SelectTrigger>
+
 
                   <SelectContent>
                     <SelectItem value="all">全部来源</SelectItem>
@@ -719,9 +725,10 @@ export function DealCenter() {
                   </SelectContent>
                 </Select>
                 <Select value={sortOption} onValueChange={setSortOption}>
-                  <SelectTrigger className="h-8 w-full sm:w-[200px] text-xs">
+                  <SelectTrigger className="h-9 w-full sm:w-[200px] text-sm">
                     <SelectValue placeholder="排序" className="truncate" />
                   </SelectTrigger>
+
 
                   <SelectContent>
                     <SelectItem value="recent">按成交时间（最近优先）</SelectItem>
@@ -741,27 +748,27 @@ export function DealCenter() {
               {Array.from({ length: 6 }).map((_, index) => (
                 <div key={index} className="flex items-center justify-between gap-3 py-2">
                   <div className="flex-1 space-y-1">
-                    <Skeleton className="h-3 w-40" />
-                    <Skeleton className="h-3 w-32" />
+                    <Skeleton className="h-4 w-40" />
+                    <Skeleton className="h-4 w-32" />
                   </div>
-                  <Skeleton className="h-4 w-20" />
+                  <Skeleton className="h-5 w-20" />
                 </div>
               ))}
             </div>
           ) : loadError ? (
-            <p className="text-xs text-destructive/80">{loadError}</p>
+            <p className="text-sm text-destructive/80">{loadError}</p>
           ) : filteredDeals.length === 0 ? (
-            <p className="text-xs text-muted-foreground">当前筛选条件下暂无成交记录。</p>
+            <p className="text-sm text-muted-foreground">当前筛选条件下暂无成交记录。</p>
           ) : (
             <div className="w-full overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="whitespace-nowrap">成交日期</TableHead>
-                    <TableHead className="whitespace-nowrap">客户 / 公司</TableHead>
-                    <TableHead className="whitespace-nowrap">来源</TableHead>
-                    <TableHead className="whitespace-nowrap">负责人</TableHead>
-                    <TableHead className="whitespace-nowrap text-right">成交金额</TableHead>
+                    <TableHead className="whitespace-nowrap text-xs font-semibold">成交日期</TableHead>
+                    <TableHead className="whitespace-nowrap text-xs font-semibold">客户 / 公司</TableHead>
+                    <TableHead className="whitespace-nowrap text-xs font-semibold">来源</TableHead>
+                    <TableHead className="whitespace-nowrap text-xs font-semibold">负责人</TableHead>
+                    <TableHead className="whitespace-nowrap text-right text-xs font-semibold">成交金额</TableHead>
                   </TableRow>
 
                 </TableHeader>
@@ -769,7 +776,7 @@ export function DealCenter() {
                   {filteredDeals.map((deal) => (
                     <TableRow
                       key={deal.id}
-                      className="text-xs cursor-pointer hover:bg-accent/40"
+                      className="text-sm cursor-pointer hover:bg-accent/40"
                       onClick={() => {
                         setSelectedDeal(deal)
                         setIsDetailOpen(true)
@@ -784,23 +791,24 @@ export function DealCenter() {
 
                       <TableCell className="min-w-[180px]">
                         <div className="flex flex-col">
-                          <span className="font-medium text-foreground truncate">{deal.companyName}</span>
-                          <span className="text-[11px] text-muted-foreground truncate">
+                          <span className="font-semibold text-foreground truncate">{deal.companyName}</span>
+                          <span className="text-xs text-muted-foreground truncate">
                             {deal.customerName}
                           </span>
                         </div>
                       </TableCell>
                       <TableCell className="whitespace-nowrap">
-                        <Badge variant="outline" className="text-[10px]">
+                        <Badge variant="outline" className="text-[11px]">
                           {deal.source}
                         </Badge>
                       </TableCell>
-                      <TableCell className="whitespace-nowrap">
+                      <TableCell className="whitespace-nowrap font-medium">
                         {deal.ownerName ?? "未分配"}
                       </TableCell>
-                      <TableCell className="text-right whitespace-nowrap text-primary font-semibold">
+                      <TableCell className="text-right whitespace-nowrap text-primary font-bold">
                         {deal.budgetLabel}
                       </TableCell>
+
 
                     </TableRow>
                   ))}
@@ -818,12 +826,12 @@ export function DealCenter() {
             <div className="flex flex-col h-full">
               <SheetHeader className="space-y-4 p-6 pt-12 border-b">
                 <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
-                    <DollarSign className="w-5 h-5 text-primary" />
+                  <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
+                    <DollarSign className="w-6 h-6 text-primary" />
                   </div>
                   <div className="min-w-0 space-y-1">
-                    <SheetTitle className="text-left truncate">{selectedDeal.companyName}</SheetTitle>
-                    <p className="text-xs text-muted-foreground truncate">
+                    <SheetTitle className="text-left text-xl font-bold truncate">{selectedDeal.companyName}</SheetTitle>
+                    <p className="text-sm text-muted-foreground truncate">
                       {selectedDeal.customerName} · {selectedDeal.source}
                       {selectedDeal.ownerName ? ` · 负责人：${selectedDeal.ownerName}` : ""}
                     </p>
@@ -835,18 +843,18 @@ export function DealCenter() {
 
 
 
-                <div className="grid grid-cols-2 gap-3 text-xs">
+                <div className="grid grid-cols-2 gap-4 text-sm">
                   <div className="space-y-1">
-                    <p className="text-muted-foreground">创建时间</p>
-                    <p className="font-medium text-foreground">
+                    <p className="text-xs text-muted-foreground">创建时间</p>
+                    <p className="font-semibold text-foreground">
                       {selectedDeal.createdAt
                         ? new Date(selectedDeal.createdAt).toLocaleDateString("zh-CN")
                         : "--"}
                     </p>
                   </div>
                   <div className="space-y-1">
-                    <p className="text-muted-foreground">成交时间（首笔回款）</p>
-                    <p className="font-medium text-foreground">
+                    <p className="text-xs text-muted-foreground">成交时间（首笔回款）</p>
+                    <p className="font-semibold text-foreground">
                       {firstPaymentDate
                         ? new Date(firstPaymentDate).toLocaleDateString("zh-CN")
                         : "尚未回款"}
@@ -854,45 +862,46 @@ export function DealCenter() {
                   </div>
 
                   <div className="space-y-1">
-                    <p className="text-muted-foreground">成交金额</p>
-                    <p className="font-semibold text-primary">{selectedDeal.budgetLabel}</p>
+                    <p className="text-xs text-muted-foreground">成交金额</p>
+                    <p className="font-bold text-primary text-base">{selectedDeal.budgetLabel}</p>
                   </div>
                   <div className="space-y-1">
-                    <p className="text-muted-foreground">来源渠道</p>
-                    <Badge variant="outline" className="text-[10px]">
+                    <p className="text-xs text-muted-foreground">来源渠道</p>
+                    <Badge variant="outline" className="text-[11px]">
                       {selectedDeal.source}
                     </Badge>
                   </div>
                   <div className="space-y-1">
-                    <p className="text-muted-foreground">成交结果</p>
-                    <p className="font-medium text-foreground">
+                    <p className="text-xs text-muted-foreground">成交结果</p>
+                    <p className="font-semibold text-foreground">
                       {selectedDeal.closeResult === "won" || selectedDeal.closeResult === "成交" ? "成交" : "关闭"}
                     </p>
                   </div>
                   <div className="space-y-1">
-                    <p className="text-muted-foreground">负责销售</p>
-                    <p className="font-medium text-foreground">
+                    <p className="text-xs text-muted-foreground">负责销售</p>
+                    <p className="font-semibold text-foreground">
                       {selectedDeal.ownerName ?? "未分配"}
                     </p>
                   </div>
 
                   {selectedDeal.closeReason && (
                     <div className="space-y-1 col-span-2">
-                      <p className="text-muted-foreground">成交备注 / 关闭原因</p>
-                      <p className="text-[11px] text-foreground break-words">{selectedDeal.closeReason}</p>
+                      <p className="text-xs text-muted-foreground">成交备注 / 关闭原因</p>
+                      <p className="text-xs text-foreground break-words">{selectedDeal.closeReason}</p>
                     </div>
                   )}
                 </div>
 
-                <div className="space-y-2 pt-4 border-t border-border/60 mt-2">
+                <div className="space-y-3 pt-4 border-t border-border/60 mt-2">
                   <div className="flex items-center justify-between gap-2">
-                    <p className="text-xs font-medium text-foreground">合同信息</p>
+                    <p className="text-sm font-bold text-foreground uppercase tracking-wider">合同信息</p>
                     {canManageContracts && selectedDeal && (
                       <Button
                         size="xs"
                         variant="outline"
-                        className="h-7 px-2 text-[11px]"
+                        className="h-7 px-2 text-xs"
                         onClick={() => {
+
                           if (selectedContract) {
                             setContractNumberInput(selectedContract.contractNumber)
                             setContractTitleInput(selectedContract.title ?? "")
@@ -933,25 +942,25 @@ export function DealCenter() {
                   </div>
                   {isContractLoading ? (
 
-                    <div className="space-y-2 text-xs">
-                      <Skeleton className="h-3 w-32" />
-                      <Skeleton className="h-3 w-40" />
+                    <div className="space-y-2 text-sm">
+                      <Skeleton className="h-4 w-32" />
+                      <Skeleton className="h-4 w-40" />
                     </div>
                   ) : !selectedContract ? (
-                    <p className="text-[11px] text-muted-foreground">
+                    <p className="text-xs text-muted-foreground">
                       当前成交尚未关联合同，可以使用右上角按钮补充合同编号、签约金额与服务周期。
                     </p>
                   ) : (
-                    <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div className="grid grid-cols-2 gap-4 text-sm">
                       <div className="space-y-1">
-                        <p className="text-muted-foreground">合同编号</p>
-                        <p className="font-medium text-foreground break-words">
+                        <p className="text-xs text-muted-foreground">合同编号</p>
+                        <p className="font-semibold text-foreground break-words">
                           {selectedContract.contractNumber}
                         </p>
                       </div>
                       <div className="space-y-1">
-                        <p className="text-muted-foreground">合同金额</p>
-                        <p className="font-semibold text-primary">
+                        <p className="text-xs text-muted-foreground">合同金额</p>
+                        <p className="font-bold text-primary">
                           {new Intl.NumberFormat("zh-CN", {
                             style: "currency",
                             currency: selectedContract.currency || "CNY",
@@ -960,24 +969,24 @@ export function DealCenter() {
                         </p>
                       </div>
                       <div className="space-y-1">
-                        <p className="text-muted-foreground">签约时间</p>
-                        <p className="font-medium text-foreground">
+                        <p className="text-xs text-muted-foreground">签约时间</p>
+                        <p className="font-semibold text-foreground">
                           {selectedContract.signedAt
                             ? new Date(selectedContract.signedAt).toLocaleDateString("zh-CN")
                             : "--"}
                         </p>
                       </div>
                       <div className="space-y-1">
-                        <p className="text-muted-foreground">合同周期</p>
-                        <p className="font-medium text-foreground">
+                        <p className="text-xs text-muted-foreground">合同周期</p>
+                        <p className="font-semibold text-foreground">
                           {selectedContract.startDate
                             ? `${new Date(selectedContract.startDate).toLocaleDateString("zh-CN")} ~ ${selectedContract.endDate ? new Date(selectedContract.endDate).toLocaleDateString("zh-CN") : "--"}`
                             : "--"}
                         </p>
                       </div>
                       <div className="space-y-1">
-                        <p className="text-muted-foreground">是否续费合同</p>
-                        <p className="font-medium text-foreground">
+                        <p className="text-xs text-muted-foreground">是否续费合同</p>
+                        <p className="font-semibold text-foreground">
                           {selectedContract.isRenewal ? "续费合同" : "首单合同"}
                         </p>
                       </div>
@@ -985,14 +994,14 @@ export function DealCenter() {
                   )}
                 </div>
 
-                <div className="space-y-2 pt-4 border-t border-border/60 mt-4">
+                <div className="space-y-3 pt-4 border-t border-border/60 mt-4">
                   <div className="flex items-center justify-between gap-2">
-                    <p className="text-xs font-medium text-foreground">回款记录</p>
+                    <p className="text-sm font-bold text-foreground uppercase tracking-wider">回款记录</p>
                     {canManageContracts && selectedContract && (
                       <Button
                         size="xs"
                         variant="outline"
-                        className="h-7 px-2 text-[11px]"
+                        className="h-7 px-2 text-xs"
                         onClick={() => {
                           const today = new Date()
                           const todayStr = today.toISOString().slice(0, 10)
@@ -1008,32 +1017,32 @@ export function DealCenter() {
                     )}
                   </div>
                   {isPaymentsLoading ? (
-                    <div className="space-y-2 text-xs">
-                      <Skeleton className="h-3 w-32" />
-                      <Skeleton className="h-3 w-40" />
+                    <div className="space-y-2 text-sm">
+                      <Skeleton className="h-4 w-32" />
+                      <Skeleton className="h-4 w-40" />
                     </div>
                   ) : contractPayments.length === 0 ? (
-                    <p className="text-[11px] text-muted-foreground">当前合同暂无回款记录。</p>
+                    <p className="text-xs text-muted-foreground">当前合同暂无回款记录。</p>
                   ) : (
                     <div className="w-full overflow-x-auto">
                       <Table>
                         <TableHeader>
                           <TableRow>
-                            <TableHead className="whitespace-nowrap">到账日期</TableHead>
-                            <TableHead className="whitespace-nowrap text-right">回款金额</TableHead>
-                            <TableHead className="whitespace-nowrap">方式</TableHead>
-                            <TableHead className="whitespace-nowrap">备注</TableHead>
+                            <TableHead className="whitespace-nowrap text-xs font-semibold">到账日期</TableHead>
+                            <TableHead className="whitespace-nowrap text-right text-xs font-semibold">回款金额</TableHead>
+                            <TableHead className="whitespace-nowrap text-xs font-semibold">方式</TableHead>
+                            <TableHead className="whitespace-nowrap text-xs font-semibold">备注</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
                           {contractPayments.map((payment) => (
-                            <TableRow key={payment.id} className="text-[11px]">
+                            <TableRow key={payment.id} className="text-xs">
                               <TableCell className="whitespace-nowrap">
                                 {payment.paidAt
                                   ? new Date(payment.paidAt).toLocaleDateString("zh-CN")
                                   : "--"}
                               </TableCell>
-                              <TableCell className="text-right whitespace-nowrap text-foreground">
+                              <TableCell className="text-right whitespace-nowrap text-foreground font-semibold">
                                 {new Intl.NumberFormat("zh-CN", {
                                   style: "currency",
                                   currency: payment.currency || "CNY",
@@ -1058,9 +1067,10 @@ export function DealCenter() {
                   )}
                 </div>
 
-                <p className="text-[11px] text-muted-foreground">
+                <p className="text-xs text-muted-foreground">
                   该视图基于线索的成交结果与预算字段进行统计，并挂载合同与回款视图中的核心信息，后续可以在续费中心与分析看板中继续扩展回款相关指标。
                 </p>
+
 
 
               </div>

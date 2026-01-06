@@ -102,81 +102,9 @@ interface LeadExportJob {
 // 公海池销售代表列表来自 profiles_public，不再使用本地 mockSalesReps
 const EMPTY_SALES_REPS: SalesRep[] = []
 
-// 公海池初始列表由 Supabase 加载，这里保留一个空数组占位，防止误以为还有本地 mock 数据
-const mockPoolLeads: PoolLead[] = [
-  {
-    id: "PL001",
-    company: "北京云智科技有限公司",
-    contact: "刘总",
-    phone: "138****5521",
-    source: "抖音",
-    budget: "15-20万",
-    lastStage: "L2 意向",
-    returnReason: "超过7天未跟进",
-    daysInPool: 12,
-    returnedAt: "2025-01-22",
-  },
-  {
-    id: "PL002",
-    company: "深圳创新智能科技",
-    contact: "陈经理",
-    phone: "139****8832",
-    source: "线下展会",
-    budget: "8-12万",
-    lastStage: "L1 初步接触",
-    returnReason: "销售离职",
-    daysInPool: 5,
-    returnedAt: "2025-01-29",
-  },
-  {
-    id: "PL003",
-    company: "杭州数据服务公司",
-    contact: "王女士",
-    phone: "137****2210",
-    source: "官网表单",
-    budget: "20-30万",
-    lastStage: "L3 商务",
-    returnReason: "主动释放",
-    daysInPool: 3,
-    returnedAt: "2025-01-31",
-  },
-  {
-    id: "PL004",
-    company: "广州智慧物流有限公司",
-    contact: "张总监",
-    phone: "136****9901",
-    source: "转介绍",
-    budget: "5-8万",
-    lastStage: "L1 初步接触",
-    returnReason: "超过7天未跟进",
-    daysInPool: 18,
-    returnedAt: "2025-01-16",
-  },
-  {
-    id: "PL005",
-    company: "成都软件开发集团",
-    contact: "李主管",
-    phone: "135****4478",
-    source: "抖音",
-    budget: "10-15万",
-    lastStage: "L2 意向",
-    returnReason: "客户暂无预算",
-    daysInPool: 8,
-    returnedAt: "2025-01-26",
-  },
-  {
-    id: "PL006",
-    company: "武汉工业自动化",
-    contact: "赵工",
-    phone: "158****3345",
-    source: "线下展会",
-    budget: "25-35万",
-    lastStage: "L2 意向",
-    returnReason: "超过7天未跟进",
-    daysInPool: 21,
-    returnedAt: "2025-01-13",
-  },
-]
+// 公海池列表由 Supabase 实时加载，这里不再保留历史 mock 数据，以免造成误解
+const mockPoolLeads: PoolLead[] = []
+
 
 type ImportStage = "idle" | "uploading" | "checking" | "complete"
 
@@ -185,6 +113,7 @@ export function PublicPool() {
   const mePermissions = React.useContext(MePermissionsContext)
   const canAssignLeads = mePermissions?.canAssignLeads ?? false
   const canDeleteLeads = mePermissions?.canDeleteLeads ?? false
+  const canViewPublicPool = mePermissions?.canViewPublicPool ?? false
   const [searchQuery, setSearchQuery] = useState("")
   const [importDialogOpen, setImportDialogOpen] = useState(false)
   const [assignDialogOpen, setAssignDialogOpen] = useState(false)
@@ -192,6 +121,7 @@ export function PublicPool() {
   const [selectedLeads, setSelectedLeads] = useState<string[]>([])
   const [assignToRep, setAssignToRep] = useState("")
   const [assignmentNote, setAssignmentNote] = useState("")
+
 
   const [salesReps, setSalesReps] = useState<SalesRep[]>(EMPTY_SALES_REPS)
   const [isAssigning, setIsAssigning] = useState(false)
@@ -642,11 +572,12 @@ export function PublicPool() {
 
   const handleAssign = (leadId?: string) => {
     if (!canAssignLeads) {
-      toast.error("没有分配线索的权限", {
-        description: "请联系管理员在系统设置 → 角色权限中开启“线索分配/认领”相关权限。",
+      toast.error("无权分配线索", {
+        description: "当前账号未获授权执行线索分配操作。如需调整相关权限，请联系系统管理员。",
       })
       return
     }
+
 
     if (leadId) {
       setSelectedLeads([leadId])
@@ -1044,24 +975,25 @@ export function PublicPool() {
 
   const getDaysInPoolBadge = (days: number) => {
     if (days >= 14) {
-      return <Badge variant="destructive">{days} 天</Badge>
+      return <Badge variant="destructive" className="font-bold px-2.5 h-6">{days} 天</Badge>
     } else if (days >= 7) {
       return (
-        <Badge variant="secondary" className="bg-amber-100 text-amber-800 hover:bg-amber-100">
+        <Badge variant="secondary" className="bg-amber-100 text-amber-800 hover:bg-amber-100 font-bold px-2.5 h-6">
           {days} 天
         </Badge>
       )
     }
-    return <Badge variant="outline">{days} 天</Badge>
+    return <Badge variant="outline" className="font-semibold px-2.5 h-6 border-muted-foreground/20">{days} 天</Badge>
   }
+
 
   if (isLoading) {
     return (
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-semibold text-foreground">公海池</h1>
-            <p className="text-sm text-muted-foreground mt-1">加载中...</p>
+            <h1 className="text-3xl font-bold text-foreground tracking-tight">公海池</h1>
+            <p className="text-sm text-muted-foreground mt-1 font-medium">加载公海数据中...</p>
           </div>
         </div>
         <TableSkeleton rows={6} />
@@ -1069,14 +1001,30 @@ export function PublicPool() {
     )
   }
 
+  if (!canViewPublicPool) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold text-foreground tracking-tight">公海池</h1>
+          <p className="text-sm text-muted-foreground mt-2 font-medium">
+            当前账号无权访问公海池，如需调整相关权限，请联系系统管理员。
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+
   return (
     <div className="space-y-6">
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold text-foreground">公海池</h1>
-          <p className="text-sm text-muted-foreground mt-1">共 {leads.length} 条待分配线索</p>
+          <h1 className="text-3xl font-bold text-foreground tracking-tight">公海池</h1>
+          <p className="text-sm text-muted-foreground mt-1 font-medium">共 <span className="text-foreground font-bold">{leads.length}</span> 条待分配线索</p>
         </div>
+
         <div className="flex items-center gap-3">
           {canAssignLeads && (
             <Button
@@ -1086,6 +1034,7 @@ export function PublicPool() {
                 if (selectedLeads.length === 0) return
                 handleAssign()
               }}
+              className="font-bold shadow-sm"
             >
               <Users className="w-4 h-4 mr-2" />
               分配给销售 {selectedLeads.length > 0 && `(${selectedLeads.length})`}
@@ -1111,14 +1060,16 @@ export function PublicPool() {
                 }
               }
             }}
+            className="font-semibold"
           >
             <UserPlus className="w-4 h-4 mr-2" />
             认领到我的线索 {selectedLeads.length > 0 && `(${selectedLeads.length})`}
           </Button>
-          <Button variant="outline" onClick={() => setImportDialogOpen(true)}>
+          <Button variant="outline" onClick={() => setImportDialogOpen(true)} className="font-semibold">
             <Upload className="w-4 h-4 mr-2" />
             导入线索
           </Button>
+
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline">
@@ -1358,11 +1309,11 @@ export function PublicPool() {
 
 
       {/* Table - responsive with horizontal scroll on mobile */}
-      <Card>
+      <Card className="border-muted-foreground/10">
         <CardContent className="p-0 overflow-x-auto">
           <Table>
-            <TableHeader>
-              <TableRow>
+            <TableHeader className="bg-muted/30">
+              <TableRow className="hover:bg-transparent">
                 <TableHead className="w-[50px]">
                   <Checkbox
                     checked={isAllSelected}
@@ -1371,26 +1322,26 @@ export function PublicPool() {
                     className={isSomeSelected ? "data-[state=checked]:bg-primary/50" : ""}
                   />
                 </TableHead>
-                <TableHead className="w-[200px] min-w-[180px]">公司名称</TableHead>
-                <TableHead className="min-w-[80px]">联系人</TableHead>
-                <TableHead className="min-w-[120px]">电话</TableHead>
-                <TableHead className="min-w-[80px]">来源</TableHead>
-                <TableHead className="min-w-[80px]">预算</TableHead>
-                <TableHead className="min-w-[100px]">最后阶段</TableHead>
-                <TableHead className="min-w-[120px]">退回原因</TableHead>
-                <TableHead className="min-w-[120px]">最近退回人</TableHead>
-                <TableHead className="text-center min-w-[100px]">
+                <TableHead className="w-[200px] min-w-[180px] font-bold text-foreground">公司名称</TableHead>
+                <TableHead className="min-w-[80px] font-bold text-foreground">联系人</TableHead>
+                <TableHead className="min-w-[120px] font-bold text-foreground">电话</TableHead>
+                <TableHead className="min-w-[80px] font-bold text-foreground">来源</TableHead>
+                <TableHead className="min-w-[80px] font-bold text-foreground">预算</TableHead>
+                <TableHead className="min-w-[100px] font-bold text-foreground">最后阶段</TableHead>
+                <TableHead className="min-w-[120px] font-bold text-foreground">退回原因</TableHead>
+                <TableHead className="min-w-[120px] font-bold text-foreground">最近退回人</TableHead>
+                <TableHead className="text-center min-w-[100px] font-bold text-foreground">
                   <div className="flex items-center justify-center gap-1">
                     <Clock className="w-4 h-4" />
                     池内天数
                   </div>
                 </TableHead>
-                <TableHead className="text-right min-w-[100px]">操作</TableHead>
+                <TableHead className="text-right min-w-[100px] font-bold text-foreground">操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filteredLeads.map((lead) => (
-                <TableRow key={lead.id} className={selectedLeads.includes(lead.id) ? "bg-primary/5" : ""}>
+                <TableRow key={lead.id} className={cn("transition-colors", selectedLeads.includes(lead.id) ? "bg-primary/5" : "hover:bg-muted/20")}>
                   <TableCell>
                     <Checkbox
                       checked={selectedLeads.includes(lead.id)}
@@ -1398,22 +1349,22 @@ export function PublicPool() {
                       aria-label={`选择 ${lead.company}`}
                     />
                   </TableCell>
-                  <TableCell className="font-medium">{lead.company}</TableCell>
-                  <TableCell>{lead.contact}</TableCell>
-                  <TableCell className="font-mono text-sm">{lead.phone}</TableCell>
+                  <TableCell className="font-bold text-sm text-foreground">{lead.company}</TableCell>
+                  <TableCell className="text-sm font-medium">{lead.contact}</TableCell>
+                  <TableCell className="font-mono text-sm font-medium text-foreground/80">{lead.phone}</TableCell>
                   <TableCell>
-                    <Badge variant="outline">{lead.source}</Badge>
+                    <Badge variant="outline" className="text-xs font-medium border-muted-foreground/20">{lead.source}</Badge>
                   </TableCell>
-                  <TableCell>{lead.budget}</TableCell>
+                  <TableCell className="text-sm font-bold text-primary">{lead.budget}</TableCell>
                   <TableCell>
-                    <Badge variant="secondary">{lead.lastStage}</Badge>
+                    <Badge variant="secondary" className="text-xs font-semibold bg-muted/60">{lead.lastStage}</Badge>
                   </TableCell>
-                  <TableCell className="text-muted-foreground text-sm">{lead.returnReason}</TableCell>
+                  <TableCell className="text-muted-foreground text-sm leading-tight max-w-[150px] truncate">{lead.returnReason}</TableCell>
                   <TableCell>
                     {lead.returnedById ? (
-                      <span className="text-sm">{repNameById[lead.returnedById] ?? "未知成员"}</span>
+                      <span className="text-sm font-semibold text-foreground/80">{repNameById[lead.returnedById] ?? "未知成员"}</span>
                     ) : lead.importedById ? (
-                      <span className="text-xs text-muted-foreground">
+                      <span className="text-xs text-muted-foreground italic">
                         由 {repNameById[lead.importedById] ?? "未知成员"} 导入
                       </span>
                     ) : (
@@ -1421,6 +1372,8 @@ export function PublicPool() {
                     )}
                   </TableCell>
                   <TableCell className="text-center">{getDaysInPoolBadge(lead.daysInPool)}</TableCell>
+
+
                   <TableCell className="text-right">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
@@ -1502,27 +1455,30 @@ export function PublicPool() {
       <Dialog open={assignDialogOpen} onOpenChange={setAssignDialogOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>分配线索给销售</DialogTitle>
-            <DialogDescription>
-              正在分配 <strong>{selectedLeads.length}</strong> 条选中的线索
+            <DialogTitle className="text-xl font-bold">分配线索给销售</DialogTitle>
+            <DialogDescription className="text-sm font-medium">
+              正在分配 <strong className="text-primary">{selectedLeads.length}</strong> 条选中的线索
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-4">
+          <div className="space-y-5 py-4">
             {/* Selected leads summary */}
-            <div className="p-3 bg-muted/50 rounded-lg">
-              <p className="text-sm font-medium mb-2">已选择线索：</p>
+            <div className="p-4 bg-muted/50 rounded-xl border border-muted/30">
+              <p className="text-sm font-bold mb-3 flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-primary" />
+                已选择线索：
+              </p>
               <div className="flex flex-wrap gap-2">
-                {selectedLeads.slice(0, 3).map((id) => {
+                {selectedLeads.slice(0, 5).map((id) => {
                   const lead = leads.find((l) => l.id === id)
                   return lead ? (
-                    <Badge key={id} variant="secondary" className="text-xs">
+                    <Badge key={id} variant="secondary" className="text-xs font-semibold px-2 py-0.5 bg-background border">
                       {lead.company}
                     </Badge>
                   ) : null
                 })}
-                {selectedLeads.length > 3 && (
-                  <Badge variant="outline" className="text-xs">
-                    +{selectedLeads.length - 3} 更多
+                {selectedLeads.length > 5 && (
+                  <Badge variant="outline" className="text-xs font-bold">
+                    +{selectedLeads.length - 5} 更多
                   </Badge>
                 )}
               </div>
@@ -1530,17 +1486,17 @@ export function PublicPool() {
 
             {/* Sales Rep Select */}
             <div className="space-y-2">
-              <Label htmlFor="rep">分配给 *</Label>
+              <Label htmlFor="rep" className="text-sm font-bold">分配给 *</Label>
               <Select value={assignToRep} onValueChange={setAssignToRep}>
-                <SelectTrigger>
+                <SelectTrigger className="h-10">
                   <SelectValue placeholder="选择销售人员" />
                 </SelectTrigger>
                 <SelectContent>
                   {salesReps.map((rep) => (
                     <SelectItem key={rep.id} value={rep.id}>
                       <div className="flex items-center gap-2">
-                        <span>{rep.name}</span>
-                        <span className="text-xs text-muted-foreground">({rep.activeLeads} 条在跟进)</span>
+                        <span className="font-semibold">{rep.name}</span>
+                        <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">({rep.activeLeads} 条在跟进)</span>
                       </div>
                     </SelectItem>
                   ))}
@@ -1550,26 +1506,27 @@ export function PublicPool() {
 
             {/* Assignment Note */}
             <div className="space-y-2">
-              <Label htmlFor="note">分配备注 (可选)</Label>
+              <Label htmlFor="note" className="text-sm font-bold">分配备注 (可选)</Label>
               <Textarea
                 id="note"
                 placeholder="例如：尽快跟进，客户预算充足..."
                 value={assignmentNote}
                 onChange={(e) => setAssignmentNote(e.target.value)}
-                className="min-h-[80px]"
+                className="min-h-[100px] text-sm"
               />
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setAssignDialogOpen(false)}>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setAssignDialogOpen(false)} className="font-semibold">
               取消
             </Button>
-            <Button onClick={confirmAssignment} disabled={!assignToRep || selectedLeads.length === 0 || isAssigning}>
-              确认分配
+            <Button onClick={confirmAssignment} disabled={!assignToRep || selectedLeads.length === 0 || isAssigning} className="font-bold shadow-md shadow-primary/10">
+              {isAssigning ? "分配中..." : "确认分配"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
 
       {/* Lead Detail Dialog */}
       <Dialog
@@ -1585,77 +1542,90 @@ export function PublicPool() {
       >
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>{detailLead?.company ?? "线索详情"}</DialogTitle>
+            <DialogTitle className="text-2xl font-bold tracking-tight">{detailLead?.company ?? "线索详情"}</DialogTitle>
             {detailLead && (
-              <DialogDescription>
-                {detailLead.contact && <span>{detailLead.contact}</span>}
-                {detailLead.phone && <span className="ml-2 font-mono text-xs text-muted-foreground">{detailLead.phone}</span>}
+              <DialogDescription className="text-sm font-medium flex items-center gap-2 mt-1">
+                {detailLead.contact && <span className="text-foreground/80">{detailLead.contact}</span>}
+                {detailLead.phone && (
+                  <span className="font-mono text-sm bg-muted px-2 py-0.5 rounded border border-muted-foreground/10 text-muted-foreground">
+                    {detailLead.phone}
+                  </span>
+                )}
               </DialogDescription>
             )}
           </DialogHeader>
           {detailLead && (
-            <div className="space-y-4 py-2">
-              <div className="grid grid-cols-2 gap-3 text-sm">
+            <div className="space-y-6 py-4">
+              <div className="grid grid-cols-2 gap-5 text-sm border-y border-muted/50 py-5">
                 <div>
-                  <span className="text-muted-foreground">来源</span>
-                  <div className="mt-1">
-                    <Badge variant="outline">{detailLead.source}</Badge>
-                  </div>
+                  <span className="text-sm font-bold text-muted-foreground block mb-1.5">来源渠道</span>
+                  <Badge variant="outline" className="text-sm font-medium border-primary/20 bg-primary/5 text-primary">
+                    {detailLead.source}
+                  </Badge>
                 </div>
                 <div>
-                  <span className="text-muted-foreground">最后阶段</span>
-                  <div className="mt-1">
-                    <Badge variant="secondary">{detailLead.lastStage}</Badge>
-                  </div>
+                  <span className="text-sm font-bold text-muted-foreground block mb-1.5">最后阶段</span>
+                  <Badge variant="secondary" className="text-sm font-bold bg-muted/80">
+                    {detailLead.lastStage}
+                  </Badge>
                 </div>
                 <div>
-                  <span className="text-muted-foreground">预算</span>
-                  <div className="mt-1">{detailLead.budget}</div>
+                  <span className="text-sm font-bold text-muted-foreground block mb-1.5">预算规模</span>
+                  <div className="text-base font-bold text-primary tracking-tight">{detailLead.budget}</div>
                 </div>
                 <div>
-                  <span className="text-muted-foreground">退回原因</span>
-                  <div className="mt-1 text-xs text-muted-foreground">
+                  <span className="text-sm font-bold text-muted-foreground block mb-1.5">退回原因</span>
+                  <div className="text-sm font-medium text-foreground/70 leading-relaxed">
                     {detailLead.returnReason || "退回原因未记录"}
                   </div>
                 </div>
                 <div>
-                  <span className="text-muted-foreground">进入公海时间</span>
-                  <div className="mt-1 text-xs text-muted-foreground">{detailLead.returnedAt || "--"}</div>
+                  <span className="text-sm font-bold text-muted-foreground block mb-1.5">进入公海时间</span>
+                  <div className="text-sm font-medium text-foreground/70">{detailLead.returnedAt || "--"}</div>
                 </div>
                 <div>
-                  <span className="text-muted-foreground">池内天数</span>
-                  <div className="mt-1">{detailLead.daysInPool} 天</div>
+                  <span className="text-sm font-bold text-muted-foreground block mb-1.5">池内天数</span>
+                  <div className="flex items-center gap-1.5">
+                    {getDaysInPoolBadge(detailLead.daysInPool)}
+                  </div>
                 </div>
               </div>
 
-              <div className="space-y-2">
+              <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium">跟进记录</span>
+                  <span className="text-base font-bold text-foreground">跟进记录回顾</span>
                 </div>
                 {isLoadingInteractions && (
-                  <p className="text-xs text-muted-foreground">跟进记录加载中...</p>
+                  <div className="flex flex-col items-center justify-center py-10 space-y-2">
+                    <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                    <p className="text-xs text-muted-foreground font-medium">深度同步历史跟进记录...</p>
+                  </div>
                 )}
                 {interactionsError && !isLoadingInteractions && (
-                  <p className="text-xs text-destructive">{interactionsError.description}</p>
+                  <p className="text-sm text-destructive font-medium bg-destructive/5 p-3 rounded-lg border border-destructive/10">
+                    {interactionsError.description}
+                  </p>
                 )}
                 {!isLoadingInteractions && !interactionsError && interactions.length === 0 && (
-                  <p className="text-xs text-muted-foreground">暂无跟进记录</p>
+                  <div className="text-center py-10 bg-muted/20 rounded-xl border border-dashed border-muted-foreground/20">
+                    <p className="text-sm text-muted-foreground font-medium">暂无历史跟进记录</p>
+                  </div>
                 )}
                 {!isLoadingInteractions && interactions.length > 0 && (
-                  <div className="space-y-3 max-h-64 overflow-y-auto border rounded-md p-3 bg-muted/30">
+                  <div className="space-y-4 max-h-[300px] overflow-y-auto border border-muted/50 rounded-xl p-4 bg-muted/10 shadow-inner">
                     {interactions.map((item) => (
-                      <div key={item.id} className="text-xs space-y-1">
+                      <div key={item.id} className="text-sm space-y-2 pb-4 border-b border-muted/30 last:border-0 last:pb-0">
                         <div className="flex items-center justify-between">
-                          <span className="font-medium">{item.author}</span>
-                          <span className="text-muted-foreground">{item.date}</span>
+                          <span className="font-bold text-foreground/90">{item.author}</span>
+                          <span className="text-xs text-muted-foreground font-medium">{item.date}</span>
                         </div>
-                        <div className="flex items-center gap-2 text-muted-foreground">
-                          <Badge variant="outline">
-                            {item.type === "call" && "电话"}
-                            {item.type === "wechat" && "微信"}
-                            {item.type === "visit" && "拜访"}
+                        <div className="flex flex-col gap-2">
+                          <Badge variant="outline" className="w-fit text-[11px] font-bold h-5 px-1.5">
+                            {item.type === "call" && "电话互动"}
+                            {item.type === "wechat" && "微信沟通"}
+                            {item.type === "visit" && "线下拜访"}
                           </Badge>
-                          <span>{item.content}</span>
+                          <p className="text-sm text-foreground/80 leading-relaxed pl-1 border-l-2 border-primary/20">{item.content}</p>
                         </div>
                       </div>
                     ))}
@@ -1666,6 +1636,7 @@ export function PublicPool() {
           )}
         </DialogContent>
       </Dialog>
+
 
       {/* Delete Lead Dialog */}
       <Dialog

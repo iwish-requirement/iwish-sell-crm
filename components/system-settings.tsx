@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect, useMemo, useContext } from "react"
+
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -56,6 +57,9 @@ import { rpcGetRolePermissions, rpcRolePermissionsSetMatrix, type RolePermission
 import { mapRpcError, type RpcErrorFriendly } from "@/lib/rpc-error-mapper"
 import { toast } from "sonner"
 import { LeadGradesAndSourcesSettingsCard } from "./lead-grades-and-sources-settings-card"
+import { MePermissionsContext } from "@/components/app-root"
+
+
 
 
 // Types
@@ -635,6 +639,22 @@ const PERMISSION_MATRIX_ROWS: PermissionMatrixRowConfig[] = [
 
 export function SystemSettings() {
   const [settingsTab, setSettingsTab] = useState("rules")
+  const mePermissions = useContext(MePermissionsContext)
+  const canViewSettings = mePermissions?.canViewSettings ?? false
+
+  if (!canViewSettings) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-semibold text-foreground">系统设置</h1>
+          <p className="text-muted-foreground">
+            当前账号无权访问系统设置，如需调整相关权限，请联系系统管理员。
+          </p>
+        </div>
+      </div>
+    )
+  }
+
 
   return (
     <div className="space-y-6">
@@ -644,6 +664,7 @@ export function SystemSettings() {
       </div>
 
       <Tabs value={settingsTab} onValueChange={setSettingsTab} className="space-y-6">
+
         <TabsList>
           <TabsTrigger value="rules" className="gap-2">
             <Settings2 className="w-4 h-4" />
@@ -1782,11 +1803,11 @@ function AnalyticsExcludedTeamsSettingsCard() {
   return (
     <Card className="max-w-2xl">
       <CardHeader>
-        <CardTitle>统计排除团队</CardTitle>
-        <CardDescription>
+        <CardTitle className="text-xl font-bold text-foreground">统计排除团队</CardTitle>
+        <CardDescription className="text-sm">
           配置哪些团队不参与数据分析中的团队筛选和业绩统计，适用于“系统管理”“技术维护”等运维团队。
         </CardDescription>
-        {loadError && <p className="mt-2 text-xs text-destructive/80">{loadError}</p>}
+        {loadError && <p className="mt-2 text-sm text-destructive/80">{loadError}</p>}
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex items-center gap-2 max-w-sm">
@@ -1796,37 +1817,38 @@ function AnalyticsExcludedTeamsSettingsCard() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             disabled={isLoading}
+            className="h-9 text-sm"
           />
         </div>
 
-        <div className="border rounded-md overflow-hidden">
+        <div className="border rounded-md overflow-hidden shadow-sm">
           <Table>
             <TableHeader>
-              <TableRow>
-                <TableHead>团队</TableHead>
-                <TableHead className="w-[160px] text-right">排除统计</TableHead>
+              <TableRow className="bg-muted/20">
+                <TableHead className="text-xs font-semibold">团队</TableHead>
+                <TableHead className="w-[160px] text-right text-xs font-semibold">排除统计</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={2} className="text-xs text-muted-foreground">
+                  <TableCell colSpan={2} className="text-sm text-muted-foreground text-center py-8">
                     正在加载团队列表...
                   </TableCell>
                 </TableRow>
               ) : filteredTeams.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={2} className="text-xs text-muted-foreground">
+                  <TableCell colSpan={2} className="text-sm text-muted-foreground text-center py-8">
                     暂无匹配的团队
                   </TableCell>
                 </TableRow>
               ) : (
                 filteredTeams.map((team) => (
-                  <TableRow key={team.id}>
+                  <TableRow key={team.id} className="text-sm">
                     <TableCell>
                       <div className="space-y-0.5">
-                        <div className="text-sm font-medium">{team.name}</div>
-                        <div className="text-xs text-muted-foreground">ID: {team.id}</div>
+                        <div className="font-semibold text-foreground">{team.name}</div>
+                        <div className="text-[11px] text-muted-foreground">ID: {team.id}</div>
                       </div>
                     </TableCell>
                     <TableCell className="text-right">
@@ -1836,6 +1858,7 @@ function AnalyticsExcludedTeamsSettingsCard() {
                           checked={excludedTeamIds.includes(team.id)}
                           onCheckedChange={() => handleToggleTeam(team.id)}
                           disabled={isLoading || isSaving}
+                          className="scale-90"
                         />
                       </div>
                     </TableCell>
@@ -1845,6 +1868,7 @@ function AnalyticsExcludedTeamsSettingsCard() {
             </TableBody>
           </Table>
         </div>
+
 
         <div className="flex justify-end">
           <Button onClick={handleSave} disabled={isSaving || isLoading}>
@@ -2076,10 +2100,11 @@ function OrganizationTab() {
       if (error || !data) {
         console.error("Failed to create team", error)
         const message = error?.message ?? ""
-        if (message.includes("ERR_NO_PERMISSION:teams.manage")) {
+          if (message.includes("ERR_NO_PERMISSION:teams.manage")) {
           toast.error("创建失败", {
-            description: "没有创建团队的权限，请联系系统管理员开通 teams.manage 权限",
+            description: "当前账号无权创建团队。如需开通 teams.manage 权限，请联系系统管理员。",
           })
+
         } else {
           toast.error("创建失败", { description: "创建团队时出错，请稍后重试" })
         }
@@ -2135,8 +2160,9 @@ function OrganizationTab() {
         const message = error.message ?? ""
         if (message.includes("ERR_NO_PERMISSION:teams.manage")) {
           toast.error("保存失败", {
-            description: "没有修改团队的权限，请联系系统管理员开通 teams.manage 权限",
+            description: "当前账号无权修改团队配置。如需开通 teams.manage 权限，请联系系统管理员。",
           })
+
         } else {
           toast.error("保存失败", { description: "更新团队名称时出错，请稍后重试" })
         }
@@ -2576,7 +2602,7 @@ function OrganizationTab() {
             {/* Left: Teams List */}
             <Card className="w-64 flex-shrink-0">
               <CardHeader className="pb-3">
-                <CardTitle className="text-base">团队列表</CardTitle>
+                <CardTitle className="text-base font-bold text-foreground">团队列表</CardTitle>
               </CardHeader>
               <CardContent className="p-0">
                 <ScrollArea className="h-[400px]">
@@ -2588,15 +2614,15 @@ function OrganizationTab() {
                         className={cn(
                           "w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm transition-colors text-left",
                           selectedTeamId === team.id
-                            ? "bg-primary text-primary-foreground"
-                            : "hover:bg-accent text-foreground",
+                            ? "bg-primary text-primary-foreground font-semibold"
+                            : "hover:bg-accent text-foreground font-medium",
                         )}
                       >
-                        <span className="font-medium truncate">{team.name}</span>
+                        <span className="truncate">{team.name}</span>
                         <Badge
                           variant={selectedTeamId === team.id ? "secondary" : "outline"}
                           className={cn(
-                            "ml-2 text-xs",
+                            "ml-2 text-[11px]",
                             selectedTeamId === team.id && "bg-primary-foreground/20 text-primary-foreground",
                           )}
                         >
@@ -2606,6 +2632,7 @@ function OrganizationTab() {
                     ))}
                   </div>
                 </ScrollArea>
+
                 <div className="p-3 border-t">
                   <Dialog open={addTeamDialogOpen} onOpenChange={setAddTeamDialogOpen}>
                     <DialogTrigger asChild>
@@ -2644,7 +2671,8 @@ function OrganizationTab() {
             <Card className="flex-1">
               <CardHeader className="flex flex-row items-center justify-between pb-3">
                 <div className="flex items-center gap-3">
-                  <CardTitle className="text-base">{selectedTeam?.name}</CardTitle>
+                  <CardTitle className="text-lg font-bold text-foreground">{selectedTeam?.name}</CardTitle>
+
                   <Dialog
                     open={editTeamDialogOpen}
                     onOpenChange={(open) => {
@@ -2738,39 +2766,42 @@ function OrganizationTab() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>成员</TableHead>
-                      <TableHead>角色</TableHead>
-                      <TableHead>电话</TableHead>
-                      <TableHead>状态</TableHead>
-                      <TableHead className="w-[80px]">操作</TableHead>
+                      <TableHead className="text-xs font-semibold">成员</TableHead>
+                      <TableHead className="text-xs font-semibold">角色</TableHead>
+                      <TableHead className="text-xs font-semibold">电话</TableHead>
+                      <TableHead className="text-xs font-semibold">状态</TableHead>
+                      <TableHead className="w-[80px] text-xs font-semibold">操作</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {selectedTeam?.members.map((member) => (
-                      <TableRow key={member.id}>
+                      <TableRow key={member.id} className="text-sm">
                         <TableCell>
                           <div className="flex items-center gap-3">
-                            <Avatar className="h-8 w-8">
-                              <AvatarImage src={member.avatar || "/placeholder.svg"} />
-                              <AvatarFallback>{member.name.slice(0, 1)}</AvatarFallback>
+                            <Avatar className="h-9 w-9">
+                              {member.avatar ? <AvatarImage src={member.avatar} /> : null}
+                              <AvatarFallback>{member.name?.trim()?.[0] ?? "?"}</AvatarFallback>
                             </Avatar>
-                            <span className="font-medium">{member.name}</span>
+
+                            <span className="font-semibold">{member.name}</span>
                           </div>
                         </TableCell>
                         <TableCell>
-                          <Badge variant={member.role === "manager" ? "default" : "secondary"}>
+                          <Badge variant={member.role === "manager" ? "default" : "secondary"} className="text-[11px]">
                             {roleLabels[member.role] || member.role}
                           </Badge>
                         </TableCell>
-                        <TableCell className="text-muted-foreground">{member.phone}</TableCell>
+                        <TableCell className="text-muted-foreground font-mono">{member.phone}</TableCell>
                         <TableCell>
                           <Badge
                             variant={member.status === "active" ? "outline" : "secondary"}
-                            className={
+                            className={cn(
+                              "text-[11px]",
                               member.status === "active"
                                 ? "text-green-600 border-green-600"
                                 : "bg-slate-100 text-slate-500 border-slate-200"
-                            }
+                            )}
+
                             title={
                               member.status === "disabled"
                                 ? [
@@ -3029,34 +3060,35 @@ function OrganizationTab() {
         <TabsContent value="pending" className="mt-6">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">待审核申请</CardTitle>
-              <CardDescription>以下用户正在等待账户激活</CardDescription>
+              <CardTitle className="text-base font-bold text-foreground">待审核申请</CardTitle>
+              <CardDescription className="text-sm">以下用户正在等待账户激活</CardDescription>
             </CardHeader>
             <CardContent className="p-0">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>姓名</TableHead>
-                    <TableHead>邮箱</TableHead>
-                    <TableHead>申请时间</TableHead>
-                    <TableHead className="w-[180px] text-right">操作</TableHead>
+                    <TableHead className="text-xs font-semibold">姓名</TableHead>
+                    <TableHead className="text-xs font-semibold">邮箱</TableHead>
+                    <TableHead className="text-xs font-semibold">申请时间</TableHead>
+                    <TableHead className="w-[180px] text-right text-xs font-semibold">操作</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {pendingUsers.map((user) => (
-                    <TableRow key={user.id}>
+                    <TableRow key={user.id} className="text-sm">
                       <TableCell>
                         <div className="flex items-center gap-3">
-                          <Avatar className="h-8 w-8">
-                            <AvatarFallback className="bg-amber-100 text-amber-700">
+                          <Avatar className="h-9 w-9">
+                            <AvatarFallback className="bg-amber-100 text-amber-700 font-semibold">
                               {user.name.slice(0, 1)}
                             </AvatarFallback>
                           </Avatar>
-                          <span className="font-medium">{user.name}</span>
+                          <span className="font-semibold">{user.name}</span>
                         </div>
                       </TableCell>
                       <TableCell className="text-muted-foreground">{user.email}</TableCell>
                       <TableCell className="text-muted-foreground">{user.applyTime}</TableCell>
+
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
                           <Button
@@ -3100,14 +3132,14 @@ function OrganizationTab() {
           <Dialog open={approvalDialogOpen} onOpenChange={setApprovalDialogOpen}>
             <DialogContent>
               <DialogHeader>
-                <DialogTitle>激活用户: {selectedPendingUser?.name}</DialogTitle>
-                <DialogDescription>请为该用户分配团队和角色以完成激活</DialogDescription>
+                <DialogTitle className="text-xl font-bold">激活用户: {selectedPendingUser?.name}</DialogTitle>
+                <DialogDescription className="text-sm">请为该用户分配团队和角色以完成激活</DialogDescription>
               </DialogHeader>
               <div className="py-4 space-y-4">
                 <div className="space-y-2">
-                  <Label>分配团队</Label>
+                  <Label className="text-sm font-medium">分配团队</Label>
                   <Select value={approvalTeam} onValueChange={setApprovalTeam}>
-                    <SelectTrigger>
+                    <SelectTrigger className="h-9 text-sm">
                       <SelectValue placeholder="选择团队" />
                     </SelectTrigger>
                     <SelectContent>
@@ -3120,9 +3152,9 @@ function OrganizationTab() {
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label>分配角色</Label>
+                  <Label className="text-sm font-medium">分配角色</Label>
                   <Select value={approvalRole} onValueChange={setApprovalRole}>
-                    <SelectTrigger>
+                    <SelectTrigger className="h-9 text-sm">
                       <SelectValue placeholder="选择角色" />
                     </SelectTrigger>
                     <SelectContent>
@@ -3135,6 +3167,7 @@ function OrganizationTab() {
                   </Select>
                 </div>
               </div>
+
               <DialogFooter>
                 <Button variant="outline" onClick={() => setApprovalDialogOpen(false)}>
                   取消
@@ -3153,20 +3186,22 @@ function OrganizationTab() {
           <Dialog open={rejectDialogOpen} onOpenChange={setRejectDialogOpen}>
             <DialogContent>
               <DialogHeader>
-                <DialogTitle>驳回申请: {selectedPendingUser?.name}</DialogTitle>
-                <DialogDescription>请填写驳回原因，该原因将记录在审计日志中</DialogDescription>
+                <DialogTitle className="text-xl font-bold">驳回申请: {selectedPendingUser?.name}</DialogTitle>
+                <DialogDescription className="text-sm">请填写驳回原因，该原因将记录在审计日志中</DialogDescription>
               </DialogHeader>
               <div className="py-4 space-y-3">
                 <div className="space-y-2">
-                  <Label htmlFor="rejectReason">驳回原因</Label>
+                  <Label htmlFor="rejectReason" className="text-sm font-medium">驳回原因</Label>
                   <Textarea
                     id="rejectReason"
                     value={rejectReason}
                     onChange={(e) => setRejectReason(e.target.value)}
                     placeholder="请输入具体原因，例如信息不完整或不符合准入条件"
+                    className="text-sm"
                   />
                 </div>
               </div>
+
               <DialogFooter>
                 <Button variant="outline" onClick={() => setRejectDialogOpen(false)}>
                   取消
@@ -3239,21 +3274,23 @@ function OrganizationTab() {
           >
             <DialogContent>
               <DialogHeader>
-                <DialogTitle>禁用账号: {statusDialogTarget?.name}</DialogTitle>
-                <DialogDescription>禁用后该成员将无法登录系统，操作会记录在审计日志中。</DialogDescription>
+                <DialogTitle className="text-xl font-bold">禁用账号: {statusDialogTarget?.name}</DialogTitle>
+                <DialogDescription className="text-sm">禁用后该成员将无法登录系统，操作会记录在审计日志中。</DialogDescription>
               </DialogHeader>
               <div className="py-4 space-y-3">
                 <div className="space-y-2">
-                  <Label htmlFor="disableReason">禁用原因</Label>
+                  <Label htmlFor="disableReason" className="text-sm font-medium">禁用原因</Label>
                   <Textarea
                     id="disableReason"
                     value={disableReason}
                     onChange={(e) => setDisableReason(e.target.value)}
                     placeholder="请输入禁用原因，例如长期未在岗、违反销售规范等"
+                    className="text-sm"
                   />
                   <p className="text-xs text-muted-foreground">原因会写入审计日志，方便后续追溯。</p>
                 </div>
               </div>
+
               <DialogFooter>
                 <Button
                   variant="outline"
@@ -4155,29 +4192,29 @@ function PermissionsTab() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>角色名称</TableHead>
-              <TableHead>数据范围</TableHead>
-              <TableHead className="text-center">用户数</TableHead>
-              <TableHead className="w-[100px]">操作</TableHead>
+              <TableHead className="text-xs font-semibold">角色名称</TableHead>
+              <TableHead className="text-xs font-semibold">数据范围</TableHead>
+              <TableHead className="text-center text-xs font-semibold">用户数</TableHead>
+              <TableHead className="w-[100px] text-xs font-semibold">操作</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {roles.map((role) => (
-              <TableRow key={role.id}>
+              <TableRow key={role.id} className="text-sm">
                 <TableCell>
                   <div className="flex items-center gap-2">
-                    <span className="font-medium">{role.name}</span>
+                    <span className="font-semibold">{role.name}</span>
                     {role.isSystem && (
-                      <Badge variant="secondary" className="text-xs">
+                      <Badge variant="secondary" className="text-[11px]">
                         系统
                       </Badge>
                     )}
                   </div>
                 </TableCell>
                 <TableCell>
-                  <Badge variant="outline">{dataScopeLabels[role.dataScope]}</Badge>
+                  <Badge variant="outline" className="text-[11px]">{dataScopeLabels[role.dataScope]}</Badge>
                 </TableCell>
-                <TableCell className="text-center">{role.usersCount}</TableCell>
+                <TableCell className="text-center font-medium">{role.usersCount}</TableCell>
                 <TableCell>
                   <div className="flex items-center gap-1">
                     <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEditRole(role)}>
@@ -4201,25 +4238,28 @@ function PermissionsTab() {
         </Table>
       </Card>
 
+
       <Card className="border-dashed bg-muted/20">
         <CardHeader>
-          <CardTitle className="text-base">权限入口收敛说明</CardTitle>
-          <CardDescription>
+          <CardTitle className="text-base font-bold">权限入口收敛说明</CardTitle>
+          <CardDescription className="text-sm">
             本版本仅开放「角色权限矩阵」作为权限配置入口；用户覆盖权限 / 字段策略 / 自定义范围集暂不对普通用户开放。
           </CardDescription>
         </CardHeader>
       </Card>
 
+
       {/* Permission Edit Sheet */}
       <Sheet open={sheetOpen} onOpenChange={handleSheetOpenChange}>
         <SheetContent className="w-full sm:max-w-lg">
           <SheetHeader>
-            <SheetTitle>编辑角色权限</SheetTitle>
+            <SheetTitle className="text-xl font-bold">编辑角色权限</SheetTitle>
           </SheetHeader>
 
           {editingRole && (
             <ScrollArea className="h-[calc(100vh-180px)] pr-4">
               <div className="space-y-6 py-6 px-6">
+
                 {roleSaveError && (
                   <Alert variant="destructive">
                     <AlertTriangle />
@@ -4246,28 +4286,29 @@ function PermissionsTab() {
                   <div className="space-y-6">
                     {/* Basic Info */}
                     <div className="space-y-4">
-                      <h4 className="text-sm font-medium flex items-center gap-2">
-                        <UserCog className="w-4 h-4" />
+                      <h4 className="text-base font-bold flex items-center gap-2">
+                        <UserCog className="w-4.5 h-4.5" />
                         基本信息
                       </h4>
                       <div className="space-y-3 pl-6">
                         <div className="space-y-2">
-                          <Label htmlFor="roleName">角色名称</Label>
+                          <Label htmlFor="roleName" className="text-sm font-medium">角色名称</Label>
                           <Input
                             id="roleName"
                             value={editingRole.name}
                             onChange={(e) => setEditingRole({ ...editingRole, name: e.target.value })}
+                            className="h-9 text-sm"
                           />
                         </div>
                         <div className="space-y-2">
-                          <Label>角色类型</Label>
+                          <Label className="text-sm font-medium">角色类型</Label>
                           <Select
                             value={editingRole.roleType}
                             onValueChange={(value: Role["roleType"]) =>
                               setEditingRole({ ...editingRole, roleType: value })
                             }
                           >
-                            <SelectTrigger>
+                            <SelectTrigger className="h-9 text-sm">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -4281,14 +4322,14 @@ function PermissionsTab() {
                           </Select>
                         </div>
                         <div className="space-y-2">
-                          <Label>数据范围</Label>
+                          <Label className="text-sm font-medium">数据范围</Label>
                           <Select
                             value={editingRole.dataScope}
                             onValueChange={(value: "all" | "team" | "own") =>
                               setEditingRole({ ...editingRole, dataScope: value })
                             }
                           >
-                            <SelectTrigger>
+                            <SelectTrigger className="h-9 text-sm">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -4319,14 +4360,14 @@ function PermissionsTab() {
                   <div className="space-y-6">
                     {/* Data Security Permissions */}
                     <div className="space-y-4">
-                      <h4 className="text-sm font-medium flex items-center gap-2">
-                        <Database className="w-4 h-4" />
+                      <h4 className="text-base font-bold flex items-center gap-2">
+                        <Database className="w-4.5 h-4.5" />
                         数据安全
                       </h4>
                       <div className="space-y-3 pl-6">
                         <div className="flex items-center justify-between">
                           <div className="space-y-0.5">
-                            <Label className="text-sm">查看完整手机号</Label>
+                            <Label className="text-sm font-medium">查看完整手机号</Label>
                             <p className="text-xs text-muted-foreground">允许查看未脱敏的客户电话</p>
                           </div>
                           <Switch
@@ -4336,7 +4377,7 @@ function PermissionsTab() {
                         </div>
                         <div className="flex items-center justify-between">
                           <div className="space-y-0.5">
-                            <Label className="text-sm">导出数据</Label>
+                            <Label className="text-sm font-medium">导出数据</Label>
                             <p className="text-xs text-muted-foreground">允许导出线索和客户数据</p>
                           </div>
                           <Switch
@@ -4347,21 +4388,22 @@ function PermissionsTab() {
                       </div>
                     </div>
 
+
                     <Separator />
 
                     {/* Operation & Management Permission Matrix */}
                     <div className="space-y-4">
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex flex-col gap-1">
-                          <h4 className="text-sm font-medium flex items-center gap-2">
-                            <Eye className="w-4 h-4" />
+                          <h4 className="text-base font-bold flex items-center gap-2">
+                            <Eye className="w-4.5 h-4.5" />
                             业务 & 管理操作权限
                           </h4>
                           <p className="text-xs text-muted-foreground">
                             推荐先根据角色类型应用一份基础模板，再按需要微调个别开关。
                           </p>
                           <div className="flex flex-wrap items-center gap-2 mt-1">
-                            <Badge variant={recommendedDiffCount === 0 ? "default" : "outline"}>
+                            <Badge variant={recommendedDiffCount === 0 ? "default" : "outline"} className="text-[11px]">
                               {recommendedDiffCount === 0
                                 ? "当前配置与推荐模板一致"
                                 : `与推荐模板有 ${recommendedDiffCount} 项差异`}
@@ -4370,8 +4412,10 @@ function PermissionsTab() {
                               type="button"
                               size="xs"
                               variant="outline"
+                              className="h-6 px-2 text-[11px]"
                               disabled={!editingRole}
                               onClick={() => {
+
                                 if (!editingRole) return
                                 const template = RECOMMENDED_ROLE_TEMPLATES[editingRole.roleType]
                                 if (!template) return
@@ -4411,14 +4455,14 @@ function PermissionsTab() {
                           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
                           <Input
                             placeholder="搜索权限..."
-                            className="pl-7 h-8 text-xs"
+                            className="pl-7 h-8 text-xs bg-background"
                             value={permissionSearch}
                             onChange={(event) => setPermissionSearch(event.target.value)}
                           />
                         </div>
                       </div>
 
-                      <div className="space-y-3 rounded-md border bg-muted/30 p-3">
+                      <div className="space-y-4 rounded-md border bg-muted/30 p-3">
                         {PERMISSION_MATRIX_GROUPS.map((group) => {
                           const groupRows = PERMISSION_MATRIX_ROWS.filter((row) => row.groupId === group.id).filter(
                             (row) => {
@@ -4437,15 +4481,15 @@ function PermissionsTab() {
 
                           return (
                             <div key={group.id} className="space-y-2">
-                              <div className="flex items-center justify-between">
+                              <div className="flex items-center justify-between px-1">
                                 <div className="flex flex-col gap-0.5">
                                   <div className="flex items-center gap-2">
                                     {group.id === "operation" ? (
-                                      <Eye className="w-4 h-4 text-muted-foreground" />
+                                      <Eye className="w-4 h-4 text-primary" />
                                     ) : (
-                                      <Shield className="w-4 h-4 text-muted-foreground" />
+                                      <Shield className="w-4 h-4 text-primary" />
                                     )}
-                                    <span className="text-xs font-medium">{group.title}</span>
+                                    <span className="text-sm font-semibold text-foreground">{group.title}</span>
                                   </div>
                                   <p className="text-[11px] text-muted-foreground">{group.description}</p>
                                 </div>
@@ -4454,35 +4498,33 @@ function PermissionsTab() {
                                     type="button"
                                     variant="ghost"
                                     size="sm"
-                                    className="h-7 px-2 text-[11px]"
+                                    className="h-7 px-2 text-[11px] hover:bg-background"
                                     onClick={() => handleGroupToggle(group.id, !allChecked)}
                                   >
                                     {allChecked ? "清空本组" : "全选本组"}
                                   </Button>
-                                  <div className="hidden text-[11px] text-muted-foreground md:inline">
-                                    {someChecked && !allChecked ? "部分开启" : allChecked ? "全部开启" : "全部关闭"}
-                                  </div>
                                 </div>
                               </div>
-                              <div className="rounded-md border bg-background/60">
-                                <div className="grid grid-cols-[minmax(0,1.5fr)_minmax(0,2fr)_auto] gap-2 px-3 py-2 text-[11px] text-muted-foreground">
-                                  <span>权限</span>
-                                  <span>说明</span>
-                                  <span className="text-center">已启用</span>
+                              <div className="rounded-md border bg-background/60 shadow-sm overflow-hidden">
+                                <div className="grid grid-cols-[minmax(0,1.5fr)_minmax(0,2fr)_auto] gap-2 px-3 py-2.5 text-[11px] font-bold text-muted-foreground uppercase tracking-wider bg-muted/20">
+                                  <span>权限点</span>
+                                  <span>核心说明</span>
+                                  <span className="text-center">启用</span>
                                 </div>
                                 <Separator />
-                                <div className="divide-y">
+                                <div className="divide-y divide-border/40">
                                   {groupRows.map((row) => (
                                     <div
                                       key={row.key}
-                                      className="grid grid-cols-[minmax(0,1.5fr)_minmax(0,2fr)_auto] items-center gap-2 px-3 py-2"
+                                      className="grid grid-cols-[minmax(0,1.5fr)_minmax(0,2fr)_auto] items-center gap-2 px-3 py-2.5 hover:bg-muted/10 transition-colors"
                                     >
-                                      <div className="text-xs font-medium">{row.label}</div>
-                                      <div className="text-[11px] text-muted-foreground">{row.description}</div>
+                                      <div className="text-sm font-medium text-foreground">{row.label}</div>
+                                      <div className="text-xs text-muted-foreground">{row.description}</div>
                                       <div className="flex justify-center">
                                         <Switch
                                           checked={!!editingRole?.permissions[row.key]}
                                           onCheckedChange={(checked) => updatePermission(row.key, checked)}
+                                          className="scale-90"
                                         />
                                       </div>
                                     </div>
@@ -4492,6 +4534,7 @@ function PermissionsTab() {
                             </div>
                           )
                         })}
+
                         {permissionSearch.trim() &&
                           !PERMISSION_MATRIX_GROUPS.some((group) => {
                             const groupRows = PERMISSION_MATRIX_ROWS.filter((row) => row.groupId === group.id).filter(
@@ -4513,23 +4556,23 @@ function PermissionsTab() {
 
                     {/* Field Permissions */}
                     <div className="space-y-3">
-                      <h4 className="text-sm font-medium flex items-center gap-2">
-                        <Database className="w-4 h-4" />
+                      <h4 className="text-base font-bold flex items-center gap-2">
+                        <Database className="w-4.5 h-4.5" />
                         字段权限
                       </h4>
                       <p className="text-xs text-muted-foreground">
                         字段权限决定不同角色是否可以查看或编辑敏感/内部字段，实际控制仍由后端安全视图、字段策略与 RLS 统一约束，这里的开关仅用于配置角色是否具备对应字段级权限 Key。
                       </p>
-                      <div className="mt-2 rounded-md border bg-muted/30">
-                        <div className="grid grid-cols-[minmax(0,1.6fr)_auto_auto] gap-2 px-4 py-2 text-xs text-muted-foreground">
+                      <div className="mt-2 rounded-md border bg-muted/30 shadow-sm overflow-hidden">
+                        <div className="grid grid-cols-[minmax(0,1.6fr)_auto_auto] gap-2 px-4 py-2.5 text-[11px] font-bold text-muted-foreground uppercase tracking-wider bg-muted/20">
                           <span>字段分组</span>
                           <span className="text-center">可见</span>
                           <span className="text-center">可编辑</span>
                         </div>
                         <Separator />
-                        <div className="divide-y">
-                          <div className="grid grid-cols-[minmax(0,1.6fr)_auto_auto] items-center gap-2 px-4 py-2">
-                            <div className="text-sm">
+                        <div className="divide-y divide-border/40">
+                          <div className="grid grid-cols-[minmax(0,1.6fr)_auto_auto] items-center gap-2 px-4 py-2.5 hover:bg-muted/10 transition-colors">
+                            <div className="text-sm font-medium text-foreground">
                               敏感字段（手机号 / 邮箱 / 预算 / 详细地址）
                             </div>
                             <div className="flex justify-center">
@@ -4537,6 +4580,7 @@ function PermissionsTab() {
                                 checked={!!editingRole?.permissions.viewUnmaskedPhone}
                                 onCheckedChange={(checked) => updatePermission("viewUnmaskedPhone", checked)}
                                 aria-label="敏感字段可见性由 leads.fields.read_sensitive 控制"
+                                className="scale-90"
                               />
                             </div>
                             <div className="flex justify-center">
@@ -4544,16 +4588,18 @@ function PermissionsTab() {
                                 checked={!!editingRole?.permissions.editSensitiveFields}
                                 onCheckedChange={(checked) => updatePermission("editSensitiveFields", checked)}
                                 aria-label="敏感字段可编辑性由 leads.fields.write_sensitive 控制"
+                                className="scale-90"
                               />
                             </div>
                           </div>
-                          <div className="grid grid-cols-[minmax(0,1.6fr)_auto_auto] items-center gap-2 px-4 py-2">
-                            <div className="text-sm">内部字段（内部评分 / 黑名单原因）</div>
+                          <div className="grid grid-cols-[minmax(0,1.6fr)_auto_auto] items-center gap-2 px-4 py-2.5 hover:bg-muted/10 transition-colors">
+                            <div className="text-sm font-medium text-foreground">内部字段（内部评分 / 黑名单原因）</div>
                             <div className="flex justify-center">
                               <Switch
                                 checked={!!editingRole?.permissions.viewInternalFields}
                                 onCheckedChange={(checked) => updatePermission("viewInternalFields", checked)}
                                 aria-label="内部字段可见性由 leads.fields.read_internal 控制"
+                                className="scale-90"
                               />
                             </div>
                             <div className="flex justify-center">
@@ -4561,12 +4607,14 @@ function PermissionsTab() {
                                 checked={!!editingRole?.permissions.editInternalFields}
                                 onCheckedChange={(checked) => updatePermission("editInternalFields", checked)}
                                 aria-label="内部字段可编辑性由 leads.fields.write_internal 控制"
+                                className="scale-90"
                               />
                             </div>
                           </div>
                         </div>
                       </div>
                     </div>
+
                   </div>
                 </div>
               </div>

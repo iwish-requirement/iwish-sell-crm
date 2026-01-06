@@ -254,8 +254,8 @@ export function Dashboard() {
     return (
       <div className="space-y-6">
         <div>
-          <h1 className="text-2xl font-semibold text-foreground">仪表盘</h1>
-          <p className="text-muted-foreground">加载中...</p>
+          <h1 className="text-3xl font-bold text-foreground tracking-tight">仪表盘</h1>
+          <p className="text-sm text-muted-foreground font-medium mt-1">同步销售概览数据中...</p>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {Array.from({ length: 4 }).map((_, i) => (
@@ -275,11 +275,12 @@ export function Dashboard() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold text-foreground">仪表盘</h1>
-        <p className="text-muted-foreground">
+        <h1 className="text-3xl font-bold text-foreground tracking-tight">仪表盘</h1>
+        <p className="text-base font-medium text-foreground/70 mt-1">
           {welcomeText ?? "欢迎回来，以下是您的销售概览。"}
         </p>
       </div>
+
 
       {showErrorBanner ? (
         <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
@@ -290,20 +291,20 @@ export function Dashboard() {
       {/* KPI Cards - responsive grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {DASHBOARD_CARDS.map((card) => (
-          <Card key={card.key}>
+          <Card key={card.key} className="border-muted-foreground/10 shadow-sm overflow-hidden group hover:shadow-md transition-shadow">
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
-                <div className={`p-3 rounded-lg ${card.bgColor}`}>
-                  <card.icon className={`w-5 h-5 ${card.color}`} />
+                <div className={`p-3 rounded-xl ${card.bgColor} shadow-inner transition-transform group-hover:scale-110`}>
+                  <card.icon className={`w-6 h-6 ${card.color}`} />
                 </div>
-                <Badge variant={getBadgeVariant(card)} className="flex items-center gap-1">
+                <Badge variant={getBadgeVariant(card)} className="flex items-center gap-1 font-bold px-2 py-0.5 rounded-full">
                   {card.trend === "up" ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
-                  <span>{summary ? "实时" : "加载中"}</span>
+                  <span className="text-[10px] uppercase tracking-wider">{summary ? "实时" : "同步"}</span>
                 </Badge>
               </div>
-              <div className="mt-4">
-                <p className="text-2xl font-bold text-foreground">{formatKpiValue(card, summary)}</p>
-                <p className="text-sm text-muted-foreground">{card.title}</p>
+              <div className="mt-5">
+                <p className="text-3xl font-bold text-foreground tracking-tight">{formatKpiValue(card, summary)}</p>
+                <p className="text-sm font-bold text-muted-foreground mt-1 uppercase tracking-widest">{card.title}</p>
               </div>
             </CardContent>
           </Card>
@@ -312,20 +313,21 @@ export function Dashboard() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Sales Funnel */}
-        <Card>
-          <CardHeader>
-            <CardTitle>销售漏斗</CardTitle>
+        <Card className="border-muted-foreground/10 shadow-sm">
+          <CardHeader className="border-b border-muted/30 pb-4">
+            <CardTitle className="text-lg font-bold tracking-tight">销售漏斗概览</CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="pt-6">
             <SalesFunnel />
           </CardContent>
         </Card>
 
         {/* Recent Deals */}
-        <div>
+        <div className="h-full">
           <RecentDealsCard />
         </div>
       </div>
+
     </div>
   )
 }

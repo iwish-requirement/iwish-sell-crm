@@ -150,6 +150,8 @@ export async function fetchRenewalContracts(horizonDays = 90, expiredWindowDays 
     .not("end_date", "is", null)
     .gte("end_date", minDateStr)
     .lte("end_date", maxDateStr)
+    .limit(1000)
+
 
   if (error) {
     console.error("Failed to fetch renewal contracts", error)

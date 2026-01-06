@@ -187,17 +187,18 @@ export function RenewalCenter() {
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold text-foreground">续费中心</h1>
-          <p className="text-xs text-muted-foreground mt-1">
+          <h1 className="text-2xl font-bold text-foreground">续费中心</h1>
+          <p className="text-sm text-muted-foreground mt-1">
             基于合同服务周期，集中查看即将到期和最近到期的客户合同，为续费跟进提供节奏参考。
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-xs text-muted-foreground">服务到期窗口</span>
+          <span className="text-sm text-muted-foreground">服务到期窗口</span>
           <Select value={timeFilter} onValueChange={setTimeFilter}>
-            <SelectTrigger className="h-8 w-[140px] text-xs">
+            <SelectTrigger className="h-9 w-[140px] text-sm">
               <SelectValue placeholder="选择时间范围" />
             </SelectTrigger>
+
             <SelectContent>
               {TIME_FILTER_OPTIONS.map((option) => (
                 <SelectItem key={option.value} value={option.value}>
@@ -212,85 +213,87 @@ export function RenewalCenter() {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
         <Card>
           <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
-            <CardTitle className="text-xs font-medium text-muted-foreground">当前窗口内合同数</CardTitle>
+            <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">当前窗口内合同数</CardTitle>
             <RefreshCcw className="w-4 h-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            {isLoading ? <Skeleton className="h-6 w-12" /> : <p className="text-2xl font-semibold">{stats.total}</p>}
+            {isLoading ? <Skeleton className="h-8 w-12" /> : <p className="text-3xl font-bold">{stats.total}</p>}
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
-            <CardTitle className="text-xs font-medium text-muted-foreground">即将到期</CardTitle>
+            <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">即将到期</CardTitle>
             <Clock className="w-4 h-4 text-amber-500" />
           </CardHeader>
           <CardContent>
             {isLoading ? (
-              <Skeleton className="h-6 w-12" />
+              <Skeleton className="h-8 w-12" />
             ) : (
-              <p className="text-2xl font-semibold text-amber-600">{stats.expiring}</p>
+              <p className="text-3xl font-bold text-amber-600">{stats.expiring}</p>
             )}
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
-            <CardTitle className="text-xs font-medium text-muted-foreground">最近已到期</CardTitle>
+            <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">最近已到期</CardTitle>
           </CardHeader>
           <CardContent>
             {isLoading ? (
-              <Skeleton className="h-6 w-12" />
+              <Skeleton className="h-8 w-12" />
             ) : (
-              <p className="text-2xl font-semibold text-destructive">{stats.expired}</p>
+              <p className="text-3xl font-bold text-destructive">{stats.expired}</p>
             )}
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
-            <CardTitle className="text-xs font-medium text-muted-foreground">涉及客户数</CardTitle>
+            <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">涉及客户数</CardTitle>
           </CardHeader>
           <CardContent>
             {isLoading ? (
-              <Skeleton className="h-6 w-16" />
+              <Skeleton className="h-8 w-16" />
             ) : (
-              <p className="text-2xl font-semibold text-foreground">{stats.customerCount}</p>
+              <p className="text-3xl font-bold text-foreground">{stats.customerCount}</p>
             )}
           </CardContent>
         </Card>
       </div>
 
+
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-2">
-          <CardTitle className="text-sm font-semibold">续费预警列表</CardTitle>
+          <CardTitle className="text-base font-bold text-foreground">续费预警列表</CardTitle>
         </CardHeader>
         <CardContent>
           {hasNoPermission ? (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <AlertCircle className="w-4 h-4 text-muted-foreground" />
-              <span>没有权限查看续费中心，请联系管理员调整合同相关权限。</span>
+              <span>当前账号无权访问续费中心，如需调整合同相关权限，请联系系统管理员。</span>
             </div>
+
           ) : isLoading ? (
             <div className="space-y-2">
               {Array.from({ length: 6 }).map((_, index) => (
                 <div key={index} className="flex items-center justify-between gap-3 py-2">
                   <div className="flex-1 space-y-1">
-                    <Skeleton className="h-3 w-40" />
-                    <Skeleton className="h-3 w-32" />
+                    <Skeleton className="h-4 w-40" />
+                    <Skeleton className="h-4 w-32" />
                   </div>
-                  <Skeleton className="h-4 w-24" />
+                  <Skeleton className="h-5 w-24" />
                 </div>
               ))}
             </div>
           ) : loadError === "error" ? (
-            <div className="flex items-center gap-2 text-xs text-destructive/80">
+            <div className="flex items-center gap-2 text-sm text-destructive/80">
               <AlertCircle className="w-4 h-4" />
               <span>续费数据加载失败，请稍后重试。</span>
             </div>
           ) : items.length === 0 ? (
-            <p className="text-xs text-muted-foreground">当前时间窗口内暂无需要续费关注的合同。</p>
+            <p className="text-sm text-muted-foreground">当前时间窗口内暂无需要续费关注的合同。</p>
           ) : (
             <div className="space-y-3">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                <p className="text-[11px] text-muted-foreground">
+                <p className="text-xs text-muted-foreground">
                   已选择 <span className="font-semibold">{selectedIds.length}</span> 条合同
                 </p>
                 <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full sm:w-auto">
@@ -298,11 +301,11 @@ export function RenewalCenter() {
                     type="date"
                     value={bulkNextDate}
                     onChange={(e) => setBulkNextDate(e.target.value)}
-                    className="h-8 w-full sm:w-[160px] text-xs"
+                    className="h-9 w-full sm:w-[160px] text-sm"
                   />
                   <Button
-                    size="sm"
-                    className="w-full sm:w-auto"
+                    size="default"
+                    className="w-full sm:w-auto h-9"
                     disabled={!hasSelection || !bulkNextDate || isApplyingBulk}
                     onClick={async () => {
                       await handleBulkSetNextContact()
@@ -312,6 +315,7 @@ export function RenewalCenter() {
                   </Button>
                 </div>
               </div>
+
               <div className="w-full overflow-x-auto">
                 <Table>
                   <TableHeader>
@@ -325,18 +329,18 @@ export function RenewalCenter() {
                           }}
                         />
                       </TableHead>
-                      <TableHead className="whitespace-nowrap">到期日期</TableHead>
-                      <TableHead className="whitespace-nowrap">服务周期</TableHead>
-                      <TableHead className="whitespace-nowrap">客户 / 合同</TableHead>
-                      <TableHead className="whitespace-nowrap">负责人</TableHead>
-                      <TableHead className="whitespace-nowrap">合同类型</TableHead>
-                      <TableHead className="whitespace-nowrap text-right">合同金额</TableHead>
-                      <TableHead className="whitespace-nowrap">续费状态</TableHead>
+                      <TableHead className="whitespace-nowrap text-xs font-semibold">到期日期</TableHead>
+                      <TableHead className="whitespace-nowrap text-xs font-semibold">服务周期</TableHead>
+                      <TableHead className="whitespace-nowrap text-xs font-semibold">客户 / 合同</TableHead>
+                      <TableHead className="whitespace-nowrap text-xs font-semibold">负责人</TableHead>
+                      <TableHead className="whitespace-nowrap text-xs font-semibold">合同类型</TableHead>
+                      <TableHead className="whitespace-nowrap text-right text-xs font-semibold">合同金额</TableHead>
+                      <TableHead className="whitespace-nowrap text-xs font-semibold">续费状态</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {items.map((item) => (
-                      <TableRow key={item.contractId} className="text-xs">
+                      <TableRow key={item.contractId} className="text-sm">
                         <TableCell className="w-8">
                           <Checkbox
                             aria-label="选择续费合同"
@@ -354,30 +358,30 @@ export function RenewalCenter() {
                         </TableCell>
                         <TableCell className="min-w-[220px]">
                           <div className="flex flex-col">
-                            <span className="font-medium text-foreground truncate">
+                            <span className="font-semibold text-foreground truncate">
                               {item.companyName || item.customerName || "未命名客户"}
                             </span>
-                            <span className="text-[11px] text-muted-foreground truncate">
+                            <span className="text-xs text-muted-foreground truncate">
                               {item.contractNumber || "未填写合同编号"}
                             </span>
                             {item.signedAt && (
-                              <span className="text-[11px] text-muted-foreground truncate">
+                              <span className="text-xs text-muted-foreground truncate">
                                 签约：{new Date(item.signedAt).toLocaleDateString("zh-CN")}
                               </span>
                             )}
                           </div>
                         </TableCell>
-                        <TableCell className="whitespace-nowrap">
+                        <TableCell className="whitespace-nowrap font-medium">
                           {item.ownerName ?? "未分配"}
                         </TableCell>
 
                         <TableCell className="whitespace-nowrap">
-                          <Badge variant="outline" className="text-[10px]">
+                          <Badge variant="outline" className="text-[11px]">
                             {item.isRenewal ? "续费合同" : "首单合同"}
                           </Badge>
                         </TableCell>
 
-                        <TableCell className="text-right whitespace-nowrap text-primary font-semibold">
+                        <TableCell className="text-right whitespace-nowrap text-primary font-bold">
                           {new Intl.NumberFormat("zh-CN", {
                             style: "currency",
                             currency: item.currency || "CNY",
@@ -386,7 +390,7 @@ export function RenewalCenter() {
                         </TableCell>
                         <TableCell className="whitespace-nowrap">
                           {item.daysToEnd === null ? (
-                            <span className="text-[11px] text-muted-foreground">{formatServiceStatus(item)}</span>
+                            <span className="text-xs text-muted-foreground">{formatServiceStatus(item)}</span>
                           ) : (
                             <Badge
                               variant="outline"
@@ -407,6 +411,7 @@ export function RenewalCenter() {
                       </TableRow>
                     ))}
                   </TableBody>
+
                 </Table>
               </div>
             </div>

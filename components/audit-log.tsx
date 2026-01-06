@@ -1,6 +1,7 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState, useContext } from "react"
+
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
@@ -14,6 +15,9 @@ import { mapRpcError, type RpcErrorFriendly } from "@/lib/rpc-error-mapper"
 import { RpcErrorBanner } from "@/components/rpc-error-banner"
 import { toast } from "sonner"
 import { RefreshCw, Search } from "lucide-react"
+import { MePermissionsContext } from "@/components/app-root"
+
+
 
 interface AuditLogEntry {
   id: string
@@ -82,8 +86,13 @@ function getTargetCategory(targetType: string): TargetFilter {
 }
 
 export function AuditLog() {
+  const mePermissions = useContext(MePermissionsContext)
+  const canViewAudit = mePermissions?.canViewAudit ?? false
+
   const [logs, setLogs] = useState<AuditLogEntry[]>([])
+
   const [isLoading, setIsLoading] = useState(true)
+
   const [loadError, setLoadError] = useState<RpcErrorFriendly | null>(null)
   const [searchText, setSearchText] = useState("")
   const [timeRange, setTimeRange] = useState<TimeRange>("7d")
@@ -100,6 +109,14 @@ export function AuditLog() {
     let isMounted = true
 
     async function loadAuditLogs() {
+      if (!canViewAudit) {
+        if (!isMounted) return
+        setLogs([])
+        setLoadError(null)
+        setIsLoading(false)
+        return
+      }
+
       try {
         setIsLoading(true)
         setLoadError(null)
@@ -188,12 +205,13 @@ export function AuditLog() {
       }
     }
 
-    loadAuditLogs()
+    void loadAuditLogs()
 
     return () => {
       isMounted = false
     }
-  }, [reloadToken])
+  }, [reloadToken, canViewAudit])
+
 
   useEffect(() => {
     setPage(1)
@@ -254,8 +272,22 @@ export function AuditLog() {
     setSelectedLog(null)
   }
 
+  if (!canViewAudit) {
+    return (
+      <div className="space-y-4">
+        <div>
+          <h1 className="text-xl font-semibold text-foreground">审计中心</h1>
+          <p className="text-sm text-muted-foreground">
+            当前账号无权访问审计中心，如需调整审计权限，请联系系统管理员。
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-4">
+
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold">审计日志</h1>

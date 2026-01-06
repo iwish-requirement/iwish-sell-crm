@@ -146,176 +146,8 @@ interface SourceOption {
 }
 
 
-// 线索初始列表由 Supabase 加载，这里保留一个空数组占位，防止误以为还有本地 mock 数据
-const initialLeads: Lead[] = [
+// 线索列表由 Supabase 实时加载，这里不再保留历史 mock 数据，以免造成误解
 
-
-  {
-    id: 1,
-    company: "深圳市科技公司",
-    contact: "李经理",
-    phone: "13800138001",
-    wechat: "limanager_sz",
-    source: "抖音",
-    budget: "¥500,000",
-    lastInteraction: 1,
-    stage: "L1",
-    interactions: [
-      {
-        id: 1,
-        type: "call",
-        content: "首次电话沟通，客户对产品感兴趣，询问了价格和交付时间",
-        date: "2025-06-02",
-        user: "王芳",
-        avatar: "",
-      },
-      { id: 2, type: "wechat", content: "发送了产品手册和报价单", date: "2025-06-03", user: "王芳", avatar: "" },
-    ],
-  },
-  {
-    id: 2,
-    company: "广州智能设备",
-    contact: "王总",
-    phone: "13900139002",
-    wechat: "wangceo_gz",
-    source: "展会",
-    budget: "¥800,000",
-    lastInteraction: 2,
-    stage: "L1",
-    interactions: [
-      {
-        id: 1,
-        type: "visit",
-        content: "展会现场交流，收集了名片，客户表示下周安排详细沟通",
-        date: "2025-06-01",
-        user: "张伟",
-        avatar: "",
-      },
-    ],
-  },
-  {
-    id: 3,
-    company: "北京云计算",
-    contact: "张主管",
-    phone: "13700137003",
-    wechat: "zhangcloud_bj",
-    source: "官网",
-    budget: "¥350,000",
-    lastInteraction: 0,
-    stage: "L2",
-    interactions: [
-      {
-        id: 1,
-        type: "call",
-        content: "客户通过官网咨询，详细介绍了解决方案",
-        date: "2025-06-03",
-        user: "李明",
-        avatar: "",
-      },
-      {
-        id: 2,
-        type: "wechat",
-        content: "客户确认意向，准备安排技术对接",
-        date: "2025-06-04",
-        user: "李明",
-        avatar: "",
-      },
-    ],
-  },
-  {
-    id: 4,
-    company: "上海数据科技",
-    contact: "陈经理",
-    phone: "13600136004",
-    wechat: "chendata_sh",
-    source: "转介绍",
-    budget: "¥1,200,000",
-    lastInteraction: 4,
-    stage: "L2",
-    interactions: [
-      { id: 1, type: "call", content: "老客户介绍，初步电话沟通了需求", date: "2025-05-30", user: "王芳", avatar: "" },
-    ],
-  },
-  {
-    id: 5,
-    company: "杭州互联网",
-    contact: "刘总",
-    phone: "13500135005",
-    wechat: "liutech_hz",
-    source: "抖音",
-    budget: "¥600,000",
-    lastInteraction: 8,
-    stage: "L3",
-    interactions: [
-      { id: 1, type: "visit", content: "客户来访参观，对产品演示很满意", date: "2025-05-25", user: "张伟", avatar: "" },
-      {
-        id: 2,
-        type: "call",
-        content: "跟进电话，客户说在比较其他供应商",
-        date: "2025-05-27",
-        user: "张伟",
-        avatar: "",
-      },
-    ],
-  },
-  {
-    id: 6,
-    company: "成都软件园",
-    contact: "赵经理",
-    phone: "13400134006",
-    wechat: "zhaosoft_cd",
-    source: "展会",
-    budget: "¥450,000",
-    lastInteraction: 5,
-    stage: "L3",
-    interactions: [
-      { id: 1, type: "wechat", content: "发送了定制方案，等待客户反馈", date: "2025-05-29", user: "李明", avatar: "" },
-    ],
-  },
-  {
-    id: 7,
-    company: "武汉科创",
-    contact: "周总",
-    phone: "13300133007",
-    wechat: "zhoutech_wh",
-    source: "官网",
-    budget: "¥750,000",
-    lastInteraction: 1,
-    stage: "L4",
-    interactions: [
-      { id: 1, type: "visit", content: "上门拜访，与技术团队深入交流", date: "2025-06-01", user: "王芳", avatar: "" },
-      { id: 2, type: "call", content: "确认合同细节，客户需要内部审批", date: "2025-06-03", user: "王芳", avatar: "" },
-    ],
-  },
-  {
-    id: 8,
-    company: "南京智造",
-    contact: "吴经理",
-    phone: "13200132008",
-    wechat: "wumaker_nj",
-    source: "转介绍",
-    budget: "¥2,000,000",
-    lastInteraction: 0,
-    stage: "L4",
-    interactions: [
-      { id: 1, type: "call", content: "大客户项目，今日确认合同条款", date: "2025-06-04", user: "张伟", avatar: "" },
-    ],
-  },
-  {
-    id: 9,
-    company: "天津工业",
-    contact: "郑总",
-    phone: "13100131009",
-    wechat: "zhengindu_tj",
-    source: "展会",
-    budget: "¥980,000",
-    lastInteraction: 0,
-    stage: "Won",
-    interactions: [
-      { id: 1, type: "visit", content: "签约仪式，项目正式启动", date: "2025-06-04", user: "李明", avatar: "" },
-    ],
-  },
-]
 
 const stages = [
   { id: "L1", label: "L1 询盘" },
@@ -349,13 +181,13 @@ function LeadCard({ lead, onClick, riskConfig }: { lead: Lead; onClick: () => vo
     if (lead.status === "closed") {
       if (lead.closeResult === "won" || lead.closeResult === "成交") {
         return (
-          <Badge variant="outline" className="text-xs border-emerald-500/60 text-emerald-700">
+          <Badge variant="outline" className="text-sm border-emerald-500/60 text-emerald-700">
             成交
           </Badge>
         )
       }
       return (
-        <Badge variant="outline" className="text-xs border-slate-300 text-slate-600">
+        <Badge variant="outline" className="text-sm border-slate-300 text-slate-600">
           丢单
         </Badge>
       )
@@ -386,9 +218,11 @@ function LeadCard({ lead, onClick, riskConfig }: { lead: Lead; onClick: () => vo
         </Badge>
       )
     if (diffHours >= warningHours)
-      return <Badge className="bg-amber-100 text-amber-700 text-xs hover:bg-amber-100">需跟进</Badge>
+      return <Badge className="bg-amber-100 text-amber-700 text-xs hover:bg-amber-100 font-medium">需跟进</Badge>
     return null
   }
+
+
 
 
 
@@ -404,50 +238,55 @@ function LeadCard({ lead, onClick, riskConfig }: { lead: Lead; onClick: () => vo
   const remainingTagsCount = allTags.length - displayedTags.length
 
   return (
-    <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={onClick}>
+    <Card className="cursor-pointer hover:shadow-md transition-shadow border-muted-foreground/10" onClick={onClick}>
       <CardContent className="p-4 space-y-3">
         <div className="flex items-start justify-between gap-2">
           <div>
-            <p className="font-medium text-foreground">{lead.company}</p>
-            <p className="text-sm text-muted-foreground">{lead.contact}</p>
+            <p className="text-lg font-bold text-foreground leading-tight">{lead.company}</p>
+            <p className="text-sm text-muted-foreground font-medium mt-0.5">{lead.contact}</p>
           </div>
-          <div className="flex flex-col items-end gap-1">
+
+          <div className="flex flex-col items-end gap-1.5">
             {getStatusBadge()}
             {getRiskBadge(lead)}
           </div>
         </div>
 
         <div className="flex flex-wrap gap-2">
-          <Badge variant="secondary" className="text-xs">
+          <Badge variant="secondary" className="text-sm font-normal">
             {lead.source}
           </Badge>
-          <Badge variant="outline" className="text-xs">
+          <Badge variant="outline" className="text-sm font-normal">
             {lead.budget}
           </Badge>
           {lead.grade && (
-            <Badge variant="outline" className="text-xs">
-              客户级别 {lead.grade}
+            <Badge variant="outline" className="text-sm font-medium border-primary/30 text-primary">
+              级别 {lead.grade}
             </Badge>
           )}
         </div>
         {displayedTags.length > 0 && (
-          <div className="flex flex-wrap gap-1">
+          <div className="flex flex-wrap gap-1.5">
             {displayedTags.map((tag) => (
-              <Badge key={tag} variant="secondary" className="text-[11px]">
+              <Badge key={tag} variant="secondary" className="text-[11px] px-1.5 py-0 h-5 bg-muted/50 text-muted-foreground">
                 {tag}
               </Badge>
             ))}
             {remainingTagsCount > 0 && (
               <span className="text-[11px] text-muted-foreground">+{remainingTagsCount}</span>
             )}
+
           </div>
         )}
-        <div className="flex items-center gap-1 text-xs text-muted-foreground">
-          <Calendar className="w-3 h-3" />
-          <span>{lastContactLabel}</span>
-          <span>·</span>
-          <span>{lastContactDateLabel}</span>
-        </div>
+          <div className="flex items-center gap-1.5 text-sm text-muted-foreground pt-1 border-t border-muted/30">
+            <Calendar className="w-3.5 h-3.5" />
+            <span className="font-medium text-foreground/70">{lastContactLabel}</span>
+            <span className="text-muted-foreground/30">|</span>
+            <span>{lastContactDateLabel}</span>
+          </div>
+
+
+
       </CardContent>
     </Card>
   )
@@ -483,11 +322,11 @@ function InteractionItem({ interaction }: { interaction: Interaction }) {
   return (
     <div className="flex gap-3">
       <div className="flex flex-col items-center">
-        <Avatar className="w-8 h-8">
+        <Avatar className="w-9 h-9 border border-background">
           {interaction.avatar ? (
             <AvatarImage src={interaction.avatar} />
           ) : null}
-          <AvatarFallback className="text-xs bg-primary/10 text-primary">
+          <AvatarFallback className="text-sm font-bold bg-primary/10 text-primary">
             {(interaction.user && interaction.user.length > 0 ? interaction.user : "?").slice(0, 1)}
           </AvatarFallback>
         </Avatar>
@@ -495,19 +334,20 @@ function InteractionItem({ interaction }: { interaction: Interaction }) {
       </div>
 
       <div className="flex-1 pb-6">
-        <div className="flex items-center gap-2 mb-1">
-          <Badge variant="outline" className="text-xs gap-1">
+        <div className="flex items-center gap-2 mb-1.5">
+          <Badge variant="outline" className="text-sm gap-1 font-semibold border-primary/20 bg-primary/5">
             {getIcon(interaction.type)}
             {getTypeLabel(interaction.type)}
           </Badge>
-          <span className="text-xs text-muted-foreground">{interaction.date}</span>
-          <span className="text-xs text-muted-foreground">· {interaction.user}</span>
+          <span className="text-sm text-muted-foreground">{interaction.date}</span>
+          <span className="text-sm font-semibold text-foreground/80">· {interaction.user}</span>
         </div>
-        <p className="text-sm text-foreground">{interaction.content}</p>
+        <p className="text-sm text-foreground leading-relaxed bg-muted/30 p-2.5 rounded-md border border-muted/50">{interaction.content}</p>
       </div>
     </div>
   )
 }
+
 
 export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean }) {
   const [leads, setLeads] = useState<Lead[]>([])
@@ -2077,8 +1917,8 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-semibold text-foreground">{isPublicPool ? "公海池" : "我的线索"}</h1>
-            <p className="text-muted-foreground">{isPublicPool ? "可领取的公共线索池" : "管理您的销售线索"}</p>
+            <h1 className="text-3xl font-bold text-foreground tracking-tight">{isPublicPool ? "公海池" : "我的线索"}</h1>
+            <p className="text-sm text-muted-foreground font-medium mt-1">{isPublicPool ? "可领取的公共线索池" : "高效管理您的销售线索与客户关系"}</p>
           </div>
         </div>
         <KanbanSkeleton />
@@ -2090,16 +1930,17 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-foreground">{isPublicPool ? "公海池" : "我的线索"}</h1>
-          <p className="text-muted-foreground">{isPublicPool ? "可领取的公共线索池" : "管理您的销售线索"}</p>
+          <h1 className="text-3xl font-bold text-foreground tracking-tight">{isPublicPool ? "公海池" : "我的线索"}</h1>
+          <p className="text-sm text-muted-foreground font-medium mt-1">{isPublicPool ? "可领取的公共线索池" : "高效管理您的销售线索与客户关系"}</p>
         </div>
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
-            <Button>
-              <Plus className="w-4 h-4 mr-2" />
+            <Button size="lg" className="h-11 px-6 font-bold shadow-lg shadow-primary/20 transition-all hover:scale-[1.02] active:scale-[0.98]">
+              <Plus className="w-5 h-5 mr-2 stroke-[2.5px]" />
               新增线索
             </Button>
           </DialogTrigger>
+
           <DialogContent>
             <DialogHeader>
               <DialogTitle>新增线索</DialogTitle>
@@ -2358,7 +2199,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
             <div className="space-y-4">
               <div className="space-y-2">
-                <p className="text-xs text-muted-foreground">一级渠道</p>
+                <p className="text-sm font-semibold text-foreground/80">一级渠道</p>
                 <Select
                   value={sourceLevel1Filter}
                   onValueChange={(value) => {
@@ -2366,7 +2207,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                     setSourceLevel2Filter("all")
                   }}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger className="h-10">
                     <SelectValue placeholder="全部一级渠道" />
                   </SelectTrigger>
                   <SelectContent>
@@ -2381,7 +2222,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
               </div>
 
               <div className="space-y-2">
-                <p className="text-xs text-muted-foreground">二级渠道</p>
+                <p className="text-sm font-semibold text-foreground/80">二级渠道</p>
                 <Select
                   value={sourceLevel2Filter}
                   onValueChange={setSourceLevel2Filter}
@@ -2390,7 +2231,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                     getChildrenForLevel1(sourceLevel1Filter).length === 0
                   }
                 >
-                  <SelectTrigger>
+                  <SelectTrigger className="h-10">
                     <SelectValue
                       placeholder={
                         sourceLevel1Filter === "all" ||
@@ -2417,9 +2258,9 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
               <div className="space-y-2">
 
-                <p className="text-xs text-muted-foreground">客户级别</p>
+                <p className="text-sm font-semibold text-foreground/80">客户级别</p>
                 <Select value={gradeFilter} onValueChange={setGradeFilter}>
-                  <SelectTrigger>
+                  <SelectTrigger className="h-10">
                     <SelectValue placeholder="全部级别" />
                   </SelectTrigger>
                   <SelectContent>
@@ -2435,18 +2276,19 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
 
               <div className="space-y-2">
-                <p className="text-xs text-muted-foreground">标签关键词</p>
+                <p className="text-sm font-semibold text-foreground/80">标签关键词</p>
                 <Input
                   placeholder="按标签关键词筛选，多个用逗号分隔"
                   value={tagFilter}
                   onChange={(e) => setTagFilter(e.target.value)}
+                  className="h-10"
                 />
               </div>
 
               <div className="space-y-2">
-                <p className="text-xs text-muted-foreground">排序方式</p>
+                <p className="text-sm font-semibold text-foreground/80">排序方式</p>
                 <Select value={sortOption} onValueChange={setSortOption}>
-                  <SelectTrigger>
+                  <SelectTrigger className="h-10">
                     <SelectValue placeholder="排序方式" />
                   </SelectTrigger>
                   <SelectContent>
@@ -2459,11 +2301,12 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
               </div>
 
               <div className="space-y-2">
-                <p className="text-xs text-muted-foreground">视图</p>
+                <p className="text-sm font-semibold text-foreground/80">视图</p>
                 <Select value={activeViewId} onValueChange={handleViewSelect}>
-                  <SelectTrigger>
+                  <SelectTrigger className="h-10">
                     <SelectValue placeholder="选择视图" />
                   </SelectTrigger>
+
                   <SelectContent>
                     <SelectItem value="default">基础视图（全部）</SelectItem>
                     {viewPresets.map((preset) => (
@@ -2603,27 +2446,30 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
         if (urgentCount === 0 && warningCount === 0) {
           return (
-            <div className="flex items-center gap-3 p-4 rounded-lg bg-emerald-50 border border-emerald-200">
-              <AlertTriangle className="w-5 h-5 text-emerald-600" />
+            <div className="flex items-center gap-4 p-5 rounded-xl bg-emerald-50/50 border border-emerald-100 shadow-sm">
+              <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center flex-shrink-0">
+                <AlertTriangle className="w-5 h-5 text-emerald-600" />
+              </div>
               <div>
-                <p className="text-sm font-medium text-emerald-800">当前暂无需要跟进的未成交线索</p>
-                <p className="text-xs text-emerald-700">请继续保持跟进节奏，避免在谈线索进入风险区间</p>
+                <p className="text-base font-bold text-emerald-900">当前暂无需要跟进的风险线索</p>
+                <p className="text-sm text-emerald-700/80 mt-0.5">请继续保持积极跟进，确保业务稳步推进</p>
               </div>
             </div>
           )
         }
 
         return (
-          <div className="flex items-center gap-3 p-4 rounded-lg bg-red-50 border border-red-200">
-            <AlertTriangle className="w-5 h-5 text-red-600" />
+          <div className="flex items-center gap-4 p-5 rounded-xl bg-red-50/50 border border-red-100 shadow-sm animate-pulse-subtle">
+            <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
+              <AlertTriangle className="w-5 h-5 text-red-600" />
+            </div>
             <div>
-              <p className="text-sm font-medium text-red-800">
-                {urgentCount} 条未成交线索需要紧急跟进
+              <p className="text-base font-bold text-red-900">
+                {urgentCount} 条线索急需跟进
               </p>
-              <p className="text-xs text-red-600">
-                超过配置的红色风险阈值未互动的在谈线索将被视为高风险，建议优先联系；超过黄色预警阈值但尚未达到红色风险阈值的在谈线索共有 {warningCount} 条。
+              <p className="text-sm text-red-700/80 mt-0.5 leading-relaxed">
+                超过红色风险阈值的在谈线索已达 <span className="font-bold underline">{urgentCount}</span> 条，建议立即处理；另有 <span className="font-semibold">{warningCount}</span> 条线索处于预警区间。
               </p>
-
             </div>
           </div>
         )
@@ -2634,17 +2480,17 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
           const stageLeads = pagedLeads.filter((lead) => lead.stage === stage.id)
           const stageConfig = getStageConfig(stage.id)
           return (
-            <div key={stage.id} className="space-y-3">
-              <div className="flex items-center justify-between">
+            <div key={stage.id} className="space-y-4">
+              <div className="flex items-center justify-between px-1">
                 <div className="flex items-center gap-2">
                   <StatusDot stage={stage.id} />
-                  <h3 className="font-medium text-sm text-foreground">{stage.label}</h3>
+                  <h3 className="font-bold text-sm text-foreground uppercase tracking-wider">{stage.label}</h3>
                 </div>
-                <Badge variant="secondary" className="text-xs">
+                <Badge variant="secondary" className="text-xs font-bold rounded-full px-2 h-5 min-w-[20px] flex items-center justify-center">
                   {stageLeads.length}
                 </Badge>
               </div>
-              <div className="space-y-3 min-h-[200px] md:min-h-[400px] p-2 rounded-lg">
+              <div className="space-y-4 min-h-[200px] md:min-h-[400px] p-2 rounded-xl border border-muted/20">
                 {stageLeads.map((lead) => (
                   <LeadCard key={lead.id} lead={lead} onClick={() => handleLeadClick(lead)} riskConfig={riskConfigRef.current} />
                 ))}
@@ -2655,28 +2501,31 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
         })}
       </div>
 
+
       {totalLeads > 0 && (
-        <div className="flex items-center justify-between text-xs text-muted-foreground">
-          <div>
-            显示第 {startIndex + 1}–{endIndex} 条，共 {totalLeads} 条线索
+        <div className="flex items-center justify-between text-sm text-muted-foreground p-3 rounded-lg border border-muted/20">
+          <div className="font-medium">
+            显示第 <span className="text-foreground">{startIndex + 1}–{endIndex}</span> 条，共 <span className="text-foreground font-bold">{totalLeads}</span> 条线索
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             <Button
               variant="outline"
               size="sm"
               onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
               disabled={currentPageSafe === 1}
+              className="h-8 px-3"
             >
               上一页
             </Button>
-            <span>
-              第 {currentPageSafe} / {totalPages} 页
+            <span className="font-semibold text-foreground bg-background px-2 py-0.5 rounded border">
+              {currentPageSafe} / {totalPages}
             </span>
             <Button
               variant="outline"
               size="sm"
               onClick={() => setCurrentPage((page) => (page < totalPages ? page + 1 : page))}
               disabled={currentPageSafe === totalPages}
+              className="h-8 px-3"
             >
               下一页
             </Button>
@@ -2684,29 +2533,38 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
         </div>
       )}
 
+
       <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
         <SheetContent className="w-full sm:w-[480px] sm:max-w-[540px] overflow-y-auto p-0">
           {selectedLead && (
             <div className="flex flex-col h-full">
-              <SheetHeader className="space-y-4 p-6 pt-12 border-b">
-                <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
-                    <Building2 className="w-5 h-5 text-primary" />
+              <SheetHeader className="space-y-4 p-6 pt-12 border-b bg-muted/10">
+                <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0 border border-primary/20 shadow-sm">
+                    <Building2 className="w-6 h-6 text-primary" />
                   </div>
-                  <div className="min-w-0 space-y-1">
+                  <div className="min-w-0 space-y-1.5 flex-1">
                     {isEditing ? (
                       <Input
                         value={editLead.company}
                         onChange={(e) => setEditLead({ ...editLead, company: e.target.value })}
-                        className="h-8 text-sm"
+                        className="h-10 text-base font-bold"
                         placeholder="公司名称"
                       />
                     ) : (
-                      <SheetTitle className="text-left truncate">{selectedLead.company}</SheetTitle>
+                      <SheetTitle className="text-left text-2xl font-bold truncate tracking-tight">{selectedLead.company}</SheetTitle>
                     )}
-                    <StatusBadge stage={selectedLead.stage} className="mt-1" />
+                    <div className="flex items-center gap-2">
+                      <StatusBadge stage={selectedLead.stage} />
+                      {selectedLead.grade && (
+                        <Badge variant="outline" className="text-xs font-bold border-primary/30 text-primary">
+                          级别 {selectedLead.grade}
+                        </Badge>
+                      )}
+                    </div>
                   </div>
                 </div>
+
                 <div className="grid grid-cols-2 gap-2 pt-2 sm:flex sm:flex-wrap sm:justify-end">
                   <Button
                     variant="outline"
@@ -2883,7 +2741,8 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
                 {/* 下一步行动模块：仅在在谈线索时展示，成交/丢单不再提示下一步行动 */}
                 {selectedLead && selectedLead.status === "open" && (
-                  <div className="space-y-2 rounded-md border border-primary/20 bg-primary/5 px-3 py-3 text-xs text-muted-foreground">
+                  <div className="space-y-2 rounded-md border border-primary/20 bg-primary/5 px-3 py-3 text-sm text-muted-foreground">
+
 
                     <div className="flex items-center justify-between gap-2">
                       <p className="inline-flex items-center gap-1 font-medium text-primary">
@@ -2898,21 +2757,24 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                     </div>
                     <div className="space-y-1">
                       {selectedLead.nextContactAt ? (
-                        <p className="text-xs">
+                        <p className="text-sm">
                           下次跟进日期：
+
                           <span className="font-medium text-foreground">
                             {new Date(selectedLead.nextContactAt).toLocaleDateString("zh-CN")}
                           </span>
                         </p>
                       ) : (
-                        <p className="text-xs">
+                        <p className="text-sm">
                           当前尚未设置下一步行动，
+
                           <span className="font-medium text-foreground">建议补充一个下次跟进日期</span>
                           ，避免线索长时间无人触达。
                         </p>
                       )}
                       {selectedLead.lastContactAt && (
-                        <p className="text-[11px] text-muted-foreground">
+                        <p className="text-xs text-muted-foreground">
+
                           最近一次跟进：
                           {new Date(selectedLead.lastContactAt).toLocaleString("zh-CN", { hour12: false })}
                         </p>
@@ -2920,7 +2782,8 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                     </div>
                     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pt-1">
                       {!selectedLead.nextContactAt && (
-                        <p className="text-[11px] text-muted-foreground">
+                        <p className="text-xs text-muted-foreground">
+
                           在下方「记录跟进」时选择下次跟进日期，即可自动生成下一步行动。
                         </p>
                       )}
@@ -2943,61 +2806,62 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
                 {/* Key Info Grid */}
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-2 gap-x-6 gap-y-5 py-4 border-y border-muted/30">
 
-                  <div className="space-y-1">
-                    <p className="text-xs text-muted-foreground flex items-center gap-1">
-                      <User className="w-3 h-3" /> 联系人
+                  <div className="space-y-1.5">
+                    <p className="text-sm font-semibold text-muted-foreground flex items-center gap-1.5">
+                      <User className="w-3.5 h-3.5" /> 联系人
                     </p>
                     {isEditing ? (
                       <Input
                         value={editLead.contact}
                         onChange={(e) => setEditLead({ ...editLead, contact: e.target.value })}
-                        className="h-8 text-sm"
+                        className="h-9 text-sm"
                         placeholder="联系人姓名"
                       />
                     ) : (
-                      <p className="text-sm font-medium">{selectedLead.contact}</p>
+                      <p className="text-base font-bold text-foreground">{selectedLead.contact}</p>
                     )}
                   </div>
-                  <div className="space-y-1">
-                    <p className="text-xs text-muted-foreground flex items-center gap-1">
-                      <Phone className="w-3 h-3" /> 电话
+                  <div className="space-y-1.5">
+                    <p className="text-sm font-semibold text-muted-foreground flex items-center gap-1.5">
+                      <Phone className="w-3.5 h-3.5" /> 电话
                     </p>
                     {isEditing ? (
                       <Input
                         value={editLead.phone}
                         onChange={(e) => setEditLead({ ...editLead, phone: e.target.value })}
-                        className="h-8 text-sm"
+                        className="h-9 text-sm"
                         placeholder="联系电话"
                       />
                     ) : (
-                      <p className="text-sm font-medium">{selectedLead.phone}</p>
+                      <p className="text-base font-bold text-foreground">{selectedLead.phone}</p>
                     )}
                   </div>
-                  <div className="space-y-1">
-                    <p className="text-xs text-muted-foreground flex items-center gap-1">
-                      <MessageCircle className="w-3 h-3" /> 微信
+
+                  <div className="space-y-1.5">
+                    <p className="text-sm font-semibold text-muted-foreground flex items-center gap-1.5">
+                      <MessageCircle className="w-3.5 h-3.5" /> 微信
                     </p>
                     {isEditing ? (
                       <Input
                         value={editLead.wechat}
                         onChange={(e) => setEditLead({ ...editLead, wechat: e.target.value })}
-                        className="h-8 text-sm"
+                        className="h-9 text-sm"
                         placeholder="微信号"
                       />
                     ) : (
-                      <p className="text-sm font-medium">{selectedLead.wechat || "-"}</p>
+                      <p className="text-base font-bold text-foreground">{selectedLead.wechat || "-"}</p>
                     )}
                   </div>
-                  <div className="space-y-1">
-                    <p className="text-xs text-muted-foreground">来源</p>
+                  <div className="space-y-1.5">
+                    <p className="text-sm font-semibold text-muted-foreground">来源渠道</p>
                     {isEditing ? (
                       <Select
                         value={editLead.source}
                         onValueChange={(value) => setEditLead({ ...editLead, source: value })}
                       >
-                        <SelectTrigger className="h-8 text-sm">
+                        <SelectTrigger className="h-9 text-sm">
                           <SelectValue placeholder="选择来源" />
                         </SelectTrigger>
                         <SelectContent>
@@ -3010,30 +2874,30 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                       </Select>
 
                     ) : (
-                      <Badge variant="secondary">{selectedLead.source}</Badge>
+                      <Badge variant="secondary" className="text-sm font-medium h-7">{selectedLead.source}</Badge>
                     )}
                   </div>
-                  <div className="space-y-1">
-                    <p className="text-xs text-muted-foreground">预算</p>
+                  <div className="space-y-1.5">
+                    <p className="text-sm font-semibold text-muted-foreground">预算金额</p>
                     {isEditing ? (
                       <Input
                         value={editLead.budget}
                         onChange={(e) => setEditLead({ ...editLead, budget: e.target.value })}
-                        className="h-8 text-sm max-w-xs"
+                        className="h-9 text-sm max-w-xs"
                         placeholder="预算金额（元）"
                       />
                     ) : (
-                      <p className="text-sm font-medium text-primary">{selectedLead.budget}</p>
+                      <p className="text-lg font-bold text-primary tracking-tight">{selectedLead.budget}</p>
                     )}
                   </div>
-                  <div className="space-y-1">
-                    <p className="text-xs text-muted-foreground">客户级别</p>
+                  <div className="space-y-1.5">
+                    <p className="text-sm font-semibold text-muted-foreground">客户分级</p>
                     {isEditing ? (
                       <Select
                         value={editLead.grade}
                         onValueChange={(value) => setEditLead({ ...editLead, grade: value })}
                       >
-                        <SelectTrigger className="h-8 text-sm">
+                        <SelectTrigger className="h-9 text-sm">
                           <SelectValue placeholder="选择客户级别" />
                         </SelectTrigger>
                         <SelectContent>
@@ -3045,34 +2909,37 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                         </SelectContent>
                       </Select>
                     ) : selectedLead.grade ? (
-                      <Badge variant="outline">{selectedLead.grade}</Badge>
+                      <Badge variant="outline" className="text-sm font-bold border-primary/30 text-primary h-7">{selectedLead.grade}</Badge>
                     ) : (
-                      <p className="text-sm text-muted-foreground">未设置</p>
+                      <p className="text-sm text-muted-foreground font-medium">未设置</p>
                     )}
                   </div>
 
-                  <div className="space-y-1 col-span-2">
-                    <p className="text-xs text-muted-foreground">标签</p>
+
+                  <div className="space-y-1.5 col-span-2">
+                    <p className="text-sm font-semibold text-muted-foreground">标签属性</p>
                     {isEditing ? (
                       <Input
                         value={editLead.tags}
                         onChange={(e) => setEditLead({ ...editLead, tags: e.target.value })}
-                        className="h-8 text-sm"
+                        className="h-9 text-sm"
                         placeholder="例如：自有工厂, 品牌构想, 决策人清晰"
                       />
                     ) : selectedLead.tags && selectedLead.tags.length > 0 ? (
-                      <div className="flex flex-wrap gap-1">
+                      <div className="flex flex-wrap gap-1.5">
                         {selectedLead.tags.map((tag) => (
-                          <Badge key={tag} variant="secondary" className="text-xs">
+                          <Badge key={tag} variant="secondary" className="text-xs font-normal bg-muted/50 text-muted-foreground h-6">
                             {tag}
                           </Badge>
                         ))}
                       </div>
                     ) : (
-                      <p className="text-sm text-muted-foreground">未添加标签</p>
+                      <p className="text-sm text-muted-foreground font-medium">未添加标签</p>
                     )}
                   </div>
+
                 </div>
+
 
                 <div className="flex justify-end gap-2">
                   {isEditing ? (

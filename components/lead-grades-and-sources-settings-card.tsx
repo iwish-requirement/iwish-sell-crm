@@ -270,34 +270,34 @@ export function LeadGradesAndSourcesSettingsCard() {
   return (
     <Card className="max-w-4xl">
       <CardHeader>
-        <CardTitle>客户级别与渠道配置</CardTitle>
-        <CardDescription>
+        <CardTitle className="text-xl font-bold text-foreground">客户级别与渠道配置</CardTitle>
+        <CardDescription className="text-sm">
           配置 S/A/B/C 客户级别含义，以及线索来源的一级渠道与二级渠道枚举，前端录入和筛选会使用这里的配置。
         </CardDescription>
-        {loadError && <p className="mt-2 text-xs text-destructive/80">{loadError}</p>}
+        {loadError && <p className="mt-2 text-sm text-destructive/80">{loadError}</p>}
       </CardHeader>
       <CardContent className="space-y-6">
         <div className="grid gap-6 lg:grid-cols-2">
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="text-sm font-medium">客户级别</h3>
+                <h3 className="text-base font-semibold text-foreground">客户级别</h3>
                 <p className="text-xs text-muted-foreground">用于线索与客户 360 视图中的 S/A/B/C 客户分层和保护期计算。</p>
               </div>
-              <Button size="icon" variant="outline" onClick={handleAddGrade} disabled={isLoading || isSaving}>
+              <Button size="icon" variant="outline" onClick={handleAddGrade} disabled={isLoading || isSaving} className="h-8 w-8">
                 <Plus className="w-4 h-4" />
               </Button>
             </div>
-            <ScrollArea className="h-[260px] rounded-md border">
+            <ScrollArea className="h-[260px] rounded-md border bg-muted/5">
               <div className="p-3 space-y-3">
                 {grades.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">暂未配置客户级别，可点击右上角按钮新增。</p>
+                  <p className="text-sm text-muted-foreground text-center py-8">暂未配置客户级别，可点击右上角按钮新增。</p>
                 ) : (
                   grades.map((grade, index) => (
-                    <div key={index} className="space-y-2 rounded-md border p-3">
+                    <div key={index} className="space-y-2 rounded-md border bg-background p-3 shadow-sm">
                       <div className="flex items-center gap-2">
                         <div className="flex-1 grid grid-cols-[80px,1fr] items-center gap-2">
-                          <Label className="text-xs" htmlFor={`grade-key-${index}`}>
+                          <Label className="text-xs font-semibold text-muted-foreground" htmlFor={`grade-key-${index}`}>
                             Key
                           </Label>
                           <Input
@@ -311,12 +311,13 @@ export function LeadGradesAndSourcesSettingsCard() {
                             }}
                             placeholder="例如：S/A/B/C"
                             disabled={isLoading || isSaving}
+                            className="h-8 text-sm uppercase font-bold"
                           />
                         </div>
                         <Button
                           size="icon"
                           variant="ghost"
-                          className="text-destructive"
+                          className="h-8 w-8 text-destructive"
                           onClick={() => handleRemoveGrade(index)}
                           disabled={isLoading || isSaving}
                         >
@@ -324,7 +325,7 @@ export function LeadGradesAndSourcesSettingsCard() {
                         </Button>
                       </div>
                       <div className="grid grid-cols-[80px,1fr] items-center gap-2">
-                        <Label className="text-xs" htmlFor={`grade-label-${index}`}>
+                        <Label className="text-xs font-semibold text-muted-foreground" htmlFor={`grade-label-${index}`}>
                           名称
                         </Label>
                         <Input
@@ -338,10 +339,11 @@ export function LeadGradesAndSourcesSettingsCard() {
                           }}
                           placeholder="例如：S级（强成交 / 立即跟进）"
                           disabled={isLoading || isSaving}
+                          className="h-8 text-sm"
                         />
                       </div>
                       <div className="grid grid-cols-[80px,1fr] items-start gap-2">
-                        <Label className="text-xs" htmlFor={`grade-desc-${index}`}>
+                        <Label className="text-xs font-semibold text-muted-foreground" htmlFor={`grade-desc-${index}`}>
                           描述
                         </Label>
                         <Input
@@ -353,8 +355,9 @@ export function LeadGradesAndSourcesSettingsCard() {
                               prev.map((g, idx) => (idx === index ? { ...g, description: value } : g)),
                             )
                           }}
-                          placeholder="用于团队共识，例如该级别的跟进优先级和判定标准"
+                          placeholder="用于团队共识，判定标准"
                           disabled={isLoading || isSaving}
+                          className="h-8 text-xs"
                         />
                       </div>
                     </div>
@@ -367,25 +370,25 @@ export function LeadGradesAndSourcesSettingsCard() {
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="text-sm font-medium">线索来源渠道</h3>
+                <h3 className="text-base font-semibold text-foreground">线索来源渠道</h3>
                 <p className="text-xs text-muted-foreground">
-                  配置来源的一级渠道与二级渠道（活动/行业/合作方），用于新增线索表单和看板筛选。
+                  配置来源的一级与二级渠道，用于新增线索表单和看板筛选。
                 </p>
               </div>
-              <Button size="icon" variant="outline" onClick={handleAddChannel} disabled={isLoading || isSaving}>
+              <Button size="icon" variant="outline" onClick={handleAddChannel} disabled={isLoading || isSaving} className="h-8 w-8">
                 <Plus className="w-4 h-4" />
               </Button>
             </div>
-            <ScrollArea className="h-[260px] rounded-md border">
+            <ScrollArea className="h-[260px] rounded-md border bg-muted/5">
               <div className="p-3 space-y-3">
                 {channels.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">暂未配置来源渠道，可点击右上角按钮新增一级渠道。</p>
+                  <p className="text-sm text-muted-foreground text-center py-8">暂未配置来源渠道，请点击新增。</p>
                 ) : (
                   channels.map((channel, channelIndex) => (
-                    <div key={channelIndex} className="space-y-2 rounded-md border p-3">
+                    <div key={channelIndex} className="space-y-2 rounded-md border bg-background p-3 shadow-sm">
                       <div className="flex items-center gap-2">
                         <div className="flex-1 grid grid-cols-[80px,1fr] items-center gap-2">
-                          <Label className="text-xs" htmlFor={`channel-key-${channelIndex}`}>
+                          <Label className="text-xs font-semibold text-muted-foreground" htmlFor={`channel-key-${channelIndex}`}>
                             一级 Key
                           </Label>
                           <Input
@@ -397,14 +400,15 @@ export function LeadGradesAndSourcesSettingsCard() {
                                 prev.map((c, idx) => (idx === channelIndex ? { ...c, key: value } : c)),
                               )
                             }}
-                            placeholder="例如：ads、offline、partners"
+                            placeholder="例如：ads"
                             disabled={isLoading || isSaving}
+                            className="h-8 text-sm"
                           />
                         </div>
                         <Button
                           size="icon"
                           variant="ghost"
-                          className="text-destructive"
+                          className="h-8 w-8 text-destructive"
                           onClick={() => handleRemoveChannel(channelIndex)}
                           disabled={isLoading || isSaving}
                         >
@@ -412,7 +416,7 @@ export function LeadGradesAndSourcesSettingsCard() {
                         </Button>
                       </div>
                       <div className="grid grid-cols-[80px,1fr] items-center gap-2">
-                        <Label className="text-xs" htmlFor={`channel-label-${channelIndex}`}>
+                        <Label className="text-xs font-semibold text-muted-foreground" htmlFor={`channel-label-${channelIndex}`}>
                           一级名称
                         </Label>
                         <Input
@@ -424,36 +428,38 @@ export function LeadGradesAndSourcesSettingsCard() {
                               prev.map((c, idx) => (idx === channelIndex ? { ...c, label: value } : c)),
                             )
                           }}
-                          placeholder="例如：广告投放、线下活动、老客与转介绍"
+                          placeholder="例如：广告投放"
                           disabled={isLoading || isSaving}
+                          className="h-8 text-sm"
                         />
                       </div>
 
                       <Separator className="my-2" />
 
                       <div className="flex items-center justify-between">
-                        <p className="text-xs text-muted-foreground">二级渠道（活动/行业/合作方）</p>
+                        <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">二级渠道</p>
                         <Button
                           size="icon"
                           variant="outline"
                           onClick={() => handleAddChild(channelIndex)}
                           disabled={isLoading || isSaving}
+                          className="h-6 w-6"
                         >
-                          <Plus className="w-4 h-4" />
+                          <Plus className="w-3 h-3" />
                         </Button>
                       </div>
 
                       {channel.children.length === 0 ? (
                         <p className="mt-1 text-xs text-muted-foreground">
-                          暂无二级渠道，可用于补充具体来源，如“抖音广告”“展会”“渠道商推荐”等。
+                          暂无二级渠道。
                         </p>
                       ) : (
                         <div className="mt-2 space-y-2">
                           {channel.children.map((child, childIndex) => (
-                            <div key={childIndex} className="grid grid-cols-[80px,1fr,auto] items-center gap-2">
+                            <div key={childIndex} className="grid grid-cols-[80px,1fr,auto] items-center gap-2 bg-muted/20 p-2 rounded">
                               <div className="space-y-1">
-                                <Label className="text-xs" htmlFor={`child-key-${channelIndex}-${childIndex}`}>
-                                  二级 Key
+                                <Label className="text-[10px] font-bold text-muted-foreground uppercase" htmlFor={`child-key-${channelIndex}-${childIndex}`}>
+                                  Key
                                 </Label>
                                 <Input
                                   id={`child-key-${channelIndex}-${childIndex}`}
@@ -472,13 +478,12 @@ export function LeadGradesAndSourcesSettingsCard() {
                                       }),
                                     )
                                   }}
-                                  placeholder="例如：ads_douyin、offline_expo"
-                                  disabled={isLoading || isSaving}
+                                  className="h-7 text-xs"
                                 />
                               </div>
                               <div className="space-y-1">
-                                <Label className="text-xs" htmlFor={`child-label-${channelIndex}-${childIndex}`}>
-                                  二级名称
+                                <Label className="text-[10px] font-bold text-muted-foreground uppercase" htmlFor={`child-label-${channelIndex}-${childIndex}`}>
+                                  名称
                                 </Label>
                                 <Input
                                   id={`child-label-${channelIndex}-${childIndex}`}
@@ -497,18 +502,17 @@ export function LeadGradesAndSourcesSettingsCard() {
                                       }),
                                     )
                                   }}
-                                  placeholder="例如：抖音广告、展会、渠道商推荐"
-                                  disabled={isLoading || isSaving}
+                                  className="h-7 text-xs"
                                 />
                               </div>
                               <Button
                                 size="icon"
                                 variant="ghost"
-                                className="text-destructive mt-6"
+                                className="h-7 w-7 text-destructive mt-4"
                                 onClick={() => handleRemoveChild(channelIndex, childIndex)}
                                 disabled={isLoading || isSaving}
                               >
-                                <Trash2 className="w-4 h-4" />
+                                <Trash2 className="w-3.5 h-3.5" />
                               </Button>
                             </div>
                           ))}
@@ -521,6 +525,7 @@ export function LeadGradesAndSourcesSettingsCard() {
             </ScrollArea>
           </div>
         </div>
+
 
         <div className="flex justify-end">
           <Button onClick={handleSave} disabled={isSaving || isLoading}>

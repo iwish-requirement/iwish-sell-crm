@@ -10,7 +10,7 @@ import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { CalendarIcon, Download, ChevronRight, Trophy, TrendingUp, TrendingDown, AlertTriangle } from "lucide-react"
+import { CalendarIcon, Download, ChevronRight, Trophy, TrendingUp, TrendingDown } from "lucide-react"
 import { format, subDays } from "date-fns"
 import { zhCN } from "date-fns/locale"
 import type { DateRange } from "react-day-picker"
@@ -27,7 +27,6 @@ import {
   Cell,
   Legend,
 } from "recharts"
-import { useIsMobile } from "@/hooks/use-mobile"
 import { ChartSkeleton, TableSkeleton } from "@/components/skeleton-loaders"
 import { getBrowserSupabaseClient } from "@/lib/supabase/client"
 import type { LeadSecureRow } from "@/lib/services/leads"
@@ -55,17 +54,6 @@ type SourceConversionItem = {
   leads: number
   converted: number
   rate: number
-}
-
-type SourceRoiItem = {
-  source: string
-  leads: number
-  won: number
-  winRate: number
-  newAmount: number
-  renewalAmount: number
-  totalAmount: number
-  revenuePerLead: number
 }
 
 type TeamLeaderboardRow = {
@@ -104,27 +92,15 @@ export function AnalyticsDashboard() {
   const [funnelData, setFunnelData] = useState<FunnelItem[]>([])
   const [sourceVolumeData, setSourceVolumeData] = useState<SourceVolumeItem[]>([])
   const [sourceConversionData, setSourceConversionData] = useState<SourceConversionItem[]>([])
-  const [sourceRoiData, setSourceRoiData] = useState<SourceRoiItem[]>([])
   const [teamData, setTeamData] = useState<TeamLeaderboardRow[]>([])
   const [poolLeadsCount, setPoolLeadsCount] = useState<number | null>(null)
   const [currentProfile, setCurrentProfile] = useState<UserProfile | null>(null)
-  const [contractExpiringSoon, setContractExpiringSoon] = useState(0)
-  const [contractExpiredRecently, setContractExpiredRecently] = useState(0)
-  const [contractNewAmount, setContractNewAmount] = useState(0)
-  const [contractRenewalAmount, setContractRenewalAmount] = useState(0)
   const mePermissions = useContext(MePermissionsContext)
-  const isMobile = useIsMobile()
 
   const leadScopeType = mePermissions?.leadScopeType ?? "self"
-  const canViewReports = Boolean(mePermissions?.canViewReports)
-
+  const canExportReports = Boolean(mePermissions?.canViewReports)
 
   useEffect(() => {
-    if (!canViewReports) {
-      return
-    }
-
-
     const supabase = getBrowserSupabaseClient()
 
     const fetchTeams = async () => {
@@ -180,17 +156,10 @@ export function AnalyticsDashboard() {
     }
 
     void fetchTeams()
-  }, [canViewReports])
+  }, [])
 
   useEffect(() => {
-    if (!canViewReports) {
-      setIsLoading(false)
-      setError(null)
-      return
-    }
-
     const supabase = getBrowserSupabaseClient()
-
 
     const fetchAnalytics = async () => {
       setIsLoading(true)
@@ -207,61 +176,19 @@ export function AnalyticsDashboard() {
         }
       }
 
-      const leadsQuery = (() => {
-        let query = supabase
-          .from("leads_secure_view")
-          .select(
-            "id, team_id, owner_id, created_by, source, stage, status, close_result, budget, created_at",
-          )
-
-        if (dateRange?.from) {
-          query = query.gte("created_at", dateRange.from.toISOString())
-        }
-
-        if (dateRange?.to) {
-          query = query.lte("created_at", dateRange.to.toISOString())
-        }
-
-        // 保护性上限，避免在数据规模较大时一次性加载全部历史数据
-        return query.limit(5000)
-      })()
-
-      const contractsQuery = (() => {
-        let query = supabase
-          .from("contracts_secure_view")
-          .select("id, lead_id, end_date, is_renewal, amount, signed_at")
-
-        if (dateRange?.from) {
-          query = query.gte("signed_at", dateRange.from.toISOString())
-        }
-
-        if (dateRange?.to) {
-          query = query.lte("signed_at", dateRange.to.toISOString())
-        }
-
-        return query.limit(5000)
-      })()
-
       const [
         { data, error },
         { data: teamExclusionRow, error: teamExclusionError },
-        { data: profileExclusionRow, error: profileExclusionError },
-        { data: contractRows, error: contractsError },
       ] = await Promise.all([
-        leadsQuery,
+        supabase
+          .from("leads_secure_view")
+          .select("id, team_id, owner_id, created_by, source, stage, status, close_result, budget, created_at"),
         supabase
           .from("settings")
           .select("value")
           .eq("key", "analytics.excluded_teams")
           .maybeSingle(),
-        supabase
-          .from("settings")
-          .select("value")
-          .eq("key", "analytics.excluded_profiles")
-          .maybeSingle(),
-        contractsQuery,
       ])
-
 
       if (error) {
         setError(error.message ?? "加载报表数据失败")
@@ -269,15 +196,8 @@ export function AnalyticsDashboard() {
         return
       }
 
-      if (contractsError) {
-        console.error("Failed to load contracts for analytics", contractsError)
-      }
-
       if (teamExclusionError && teamExclusionError.code !== "PGRST116") {
         console.error("Failed to load analytics excluded teams for analytics data", teamExclusionError)
-      }
-      if (profileExclusionError && profileExclusionError.code !== "PGRST116") {
-        console.error("Failed to load analytics excluded profiles for analytics data", profileExclusionError)
       }
 
       const excludedTeamIds = new Set<number>(
@@ -289,42 +209,20 @@ export function AnalyticsDashboard() {
           : [],
       )
 
-      const excludedProfileIds = new Set<string>(
-        profileExclusionRow && (profileExclusionRow as any).value &&
-        Array.isArray(((profileExclusionRow as any).value as any).profile_ids)
-          ? (((profileExclusionRow as any).value as any).profile_ids as any[]).filter(
-              (v: any) => typeof v === "string",
-            )
-          : [],
-      )
-
       const leads = (data ?? []) as LeadSecureRow[]
 
-      const nonExcludedLeads = leads.filter((lead) => {
-        const teamId = (lead.team_id as number | null) ?? null
-        if (teamId != null && excludedTeamIds.has(teamId)) {
-          return false
-        }
-        const ownerId = (lead.owner_id as string | null) ?? null
-        if (ownerId && excludedProfileIds.has(ownerId)) {
-          return false
-        }
-        return true
-      })
-
-      const poolCount = nonExcludedLeads.filter((lead) => lead.status === "pool").length
+      const poolCount = leads.filter((lead) => lead.status === "pool").length
       setPoolLeadsCount(poolCount)
 
-      const now = new Date()
-      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-      const end30 = new Date(startOfToday.getTime() + 30 * 24 * 60 * 60 * 1000)
-
-      const filteredLeads = nonExcludedLeads.filter((lead) => {
-        // 只统计当前仍在个人名下的正常线索：排除公海池以及任何非 open/closed 状态
+      const filteredLeads = leads.filter((lead) => {
+        // 只统计当前仍在个人名下的正常线索：排除公海池、配置排除的团队以及任何非 open/closed 状态
         if (lead.status === "pool") {
           return false
         }
         if (lead.status !== "open" && lead.status !== "closed") {
+          return false
+        }
+        if (lead.team_id != null && excludedTeamIds.has(lead.team_id)) {
           return false
         }
 
@@ -359,82 +257,6 @@ export function AnalyticsDashboard() {
         }
         return createdAt >= dateRange.from! && createdAt <= dateRange.to!
       })
-
-      if (filteredLeads.length === 0) {
-        setFunnelData([])
-        setSourceVolumeData([])
-        setSourceConversionData([])
-        setSourceRoiData([])
-        setTeamData([])
-        setIsLoading(false)
-        return
-      }
-
-      const contracts = (contractRows ?? []) as any[]
-      const leadById = new Map<string, LeadSecureRow>()
-      for (const lead of filteredLeads) {
-        const id = lead.id
-        if (typeof id === "string") {
-          leadById.set(id, lead)
-        }
-      }
-      const revenueBySource = new Map<string, { newAmount: number; renewalAmount: number }>()
-      let expiringSoon = 0
-      let expiredRecently = 0
-      let newAmount = 0
-      let renewalAmount = 0
-
-      if (contracts.length > 0 && dateRange?.from && dateRange?.to) {
-        const allowedLeadIds = new Set(filteredLeads.map((lead) => lead.id))
-
-        for (const row of contracts) {
-          const leadId = (row.lead_id as string | null) ?? null
-          if (!leadId || !allowedLeadIds.has(leadId)) {
-            continue
-          }
-
-          const endDateStr = row.end_date as string | null
-          const signedAtStr = row.signed_at as string | null
-          const isRenewal = Boolean(row.is_renewal)
-          const amount = (row.amount as number) ?? 0
-
-          if (endDateStr) {
-            const endDate = new Date(endDateStr)
-            if (endDate >= dateRange.from && endDate <= dateRange.to) {
-              if (endDate >= startOfToday && endDate <= end30) {
-                expiringSoon += 1
-              } else if (endDate < startOfToday) {
-                expiredRecently += 1
-              }
-            }
-          }
-
-          if (signedAtStr) {
-            const signedAt = new Date(signedAtStr)
-            if (signedAt >= dateRange.from && signedAt <= dateRange.to) {
-              const lead = leadById.get(leadId)
-              const sourceKey = lead && (lead as any).source ? ((lead as any).source as string) : "其他"
-              const currentRevenue =
-                revenueBySource.get(sourceKey) ?? { newAmount: 0, renewalAmount: 0 }
-
-              if (isRenewal) {
-                renewalAmount += amount
-                currentRevenue.renewalAmount += amount
-              } else {
-                newAmount += amount
-                currentRevenue.newAmount += amount
-              }
-
-              revenueBySource.set(sourceKey, currentRevenue)
-            }
-          }
-        }
-      }
-
-      setContractExpiringSoon(expiringSoon)
-      setContractExpiredRecently(expiredRecently)
-      setContractNewAmount(newAmount)
-      setContractRenewalAmount(renewalAmount)
 
       if (filteredLeads.length === 0) {
         setFunnelData([])
@@ -535,7 +357,6 @@ export function AnalyticsDashboard() {
       const palette = ["#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899", "#6366f1"]
       const nextSourceVolume: SourceVolumeItem[] = []
       const nextSourceConversion: SourceConversionItem[] = []
-      const nextSourceRoi: SourceRoiItem[] = []
       let colorIndex = 0
 
       for (const [source, value] of sourceCounts.entries()) {
@@ -552,26 +373,7 @@ export function AnalyticsDashboard() {
           converted: value.converted,
           rate: value.leads === 0 ? 0 : Number(((value.converted / value.leads) * 100).toFixed(1)),
         })
-
-        const revenue = revenueBySource.get(source) ?? { newAmount: 0, renewalAmount: 0 }
-        const totalAmount = revenue.newAmount + revenue.renewalAmount
-        const won = value.converted
-        const winRate = value.leads === 0 ? 0 : (won / value.leads) * 100
-        const revenuePerLead = value.leads === 0 ? 0 : totalAmount / value.leads
-
-        nextSourceRoi.push({
-          source,
-          leads: value.leads,
-          won,
-          winRate,
-          newAmount: revenue.newAmount,
-          renewalAmount: revenue.renewalAmount,
-          totalAmount,
-          revenuePerLead,
-        })
       }
-
-      nextSourceRoi.sort((a, b) => b.totalAmount - a.totalAmount || b.winRate - a.winRate)
 
       const ownerStats = new Map<string, { leads: number; won: number; value: number }>()
       for (const lead of filteredLeads) {
@@ -772,15 +574,13 @@ export function AnalyticsDashboard() {
       setFunnelData(nextFunnelData)
       setSourceVolumeData(nextSourceVolume)
       setSourceConversionData(nextSourceConversion)
-      setSourceRoiData(nextSourceRoi)
       setTeamData(nextTeamData)
 
       setIsLoading(false)
     }
 
     void fetchAnalytics()
-  }, [dateRange, selectedTeam, leadScopeType, currentProfile, canViewReports])
-
+  }, [dateRange, selectedTeam, leadScopeType, currentProfile])
 
   const effectiveTeams = useMemo(() => {
     if (leadScopeType === "self") {
@@ -813,13 +613,12 @@ export function AnalyticsDashboard() {
   }, [leadScopeType, currentProfile, selectedTeam])
 
   const handleDownloadCSV = async (dataType: string) => {
-    if (!canViewReports) {
+    if (!canExportReports) {
       toast.error("没有导出权限", {
-        description: "当前账号未开通报表导出权限，如需调整报表权限，请联系系统管理员。",
+        description: "当前账号未开通报表导出权限，请联系系统管理员。",
       })
       return
     }
-
 
     try {
       const supabase = getBrowserSupabaseClient()
@@ -889,29 +688,6 @@ export function AnalyticsDashboard() {
           rep.value.toFixed(0),
         ])
       })
-    } else if (dataType === "source-roi") {
-      rows.push([
-        "来源渠道",
-        "线索数",
-        "成交数",
-        "成交率(%)",
-        "首单金额(元)",
-        "续费金额(元)",
-        "总金额(元)",
-        "单线索金额(元)",
-      ])
-      sourceRoiData.forEach((row) => {
-        rows.push([
-          row.source,
-          String(row.leads),
-          String(row.won),
-          row.leads === 0 ? "0" : row.winRate.toFixed(1),
-          row.newAmount.toFixed(0),
-          row.renewalAmount.toFixed(0),
-          row.totalAmount.toFixed(0),
-          row.leads === 0 ? "0" : row.revenuePerLead.toFixed(0),
-        ])
-      })
     }
 
     if (rows.length === 0) {
@@ -941,7 +717,6 @@ export function AnalyticsDashboard() {
       "source-volume": "lead-source-volume.csv",
       "source-conversion": "lead-source-conversion.csv",
       "team-leaderboard": "team-leaderboard.csv",
-      "source-roi": "lead-source-roi.csv",
     }
     link.download = fileNameMap[dataType] ?? "analytics-export.csv"
     document.body.appendChild(link)
@@ -967,30 +742,14 @@ export function AnalyticsDashboard() {
     return `${rate}%`
   }
 
-  if (!canViewReports) {
-    return (
-      <div className="space-y-4">
-        <div>
-          <h1 className="text-3xl font-bold text-foreground tracking-tight">数据分析</h1>
-          <p className="text-sm text-muted-foreground font-medium mt-2">
-            当前账号无权访问数据分析模块，如需调整报表权限，请联系系统管理员。
-          </p>
-        </div>
-      </div>
-    )
-  }
-
   if (isLoading) {
     return (
       <div className="space-y-6">
-        <div className="flex flex-col gap-2">
-          <h1 className="text-3xl font-bold text-foreground tracking-tight">数据分析</h1>
-          <div className="flex flex-wrap items-center gap-4 mt-2">
-            <Button variant="outline" className="w-full sm:w-[280px] bg-transparent" disabled>
-              <CalendarIcon className="mr-2 h-4 w-4" />
-              同步数据中...
-            </Button>
-          </div>
+        <div className="flex flex-wrap items-center gap-4">
+          <Button variant="outline" className="w-[280px] bg-transparent" disabled>
+            <CalendarIcon className="mr-2 h-4 w-4" />
+            加载中...
+          </Button>
         </div>
         <ChartSkeleton className="h-auto" />
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -1001,7 +760,6 @@ export function AnalyticsDashboard() {
       </div>
     )
   }
-
 
   if (error) {
     return (
@@ -1019,17 +777,15 @@ export function AnalyticsDashboard() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-3xl font-bold text-foreground tracking-tight">数据分析</h1>
-
       {/* Filters Row - responsive */}
-      <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-4 bg-muted/20 p-4 rounded-xl border border-muted/30">
+      <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-4">
         <Popover>
           <PopoverTrigger asChild>
             <Button
               variant="outline"
-              className="w-full sm:w-[280px] justify-start text-left font-semibold bg-background h-10 shadow-sm"
+              className="w-full sm:w-[280px] justify-start text-left font-normal bg-transparent"
             >
-              <CalendarIcon className="mr-2 h-4 w-4 text-primary" />
+              <CalendarIcon className="mr-2 h-4 w-4" />
               {dateRange?.from ? (
                 dateRange.to ? (
                   <>
@@ -1058,12 +814,12 @@ export function AnalyticsDashboard() {
 
         {leadScopeType !== "self" && effectiveTeams.length > 0 && (
           <Select value={selectedTeam} onValueChange={setSelectedTeam}>
-            <SelectTrigger className="w-full sm:w-[180px] h-10 font-semibold bg-background shadow-sm">
+            <SelectTrigger className="w-full sm:w-[180px]">
               <SelectValue placeholder="选择团队" />
             </SelectTrigger>
             <SelectContent>
               {effectiveTeams.map((team) => (
-                <SelectItem key={team.id} value={team.id} className="font-medium">
+                <SelectItem key={team.id} value={team.id}>
                   {team.name}
                 </SelectItem>
               ))}
@@ -1072,138 +828,55 @@ export function AnalyticsDashboard() {
         )}
       </div>
 
-      {/* 合同与续费概览 */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card className="border-muted-foreground/10 shadow-sm">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-bold text-muted-foreground uppercase tracking-wider">未来 30 天到期合同</CardTitle>
-            <CardDescription className="text-xs">服务将在未来 30 天内到期的合同数量</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p className="text-4xl font-bold text-destructive tracking-tight">{contractExpiringSoon}</p>
-          </CardContent>
-        </Card>
-        <Card className="border-muted-foreground/10 shadow-sm">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-bold text-muted-foreground uppercase tracking-wider">已到期合同</CardTitle>
-            <CardDescription className="text-xs">已到期但仍在当前统计范围内的合同</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p className="text-4xl font-bold text-foreground tracking-tight">{contractExpiredRecently}</p>
-          </CardContent>
-        </Card>
-        <Card className="border-muted-foreground/10 shadow-sm">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-bold text-muted-foreground uppercase tracking-wider">新签 vs 续费金额</CardTitle>
-            <CardDescription className="text-xs">当前筛选时间内的合同签约金额拆分</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2 mt-1">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-muted-foreground">首单金额</span>
-                <span className="text-lg font-bold text-foreground">
-                  {new Intl.NumberFormat("zh-CN", {
-                    style: "currency",
-                    currency: "CNY",
-                    maximumFractionDigits: 0,
-                  }).format(contractNewAmount || 0)}
-                </span>
-              </div>
-              <div className="flex items-center justify-between pt-1 border-t border-muted/50">
-                <span className="text-sm font-medium text-muted-foreground">续费金额</span>
-                <span className="text-lg font-bold text-emerald-600">
-                  {new Intl.NumberFormat("zh-CN", {
-                    style: "currency",
-                    currency: "CNY",
-                    maximumFractionDigits: 0,
-                  }).format(contractRenewalAmount || 0)}
-                </span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-
       {/* Chart 1: Sales Funnel with Conversion Rates */}
-      <Card className="border-muted-foreground/10 shadow-sm">
-        <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 gap-2 border-b border-muted/30">
+      <Card>
+        <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between pb-2 gap-2">
           <div>
-            <CardTitle className="text-xl font-bold tracking-tight">销售漏斗转化分析</CardTitle>
-            <CardDescription className="text-sm font-medium">从原始线索到成交的全流程阶段转化看板</CardDescription>
+            <CardTitle className="text-base font-semibold">销售漏斗转化分析</CardTitle>
+            <CardDescription>从原始线索到成交的各阶段转化情况</CardDescription>
           </div>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="font-semibold h-9">
+              <Button variant="outline" size="sm">
                 <Download className="h-4 w-4 mr-2" />
-                导出数据
+                导出
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => handleDownloadCSV("funnel")} className="font-medium">下载 CSV 报表</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleDownloadCSV("funnel")}>下载 CSV</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </CardHeader>
-        <CardContent className="pt-4 sm:pt-6 px-2 sm:px-4">
-          <div className="h-[320px] sm:h-[360px]">
+        <CardContent>
+          <div className="h-[320px]">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={funnelData} layout="vertical" margin={{ top: 10, right: 32, left: 12, bottom: 10 }}>
-                <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} strokeOpacity={0.5} />
-                <XAxis type="number" hide />
-                <YAxis dataKey="stage" type="category" width={80} tick={{ fontSize: 13, fontWeight: 600, fill: "hsl(var(--foreground))" }} axisLine={false} tickLine={false} />
+              <BarChart data={funnelData} layout="vertical" margin={{ top: 10, right: 80, left: 20, bottom: 10 }}>
+                <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} />
+                <XAxis type="number" />
+                <YAxis dataKey="stage" type="category" width={80} tick={{ fontSize: 12 }} />
                 <Tooltip
-                  cursor={{ fill: 'hsl(var(--muted))', opacity: 0.2 }}
-                  contentStyle={{ borderRadius: '12px', border: '1px solid hsl(var(--border))', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
                   formatter={(value: number) => [`${value} 条`, "线索数量"]}
                   labelFormatter={(label) => funnelData.find((d) => d.stage === label)?.fullName || label}
                 />
-                <Bar dataKey="count" fill="#3b82f6" radius={[0, 6, 6, 0]} barSize={40} />
+                <Bar dataKey="count" fill="#3b82f6" radius={[0, 4, 4, 0]} barSize={36} />
               </BarChart>
             </ResponsiveContainer>
           </div>
-          {/* Conversion rate indicators - mobile & desktop variants */}
-          {/* Mobile: compact horizontal summary chips */}
-          <div className="mt-4 flex gap-2 overflow-x-auto sm:hidden pb-1 -mx-2 px-2">
-            {funnelData.slice(0, -1).map((item, index) => {
-              const nextStage = funnelData[index + 1]
-              if (!nextStage) return null
-              return (
-                <div key={item.stage} className="flex flex-col items-center flex-shrink-0 min-w-[88px]">
-                  <span className="text-[10px] text-muted-foreground mb-1">
-                    {item.stage} → {nextStage.stage}
-                  </span>
-                  <Badge
-                    variant="secondary"
-                    className="text-[11px] font-bold bg-emerald-50 text-emerald-700 border-emerald-100 h-6 px-2"
-                  >
-                    {getConversionRate(index)}
-                  </Badge>
-                </div>
-              )
-            })}
-          </div>
-
-          {/* Desktop: detailed stage cards with conversion between each step */}
-          <div className="mt-6 hidden sm:flex flex-col gap-3 items-stretch md:flex-row md:flex-wrap md:items-center md:justify-center">
+          {/* Conversion rate indicators - responsive */}
+          <div className="flex items-center justify-center gap-2 mt-4 flex-wrap">
             {funnelData.map((item, index) => (
-              <div key={item.stage} className="flex flex-col items-center md:flex-row md:items-center">
-                <div className="text-center px-4 py-2 bg-primary/5 rounded-xl border border-primary/10 shadow-sm min-w-[80px]">
-                  <div className="text-[11px] font-bold text-primary/60 uppercase tracking-widest">{item.stage}</div>
-                  <div className="text-base font-bold text-foreground mt-0.5">{item.count.toLocaleString()}</div>
+              <div key={item.stage} className="flex items-center">
+                <div className="text-center px-2 sm:px-3 py-1.5 bg-muted rounded-md">
+                  <div className="text-xs text-muted-foreground">{item.stage}</div>
+                  <div className="text-sm font-semibold">{item.count.toLocaleString()}</div>
                 </div>
                 {index < funnelData.length - 1 && (
-                  <div className="flex flex-col items-center mt-2 md:mt-0 md:mx-2">
-                    <div className="flex items-center">
-                      <ChevronRight className="h-4 w-4 text-muted-foreground opacity-30" />
-                      <Badge
-                        variant="secondary"
-                        className="text-xs font-bold bg-emerald-50 text-emerald-700 border-emerald-100 h-6 px-2"
-                      >
-                        {getConversionRate(index)}
-                      </Badge>
-                      <ChevronRight className="h-4 w-4 text-muted-foreground opacity-30" />
-                    </div>
-                    <span className="text-[10px] font-bold text-muted-foreground/60 mt-1 uppercase">转化</span>
+                  <div className="flex items-center mx-1">
+                    <ChevronRight className="h-4 w-4 text-muted-foreground hidden sm:block" />
+                    <Badge variant="secondary" className="text-xs">
+                      {getConversionRate(index)}
+                    </Badge>
+                    <ChevronRight className="h-4 w-4 text-muted-foreground hidden sm:block" />
                   </div>
                 )}
               </div>
@@ -1215,61 +888,44 @@ export function AnalyticsDashboard() {
       {/* Chart 2: Source Performance - Two charts side by side */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Pie Chart: Lead Volume by Source */}
-        <Card className="border-muted-foreground/10 shadow-sm">
-          <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 gap-2 border-b border-muted/30">
+        <Card>
+          <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between pb-2 gap-2">
             <div>
-              <CardTitle className="text-lg font-bold tracking-tight">线索来源分布</CardTitle>
-              <CardDescription className="text-sm font-medium">各渠道线索新增占比分析</CardDescription>
+              <CardTitle className="text-base font-semibold">线索来源分布</CardTitle>
+              <CardDescription>各渠道线索数量占比</CardDescription>
             </div>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="font-semibold h-8">
-                  <Download className="h-3.5 w-3.5 mr-1.5" />
+                <Button variant="outline" size="sm">
+                  <Download className="h-4 w-4 mr-2" />
                   导出
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => handleDownloadCSV("source-volume")} className="font-medium">下载 CSV</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleDownloadCSV("source-volume")}>下载 CSV</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </CardHeader>
-          <CardContent className="pt-6">
+          <CardContent>
             <div className="h-[280px]">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
                     data={sourceVolumeData}
-                    cx={isMobile ? "48%" : "50%"}
+                    cx="50%"
                     cy="50%"
                     innerRadius={60}
                     outerRadius={100}
                     paddingAngle={2}
                     dataKey="value"
-                    label={isMobile ? ((props) => {
-                      const { name, percent, x, y, textAnchor, fill } = props as any
-                      const percentText = `${(percent * 100).toFixed(0)}%`
-                      return (
-                        <text x={x} y={y} textAnchor={textAnchor} fill={fill} fontSize={12}>
-                          <tspan x={x} dy="-0.2em">
-                            {name}
-                          </tspan>
-                          <tspan x={x} dy="1.2em">
-                            {percentText}
-                          </tspan>
-                        </text>
-                      )
-                    }) : (({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`)}
+                    label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
                     labelLine={false}
                   >
                     {sourceVolumeData.map((entry, index) => (
                       <Cell key={`cell-${index}`} fill={entry.color} />
                     ))}
-                  </Pie
->
-                  <Tooltip
-                    contentStyle={{ borderRadius: '12px', border: '1px solid hsl(var(--border))', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                    formatter={(value: number) => [`${value} 条`, "线索数量"]}
-                  />
+                  </Pie>
+                  <Tooltip formatter={(value: number) => [`${value} 条`, "线索数量"]} />
                   <Legend />
                 </PieChart>
               </ResponsiveContainer>
@@ -1278,39 +934,38 @@ export function AnalyticsDashboard() {
         </Card>
 
         {/* Bar Chart: Conversion Rate by Source */}
-        <Card className="border-muted-foreground/10 shadow-sm">
-          <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 gap-2 border-b border-muted/30">
+        <Card>
+          <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between pb-2 gap-2">
             <div>
-              <CardTitle className="text-lg font-bold tracking-tight">渠道转化率对比</CardTitle>
-              <CardDescription className="text-sm font-medium">各来源渠道的最终成交效率</CardDescription>
+              <CardTitle className="text-base font-semibold">渠道转化率对比</CardTitle>
+              <CardDescription>各来源渠道的转化效率</CardDescription>
             </div>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="font-semibold h-8">
-                  <Download className="h-3.5 w-3.5 mr-1.5" />
+                <Button variant="outline" size="sm">
+                  <Download className="h-4 w-4 mr-2" />
                   导出
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => handleDownloadCSV("source-conversion")} className="font-medium">下载 CSV</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleDownloadCSV("source-conversion")}>下载 CSV</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </CardHeader>
-          <CardContent className="pt-6">
-            <div className="h-[300px]">
+          <CardContent>
+            <div className="h-[280px]">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={sourceConversionData} margin={{ top: 10, right: 30, left: 0, bottom: 10 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} strokeOpacity={0.5} />
-                  <XAxis dataKey="source" tick={{ fontSize: 12, fontWeight: 600 }} axisLine={false} tickLine={false} />
-                  <YAxis tickFormatter={(value) => `${value}%`} domain={[0, 25]} tick={{ fontSize: 12, fontWeight: 500 }} axisLine={false} tickLine={false} />
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="source" tick={{ fontSize: 12 }} />
+                  <YAxis tickFormatter={(value) => `${value}%`} domain={[0, 25]} tick={{ fontSize: 12 }} />
                   <Tooltip
-                    contentStyle={{ borderRadius: '12px', border: '1px solid hsl(var(--border))', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
                     formatter={(value: number, name: string) => {
                       if (name === "rate") return [`${value}%`, "转化率"]
                       return [value, name]
                     }}
                   />
-                  <Bar dataKey="rate" fill="#10b981" radius={[6, 6, 0, 0]} barSize={40} />
+                  <Bar dataKey="rate" fill="#10b981" radius={[4, 4, 0, 0]} barSize={48} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -1318,169 +973,84 @@ export function AnalyticsDashboard() {
         </Card>
       </div>
 
-
-      {/* Source ROI Table */}
-      <Card className="border-muted-foreground/10 shadow-sm">
-        <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 gap-2 border-b border-muted/30">
-          <div>
-            <CardTitle className="text-lg font-bold tracking-tight">渠道 ROI 核心指标</CardTitle>
-            <CardDescription className="text-sm font-medium">按来源贯通 线索→成交→营收 的全链路投产分析</CardDescription>
-          </div>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="font-semibold h-8">
-                <Download className="h-3.5 w-3.5 mr-1.5" />
-                导出报表
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => handleDownloadCSV("source-roi")} className="font-medium">
-                下载 CSV 报表
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </CardHeader>
-        <CardContent className="overflow-x-auto pt-0">
-          <Table>
-            <TableHeader className="bg-muted/30">
-              <TableRow className="hover:bg-transparent">
-                <TableHead className="font-bold text-foreground py-3">来源渠道</TableHead>
-                <TableHead className="text-right font-bold text-foreground">线索数</TableHead>
-                <TableHead className="text-right font-bold text-foreground">成交数</TableHead>
-                <TableHead className="text-right font-bold text-foreground">成交率</TableHead>
-                <TableHead className="text-right font-bold text-foreground">首单金额</TableHead>
-                <TableHead className="text-right font-bold text-foreground">续费金额</TableHead>
-                <TableHead className="text-right font-bold text-foreground text-primary">总金额</TableHead>
-                <TableHead className="text-right font-bold text-foreground">单线索价值</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {sourceRoiData.map((row) => (
-                <TableRow key={row.source} className="hover:bg-muted/20 transition-colors">
-                  <TableCell className="font-bold text-sm">{row.source}</TableCell>
-                  <TableCell className="text-right font-medium">{row.leads}</TableCell>
-                  <TableCell className="text-right font-medium">{row.won}</TableCell>
-                  <TableCell className="text-right">
-                    {row.leads === 0 ? (
-                      <span className="text-muted-foreground">--</span>
-                    ) : (
-                      <span className="font-bold text-emerald-600">{row.winRate.toFixed(1)}%</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right font-medium">
-                    {new Intl.NumberFormat("zh-CN", {
-                      style: "currency",
-                      currency: "CNY",
-                      maximumFractionDigits: 0,
-                    }).format(row.newAmount || 0)}
-                  </TableCell>
-                  <TableCell className="text-right font-medium">
-                    {new Intl.NumberFormat("zh-CN", {
-                      style: "currency",
-                      currency: "CNY",
-                      maximumFractionDigits: 0,
-                    }).format(row.renewalAmount || 0)}
-                  </TableCell>
-                  <TableCell className="text-right font-bold text-primary">
-                    {new Intl.NumberFormat("zh-CN", {
-                      style: "currency",
-                      currency: "CNY",
-                      maximumFractionDigits: 0,
-                    }).format(row.totalAmount || 0)}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {row.leads === 0 ? (
-                      <span className="text-muted-foreground">--</span>
-                    ) : (
-                      <span className="font-semibold text-foreground/80">
-                        ¥{(row.revenuePerLead / 10000).toFixed(1)}万
-                      </span>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
-
       {/* Chart 3: Team Activity Leaderboard */}
-      <Card className="border-muted-foreground/10 shadow-sm">
-        <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 gap-2 border-b border-muted/30">
+      <Card>
+        <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between pb-2 gap-2">
           <div>
-            <CardTitle className="text-lg font-bold tracking-tight">团队业绩排行榜</CardTitle>
-            <CardDescription className="text-sm font-medium">销售人员线索跟进、转化及创收表现</CardDescription>
+            <CardTitle className="text-base font-semibold">团队业绩排行榜</CardTitle>
+            <CardDescription>销售人员线索跟进及成交情况</CardDescription>
             {poolLeadsCount !== null && (
-              <div className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 bg-amber-50 text-amber-700 rounded-full border border-amber-100 text-xs font-bold">
-                <AlertTriangle className="w-3.5 h-3.5" />
-                公海池待分配：{poolLeadsCount} 条
-              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                当前公海池线索：
+                <span className="font-medium text-amber-600">{poolLeadsCount}</span>
+                条（不计入下方图表与排行榜统计）
+              </p>
             )}
           </div>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="font-semibold h-8">
-                <Download className="h-3.5 w-3.5 mr-1.5" />
-                导出排行
+              <Button variant="outline" size="sm">
+                <Download className="h-4 w-4 mr-2" />
+                导出
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => handleDownloadCSV("team-leaderboard")} className="font-medium">下载 CSV 排行榜</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleDownloadCSV("team-leaderboard")}>下载 CSV</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </CardHeader>
-        <CardContent className="overflow-x-auto pt-0">
+        <CardContent className="overflow-x-auto">
           <Table>
-            <TableHeader className="bg-muted/30">
-              <TableRow className="hover:bg-transparent">
-                <TableHead className="w-[60px] font-bold text-foreground py-3">排名</TableHead>
-                <TableHead className="font-bold text-foreground">销售代表</TableHead>
-                <TableHead className="text-right font-bold text-foreground">线索数</TableHead>
-                <TableHead className="text-right font-bold text-foreground">跟进数</TableHead>
-                <TableHead className="text-right font-bold text-foreground">成交数</TableHead>
-                <TableHead className="text-right font-bold text-foreground">成交率</TableHead>
-                <TableHead className="text-right font-bold text-foreground">客单价</TableHead>
-                <TableHead className="text-right font-bold text-primary">成交金额</TableHead>
-                <TableHead className="text-right w-[80px] font-bold text-foreground">趋势</TableHead>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-[50px]">排名</TableHead>
+                <TableHead>销售代表</TableHead>
+                <TableHead className="text-right">线索数</TableHead>
+                <TableHead className="text-right">跟进数</TableHead>
+                <TableHead className="text-right">成交数</TableHead>
+                <TableHead className="text-right">成交率</TableHead>
+                <TableHead className="text-right">客单价</TableHead>
+                <TableHead className="text-right">成交金额</TableHead>
+                <TableHead className="text-right w-[80px]">趋势</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {teamData.map((rep, index) => (
-                <TableRow key={rep.id} className="hover:bg-muted/20 transition-colors">
+                <TableRow key={rep.id}>
                   <TableCell>
                     {index < 3 ? (
                       <div
-                        className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shadow-sm ${
+                        className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
                           index === 0
-                            ? "bg-amber-100 text-amber-700 ring-2 ring-amber-200"
+                            ? "bg-amber-100 text-amber-700"
                             : index === 1
-                              ? "bg-slate-100 text-slate-600 ring-2 ring-slate-200"
-                              : "bg-orange-100 text-orange-700 ring-2 ring-orange-200"
+                              ? "bg-slate-100 text-slate-600"
+                              : "bg-orange-100 text-orange-700"
                         }`}
                       >
-                        {index === 0 && <Trophy className="w-4 h-4" />}
+                        {index === 0 && <Trophy className="w-3.5 h-3.5" />}
                         {index === 1 && "2"}
                         {index === 2 && "3"}
                       </div>
                     ) : (
-                      <span className="text-muted-foreground text-sm font-bold pl-2">{index + 1}</span>
+                      <span className="text-muted-foreground text-sm">{index + 1}</span>
                     )}
                   </TableCell>
                   <TableCell>
-                    <div className="flex items-center gap-3">
-                      <Avatar className="h-9 w-9 border-2 border-background shadow-sm">
+                    <div className="flex items-center gap-2">
+                      <Avatar className="h-8 w-8">
                         {rep.avatar && <AvatarImage src={rep.avatar} alt={rep.name} />}
-                        <AvatarFallback className="font-bold text-sm bg-primary/10 text-primary">{rep.name?.trim()?.[0] ?? "?"}</AvatarFallback>
+                        <AvatarFallback>{rep.name?.trim()?.[0] ?? "?"}</AvatarFallback>
                       </Avatar>
-                      <span className="font-bold text-sm text-foreground/90">{rep.name}</span>
+                      <span className="font-medium">{rep.name}</span>
                     </div>
                   </TableCell>
-                  <TableCell className="text-right font-medium text-sm">{rep.leads}</TableCell>
+                  <TableCell className="text-right font-medium">{rep.leads}</TableCell>
                   <TableCell className="text-right">
-                    <span className="text-muted-foreground font-medium text-sm">{rep.interactions}</span>
+                    <span className="text-muted-foreground">{rep.interactions}</span>
                   </TableCell>
                   <TableCell className="text-right">
-                    <Badge variant="secondary" className="font-bold bg-muted/80 h-6 px-2">
+                    <Badge variant="secondary" className="font-semibold">
                       {rep.won}
                     </Badge>
                   </TableCell>
@@ -1488,28 +1058,24 @@ export function AnalyticsDashboard() {
                     {rep.leads === 0 ? (
                       <span className="text-muted-foreground">--</span>
                     ) : (
-                      <span className="font-bold text-sm text-foreground/80">{(rep.winRate * 100).toFixed(1)}%</span>
+                      <span className="font-semibold">{(rep.winRate * 100).toFixed(1)}%</span>
                     )}
                   </TableCell>
                   <TableCell className="text-right">
                     {rep.won === 0 ? (
                       <span className="text-muted-foreground">--</span>
                     ) : (
-                      <span className="font-bold text-sm text-foreground/80">¥{(rep.avgDealValue / 10000).toFixed(1)}万</span>
+                      <span className="font-medium">¥{(rep.avgDealValue / 10000).toFixed(1)}万</span>
                     )}
                   </TableCell>
-                  <TableCell className="text-right font-bold text-base text-emerald-600">
+                  <TableCell className="text-right font-semibold text-emerald-600">
                     ¥{(rep.value / 10000).toFixed(1)}万
                   </TableCell>
                   <TableCell className="text-right">
                     {rep.trend === "up" ? (
-                      <div className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-emerald-50 text-emerald-600 border border-emerald-100 ml-auto">
-                        <TrendingUp className="h-4 w-4" />
-                      </div>
+                      <TrendingUp className="h-4 w-4 text-emerald-500 ml-auto" />
                     ) : (
-                      <div className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-red-50 text-red-600 border border-red-100 ml-auto">
-                        <TrendingDown className="h-4 w-4" />
-                      </div>
+                      <TrendingDown className="h-4 w-4 text-red-500 ml-auto" />
                     )}
                   </TableCell>
                 </TableRow>
@@ -1518,7 +1084,6 @@ export function AnalyticsDashboard() {
           </Table>
         </CardContent>
       </Card>
-
     </div>
   )
 }

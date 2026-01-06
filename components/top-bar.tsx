@@ -239,10 +239,10 @@ export function TopBar() {
   return (
     <>
       <header className="h-16 border-b border-border bg-card px-4 md:px-6 flex items-center justify-between">
-        <div className="flex items-center gap-2 text-sm pl-12 md:pl-0">
+        <div className="flex items-center gap-2 text-base pl-12 md:pl-0">
           <span className="text-muted-foreground hidden sm:inline">首页</span>
           <ChevronRight className="w-4 h-4 text-muted-foreground hidden sm:block" />
-          <span className="text-foreground font-medium">{viewLabels[activeKey]}</span>
+          <span className="text-foreground font-semibold">{viewLabels[activeKey]}</span>
         </div>
         <div className="flex items-center gap-2 md:gap-4">
           <div className="relative w-48 lg:w-64 hidden md:block">
@@ -287,7 +287,7 @@ export function TopBar() {
                   <AvatarFallback>{(currentUser?.fullName ?? "用户").slice(0, 1)}</AvatarFallback>
                 </Avatar>
                 <div className="hidden sm:flex flex-col items-start">
-                  <span className="text-sm font-medium">
+                  <span className="text-base font-semibold">
                     {currentUser?.fullName ?? (isLoadingUser ? "加载中..." : "当前用户")}
                   </span>
                   <Badge variant="secondary" className="text-xs w-fit">
@@ -333,11 +333,11 @@ export function TopBar() {
             <SheetTitle>导入 / 导出任务</SheetTitle>
           </SheetHeader>
           <div className="mt-4 space-y-4 flex-1 overflow-y-auto pr-1">
-            <p className="text-xs text-muted-foreground">仅显示当前账号最近 20 条任务记录。</p>
-            <div className="space-y-2">
+            <p className="text-sm text-muted-foreground">仅显示当前账号最近 20 条任务记录。</p>
+            <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <h3 className="text-xs font-semibold text-muted-foreground">导入任务</h3>
-                {isLoadingJobs && <span className="text-[11px] text-muted-foreground">加载中...</span>}
+                <h3 className="text-sm font-semibold text-muted-foreground">导入任务</h3>
+                {isLoadingJobs && <span className="text-xs text-muted-foreground">加载中...</span>}
               </div>
               {importJobs.length === 0 ? (
                 <p className="text-xs text-muted-foreground">暂无导入任务</p>
@@ -346,14 +346,14 @@ export function TopBar() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead className="text-xs">文件名</TableHead>
-                        <TableHead className="text-xs">状态</TableHead>
-                        <TableHead className="text-xs">统计</TableHead>
+                        <TableHead className="text-sm font-medium">文件名</TableHead>
+                        <TableHead className="text-sm font-medium">状态</TableHead>
+                        <TableHead className="text-sm font-medium">统计</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {importJobs.map((job) => (
-                        <TableRow key={job.id} className="text-xs">
+                        <TableRow key={job.id} className="text-sm">
                           <TableCell className="max-w-[140px] truncate" title={job.fileName}>
                             {job.fileName}
                           </TableCell>
@@ -376,9 +376,9 @@ export function TopBar() {
               )}
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <h3 className="text-xs font-semibold text-muted-foreground">导出任务</h3>
+                <h3 className="text-sm font-semibold text-muted-foreground">导出任务</h3>
               </div>
               {exportJobs.length === 0 ? (
                 <p className="text-xs text-muted-foreground">暂无导出任务</p>
@@ -387,14 +387,14 @@ export function TopBar() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead className="text-xs">格式</TableHead>
-                        <TableHead className="text-xs">状态</TableHead>
-                        <TableHead className="text-xs">统计</TableHead>
+                        <TableHead className="text-sm font-medium">格式</TableHead>
+                        <TableHead className="text-sm font-medium">状态</TableHead>
+                        <TableHead className="text-sm font-medium">统计</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {exportJobs.map((job) => (
-                        <TableRow key={job.id} className="text-xs">
+                        <TableRow key={job.id} className="text-sm">
                           <TableCell>{job.format.toUpperCase()}</TableCell>
                           <TableCell>{job.status}</TableCell>
                           <TableCell>

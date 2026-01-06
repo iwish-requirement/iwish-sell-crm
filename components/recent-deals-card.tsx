@@ -196,7 +196,8 @@ export function RecentDealsCard({ limit = 8 }: RecentDealsCardProps) {
     return () => {
       isMounted = false
     }
-  }, [mePermissions, currentProfile, limit])
+  }, [mePermissions, limit])
+
 
   if (isLoading) {
     return (

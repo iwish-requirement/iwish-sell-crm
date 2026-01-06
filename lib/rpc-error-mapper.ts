@@ -39,8 +39,9 @@ export function mapRpcError(
     const permissionKey = noPerm[1]
     return {
       kind: "no_permission",
-      title: "没有权限",
-      description: `缺少权限：${permissionKey}。请联系管理员开通后重试。`,
+      title: "权限不足",
+      description: `当前账号缺少必要权限：${permissionKey}。如需调整权限配置，请联系系统管理员后重试。`,
+
       canRetry: false,
       permissionKey,
       rawMessage,
