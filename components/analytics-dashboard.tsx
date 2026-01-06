@@ -35,7 +35,7 @@ import { MePermissionsContext } from "@/components/app-root"
 import { fetchCurrentUserProfile } from "@/lib/auth/profile"
 import type { UserProfile } from "@/lib/auth/profile"
 import { toast } from "sonner"
-import { mapRpcError } from "@/lib/rpc-error-mapper"
+
 
 
 type FunnelItem = {
@@ -820,7 +820,6 @@ export function AnalyticsDashboard() {
       return
     }
 
-
     try {
       const supabase = getBrowserSupabaseClient()
       const filters: Record<string, any> = {
@@ -838,6 +837,7 @@ export function AnalyticsDashboard() {
       })
 
       if (error) {
+        const { mapRpcError } = await import("@/lib/rpc-error-mapper")
         const friendly = mapRpcError(error, {
           title: "导出失败",
           description: "提交导出请求时出错，请稍后重试",
@@ -846,6 +846,7 @@ export function AnalyticsDashboard() {
         return
       }
     } catch (err) {
+      const { mapRpcError } = await import("@/lib/rpc-error-mapper")
       const friendly = mapRpcError(err as any, {
         title: "导出失败",
         description: "导出过程中发生异常，请稍后重试",
@@ -949,6 +950,7 @@ export function AnalyticsDashboard() {
     document.body.removeChild(link)
     URL.revokeObjectURL(url)
   }
+
 
   // Calculate conversion rates between stages
   const getConversionRate = (fromIndex: number) => {
