@@ -1025,7 +1025,7 @@ export function PublicPool() {
           <p className="text-sm text-muted-foreground mt-1 font-medium">共 <span className="text-foreground font-bold">{leads.length}</span> 条待分配线索</p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-col sm:flex-row w-full sm:w-auto items-stretch sm:items-center gap-2 sm:gap-3">
           {canAssignLeads && (
             <Button
               variant="default"
@@ -1034,7 +1034,7 @@ export function PublicPool() {
                 if (selectedLeads.length === 0) return
                 handleAssign()
               }}
-              className="font-bold shadow-sm"
+              className="font-bold shadow-sm w-full sm:w-auto justify-center"
             >
               <Users className="w-4 h-4 mr-2" />
               分配给销售 {selectedLeads.length > 0 && `(${selectedLeads.length})`}
@@ -1060,24 +1060,29 @@ export function PublicPool() {
                 }
               }
             }}
-            className="font-semibold"
+            className="font-semibold w-full sm:w-auto justify-center"
           >
             <UserPlus className="w-4 h-4 mr-2" />
             认领到我的线索 {selectedLeads.length > 0 && `(${selectedLeads.length})`}
           </Button>
-          <Button variant="outline" onClick={() => setImportDialogOpen(true)} className="font-semibold">
+          <Button
+            variant="outline"
+            onClick={() => setImportDialogOpen(true)}
+            className="font-semibold w-full sm:w-auto justify-center"
+          >
             <Upload className="w-4 h-4 mr-2" />
             导入线索
           </Button>
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline">
+              <Button variant="outline" className="w-full sm:w-auto justify-center">
                 <Download className="w-4 h-4 mr-2" />
                 导出
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+
               <DropdownMenuItem
                 onClick={async () => {
                   const supabase = getBrowserSupabaseClient()
