@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState } from "react"
+import { Suspense, useState } from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button"
 import { Eye, EyeOff, Loader2 } from "lucide-react"
 import { getBrowserSupabaseClient } from "@/lib/supabase/client"
 
-export default function LoginPage() {
+function LoginPageInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
 
@@ -148,5 +148,19 @@ export default function LoginPage() {
         </div>
       </CardContent>
     </Card>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex items-center justify-center py-20">
+          <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+        </div>
+      }
+    >
+      <LoginPageInner />
+    </Suspense>
   )
 }
