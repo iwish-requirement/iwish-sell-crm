@@ -6,8 +6,10 @@ import { usePathname, useRouter } from "next/navigation"
 import { LayoutDashboard, Users, Globe, Settings, Sparkles, BarChart3, Menu, DollarSign, RefreshCcw } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { MePermissionsContext } from "@/components/app-root"
+
 
 type NavItemId = "dashboard" | "leads" | "pool" | "deals" | "renewals" | "analytics" | "settings" | "audit"
 
@@ -68,6 +70,7 @@ function SidebarContent({ activeView, onNavigate, onItemClick }: SidebarContentP
   const canViewAudit = mePermissions?.canViewAudit ?? false
   const canViewSettings = mePermissions?.canViewSettings ?? false
   const canViewDealsAndRenewals = mePermissions?.canReadContracts ?? false
+  const isPermissionsLoading = mePermissions === null
 
   const visibleNavItems = navItems.filter((item) => {
     if (item.id === "pool") return canViewPublicPool
@@ -81,6 +84,7 @@ function SidebarContent({ activeView, onNavigate, onItemClick }: SidebarContentP
 
 
   return (
+
     <>
       <div className="p-6 border-b border-border">
         <div className="w-full">
@@ -96,25 +100,36 @@ function SidebarContent({ activeView, onNavigate, onItemClick }: SidebarContentP
         <p className="text-xs text-muted-foreground mt-1">销售线索管理系统</p>
       </div>
       <nav className="flex-1 p-4 space-y-1">
-        {visibleNavItems.map((item) => (
-          <button
-            key={item.id}
-            onClick={() => {
-              onNavigate(item.id)
-              onItemClick?.()
-            }}
-            className={cn(
-              "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
-              activeView === item.id
-                ? "bg-primary text-primary-foreground"
-                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
-            )}
-          >
-            <item.icon className="w-5 h-5" />
-            {item.label}
-          </button>
-        ))}
+        {isPermissionsLoading
+          ? navItems.map((item) => (
+              <div
+                key={item.id}
+                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg"
+              >
+                <Skeleton className="w-5 h-5 rounded-md" />
+                <Skeleton className="h-4 flex-1" />
+              </div>
+            ))
+          : visibleNavItems.map((item) => (
+              <button
+                key={item.id}
+                onClick={() => {
+                  onNavigate(item.id)
+                  onItemClick?.()
+                }}
+                className={cn(
+                  "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
+                  activeView === item.id
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+                )}
+              >
+                <item.icon className="w-5 h-5" />
+                {item.label}
+              </button>
+            ))}
       </nav>
+
       <div className="p-4 border-t border-border">
         <p className="text-xs text-muted-foreground">© 2025 Iwish CRM</p>
       </div>

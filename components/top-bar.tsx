@@ -11,6 +11,8 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { getBrowserSupabaseClient } from "@/lib/supabase/client"
+import { fetchCurrentUserPublicProfile } from "@/lib/auth/profile"
+
 
 const viewLabels: Record<string, string> = {
   dashboard: "仪表盘",
@@ -110,41 +112,24 @@ export function TopBar() {
       try {
         setIsLoadingUser(true)
         const supabase = getBrowserSupabaseClient()
-        const {
-          data: { user },
-          error: userError,
-        } = await supabase.auth.getUser()
-
-        if (userError) {
-          console.error("Failed to get auth user for top bar", userError)
-          return
-        }
-
-        if (!user) {
-          return
-        }
-
-        const { data: profile, error: profileError } = await supabase
-          .from("profiles_public")
-          .select("full_name, avatar_url, status")
-          .eq("id", user.id)
-          .single()
-
-        if (profileError) {
-          console.error("Failed to load current user public profile", profileError)
-          return
-        }
+        const publicProfile = await fetchCurrentUserPublicProfile(supabase)
 
         if (!isMounted) return
 
+        if (!publicProfile) {
+          setCurrentUser(null)
+          return
+        }
+
         setCurrentUser({
-          fullName: (profile.full_name as string) ?? user.email ?? "未命名用户",
-          avatarUrl: (profile.avatar_url as string | null) ?? null,
-          status: profile.status as string,
+          fullName: publicProfile.fullName || "未命名用户",
+          avatarUrl: publicProfile.avatarUrl,
+          status: publicProfile.status || "active",
         })
       } catch (err) {
         console.error("Unexpected error while loading current user info in top bar", err)
       } finally {
+
         if (isMounted) {
           setIsLoadingUser(false)
         }

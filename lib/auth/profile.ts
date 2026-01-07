@@ -9,8 +9,17 @@ export interface UserProfile {
   roleId: string | null;
 }
 
+export interface UserPublicProfile {
+  id: string;
+  fullName: string;
+  avatarUrl: string | null;
+  status: string | null;
+  email: string | null;
+}
+
 // 简单的模块级缓存：在同一浏览器会话中避免重复查询当前用户 Profile
 let cachedProfile: UserProfile | null | undefined;
+let cachedPublicProfile: UserPublicProfile | null | undefined;
 
 export async function fetchCurrentUserProfile(
   supabaseClient: SupabaseClient,
@@ -65,5 +74,69 @@ export async function fetchCurrentUserProfile(
   };
 
   cachedProfile = result;
+  return result;
+}
+
+export async function fetchCurrentUserPublicProfile(
+  supabaseClient: SupabaseClient,
+): Promise<UserPublicProfile | null> {
+  if (cachedPublicProfile !== undefined) {
+    return cachedPublicProfile;
+  }
+
+  const {
+    data: { user },
+    error: userError,
+  } = await supabaseClient.auth.getUser();
+
+  if (userError || !user) {
+    if (userError) {
+      console.error('Failed to get auth user before loading current public profile', userError);
+    }
+    cachedPublicProfile = null;
+    return null;
+  }
+
+  const { data, error } = await supabaseClient
+    .from('profiles_public')
+    .select('id, full_name, avatar_url, status')
+    .eq('id', user.id)
+    .maybeSingle();
+
+  if (error) {
+    if (error.code !== 'PGRST116') {
+      console.error('Failed to load current user public profile', error);
+    }
+
+    cachedPublicProfile = {
+      id: user.id,
+      fullName: user.email ?? '当前用户',
+      avatarUrl: null,
+      status: null,
+      email: user.email ?? null,
+    };
+    return cachedPublicProfile;
+  }
+
+  if (!data) {
+    cachedPublicProfile = {
+      id: user.id,
+      fullName: user.email ?? '当前用户',
+      avatarUrl: null,
+      status: null,
+      email: user.email ?? null,
+    };
+    return cachedPublicProfile;
+  }
+
+  const result: UserPublicProfile = {
+    id: data.id as string,
+    fullName: ((data as any).full_name as string | null) ?? user.email ?? '当前用户',
+    avatarUrl: ((data as any).avatar_url as string | null) ?? null,
+    status: ((data as any).status as string | null) ?? null,
+    email: user.email ?? null,
+  };
+
+  cachedPublicProfile = result;
   return result;
 }

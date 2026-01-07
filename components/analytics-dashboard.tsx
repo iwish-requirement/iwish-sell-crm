@@ -117,6 +117,8 @@ export function AnalyticsDashboard() {
 
   const leadScopeType = mePermissions?.leadScopeType ?? "self"
   const canViewReports = Boolean(mePermissions?.canViewReports)
+  const isPermissionsLoading = mePermissions === null
+
 
 
   useEffect(() => {
@@ -969,6 +971,28 @@ export function AnalyticsDashboard() {
     return `${rate}%`
   }
 
+  if (isPermissionsLoading) {
+    return (
+      <div className="space-y-6">
+        <div className="flex flex-col gap-2">
+          <h1 className="text-3xl font-bold text-foreground tracking-tight">数据分析</h1>
+          <div className="flex flex-wrap items-center gap-4 mt-2">
+            <Button variant="outline" className="w-full sm:w-[280px] bg-transparent" disabled>
+              <CalendarIcon className="mr-2 h-4 w-4" />
+              加载当前账号权限中...
+            </Button>
+          </div>
+        </div>
+        <ChartSkeleton className="h-auto" />
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <ChartSkeleton />
+          <ChartSkeleton />
+        </div>
+        <TableSkeleton rows={6} />
+      </div>
+    )
+  }
+
   if (!canViewReports) {
     return (
       <div className="space-y-4">
@@ -1003,6 +1027,7 @@ export function AnalyticsDashboard() {
       </div>
     )
   }
+
 
 
   if (error) {

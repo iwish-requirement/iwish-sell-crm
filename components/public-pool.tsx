@@ -42,6 +42,8 @@ import { getBrowserSupabaseClient } from "@/lib/supabase/client"
 import { mapRpcError, type RpcErrorFriendly } from "@/lib/rpc-error-mapper"
 import { RpcErrorBanner } from "@/components/rpc-error-banner"
 import { MePermissionsContext } from "@/components/app-root"
+import { fetchCurrentUserProfile } from "@/lib/auth/profile"
+
 
 interface PoolLead {
   id: string
@@ -845,24 +847,11 @@ export function PublicPool() {
                 // 如果已经提前解析过，就直接使用缓存的 parsedImportRows；否则兜底重新解析一遍
                 const rowsToUse = parsedImportRows ?? lines.slice(1).map((line) => line.split(",").map((c) => c.trim()))
 
-                const {
-                  data: userData,
-                  error: userError,
-                } = await supabase.auth.getUser()
-                const userId = userData?.user?.id ?? null
-                if (userError || !userId) {
-                  throw new Error("无法获取当前登录用户信息")
-                }
-
-                const { data: profile, error: profileError } = await supabase
-                  .from("profiles")
-                  .select("id, team_id")
-                  .eq("id", userId)
-                  .maybeSingle()
-
-                if (profileError || !profile?.team_id) {
+                const profile = await fetchCurrentUserProfile(supabase)
+                if (!profile || profile.teamId == null) {
                   throw new Error("无法获取当前用户的团队信息")
                 }
+
 
                 let importedCount = 0
                 let failedCount = 0

@@ -98,10 +98,12 @@ export function DealCenter() {
   const [contractIsRenewalInput, setContractIsRenewalInput] = useState(false)
   const canManageContracts = mePermissions?.canManageContracts ?? false
   const canReadContracts = mePermissions?.canReadContracts ?? false
+  const isPermissionsLoading = mePermissions === null
 
 
 
   const sourceOptions = useMemo(() => {
+
 
 
     const sources = new Set<string>()
@@ -577,6 +579,15 @@ export function DealCenter() {
     return sorted.length > 0 ? sorted[0].paidAt : null
   }, [contractPayments])
 
+  if (isPermissionsLoading) {
+    return (
+      <div className="space-y-4">
+        <h1 className="text-2xl font-bold text-foreground">成交中心</h1>
+        <p className="text-sm text-muted-foreground">正在加载当前账号权限，请稍候...</p>
+      </div>
+    )
+  }
+
   if (!canReadContracts) {
     return (
       <div className="space-y-4">
@@ -584,13 +595,12 @@ export function DealCenter() {
         <p className="text-sm text-muted-foreground">
           当前账号无权访问成交中心。如需调整合同相关权限，请联系系统管理员后重试访问。
         </p>
-
       </div>
-
     )
   }
 
   return (
+
 
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">

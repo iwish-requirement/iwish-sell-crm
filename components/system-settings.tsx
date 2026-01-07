@@ -641,6 +641,18 @@ export function SystemSettings() {
   const [settingsTab, setSettingsTab] = useState("rules")
   const mePermissions = useContext(MePermissionsContext)
   const canViewSettings = mePermissions?.canViewSettings ?? false
+  const isPermissionsLoading = mePermissions === null
+
+  if (isPermissionsLoading) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-semibold text-foreground">系统设置</h1>
+          <p className="text-muted-foreground">正在加载当前账号权限，请稍候...</p>
+        </div>
+      </div>
+    )
+  }
 
   if (!canViewSettings) {
     return (
@@ -655,8 +667,8 @@ export function SystemSettings() {
     )
   }
 
-
   return (
+
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold text-foreground">系统设置</h1>

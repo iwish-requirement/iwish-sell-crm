@@ -88,8 +88,10 @@ function getTargetCategory(targetType: string): TargetFilter {
 export function AuditLog() {
   const mePermissions = useContext(MePermissionsContext)
   const canViewAudit = mePermissions?.canViewAudit ?? false
+  const isPermissionsLoading = mePermissions === null
 
   const [logs, setLogs] = useState<AuditLogEntry[]>([])
+
 
   const [isLoading, setIsLoading] = useState(true)
 
@@ -205,12 +207,19 @@ export function AuditLog() {
       }
     }
 
+    if (isPermissionsLoading) {
+      return () => {
+        isMounted = false
+      }
+    }
+
     void loadAuditLogs()
 
     return () => {
       isMounted = false
     }
-  }, [reloadToken, canViewAudit])
+  }, [reloadToken, canViewAudit, isPermissionsLoading])
+
 
 
   useEffect(() => {
@@ -272,6 +281,17 @@ export function AuditLog() {
     setSelectedLog(null)
   }
 
+  if (isPermissionsLoading) {
+    return (
+      <div className="space-y-4">
+        <div>
+          <h1 className="text-xl font-semibold text-foreground">审计中心</h1>
+          <p className="text-sm text-muted-foreground">正在加载当前账号权限，请稍候...</p>
+        </div>
+      </div>
+    )
+  }
+
   if (!canViewAudit) {
     return (
       <div className="space-y-4">
@@ -286,6 +306,7 @@ export function AuditLog() {
   }
 
   return (
+
     <div className="space-y-4">
 
       <div className="flex items-center justify-between">

@@ -91,7 +91,9 @@ function LoginPageInner() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
+              autoComplete="email"
             />
+
           </div>
           <div className="space-y-2">
             <Label htmlFor="password">密码</Label>
@@ -103,7 +105,9 @@ function LoginPageInner() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
+                autoComplete="current-password"
               />
+
               <Button
                 type="button"
                 variant="ghost"

@@ -11,7 +11,8 @@ import { fetchDashboardSummary } from "@/lib/services/dashboard"
 import { RecentDealsCard } from "@/components/recent-deals-card"
 import { getBrowserSupabaseClient } from "@/lib/supabase/client"
 import { MePermissionsContext } from "@/components/app-root"
-import { fetchCurrentUserProfile } from "@/lib/auth/profile"
+import { fetchCurrentUserProfile, fetchCurrentUserPublicProfile } from "@/lib/auth/profile"
+
 
 interface DashboardSummary {
   totalLeads: number
@@ -176,33 +177,12 @@ export function Dashboard() {
     async function loadWelcomeText() {
       try {
         const supabase = getBrowserSupabaseClient()
-        const {
-          data: { user },
-          error: userError,
-        } = await supabase.auth.getUser()
-
-        if (userError) {
-          console.error("Failed to get auth user for dashboard welcome text", userError)
-        }
+        const publicProfile = await fetchCurrentUserPublicProfile(supabase)
 
         let displayName = "伙伴"
 
-        if (user) {
-          displayName = user.email ?? displayName
-
-          try {
-            const { data: profile, error: profileError } = await supabase
-              .from("profiles_public")
-              .select("full_name")
-              .eq("id", user.id)
-              .single()
-
-            if (!profileError && profile && (profile.full_name as string | null)) {
-              displayName = profile.full_name as string
-            }
-          } catch (profileErr) {
-            console.error("Failed to load profile for dashboard welcome text", profileErr)
-          }
+        if (publicProfile) {
+          displayName = publicProfile.fullName || publicProfile.email || displayName
         }
 
         let template = "欢迎回来，{fullName}。以下是您的销售概览。"
@@ -221,7 +201,7 @@ export function Dashboard() {
               if (typeof raw.template === "string" && raw.template.trim()) {
                 template = raw.template as string
               }
-              if (!user && typeof raw.fallback_name === "string" && raw.fallback_name.trim()) {
+              if (!publicProfile && typeof raw.fallback_name === "string" && raw.fallback_name.trim()) {
                 displayName = raw.fallback_name as string
               }
             }
@@ -236,6 +216,7 @@ export function Dashboard() {
           setWelcomeText(finalText)
         }
       } catch (err) {
+
         console.error("Unexpected error while building dashboard welcome text", err)
         if (isMounted) {
           setWelcomeText("欢迎回来，以下是您的销售概览。")

@@ -19,10 +19,13 @@ function isPublicPath(pathname: string): boolean {
   if (
     pathname.startsWith('/_next/') ||
     pathname.startsWith('/public/') ||
-    pathname === '/favicon.ico'
+    pathname === '/favicon.ico' ||
+    pathname === '/favicon.png' ||
+    pathname.startsWith('/_vercel/insights')
   ) {
     return true
   }
+
 
   return false
 }
@@ -123,5 +126,6 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|favicon.png|_vercel/insights).*)'],
 }
+
