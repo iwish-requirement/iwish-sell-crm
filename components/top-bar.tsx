@@ -21,7 +21,9 @@ const viewLabels: Record<string, string> = {
   analytics: "数据分析",
   settings: "系统设置",
   audit: "审计中心",
+  profile: "个人资料",
 }
+
 
 function getViewFromPathname(pathname: string): keyof typeof viewLabels {
   if (pathname.startsWith("/leads")) {
@@ -44,8 +46,13 @@ function getViewFromPathname(pathname: string): keyof typeof viewLabels {
     return "audit"
   }
 
+  if (pathname.startsWith("/profile")) {
+    return "profile"
+  }
+
   return "dashboard"
 }
+
 
 type LeadImportJob = {
   id: string
@@ -292,6 +299,13 @@ export function TopBar() {
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
               <DropdownMenuItem
+                onClick={() => {
+                  router.push("/profile")
+                }}
+              >
+                <span>个人资料</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem
                 onClick={async () => {
                   try {
                     const supabase = getBrowserSupabaseClient()
@@ -307,6 +321,7 @@ export function TopBar() {
                 <LogOut className="w-4 h-4" />
                 <span>退出登录</span>
               </DropdownMenuItem>
+
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

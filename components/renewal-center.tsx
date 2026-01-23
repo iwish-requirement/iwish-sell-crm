@@ -56,6 +56,8 @@ export function RenewalCenter() {
   const [isApplyingBulk, setIsApplyingBulk] = useState(false)
 
 
+
+
   useEffect(() => {
     let isMounted = true
 
@@ -181,6 +183,9 @@ export function RenewalCenter() {
 
     setIsApplyingBulk(false)
   }
+
+
+
 
 
   return (
@@ -313,7 +318,9 @@ export function RenewalCenter() {
                   >
                     批量设置下次跟进日期
                   </Button>
+
                 </div>
+
               </div>
 
               <div className="w-full overflow-x-auto">

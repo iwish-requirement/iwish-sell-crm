@@ -3,7 +3,30 @@
 > 本文件用于记录 AI 助手在本仓库内做出的重要结构/逻辑变更，方便你审计、回顾与回滚。
 > 按时间倒序追加；同一天多次修改可在同一日期下追加小节。
 
+## 2026-01-23
+
+### wecom-gateway-bind: 企微统一网关接入（扫码绑定 + 回调落库 + 统一发消息）
+
+**变更点**
+- 新增个人资料页 `/profile`：提供“企业微信绑定”区块，点击后按网关标准生成一次性 `bindToken` 并跳转网关扫码授权。
+- 新增 API：
+  - `/api/wecom/bind-token`：为当前登录用户生成一次性 `bindToken`（默认 10 分钟有效期）。
+  - `/api/wecom/bind-callback`：实现网关回调落库协议（校验 `X-Wecom-Gateway-Token`、校验 `bindToken` 一次性/过期、写入 `profiles.wecom_user_id` 并写审计）。
+- 新增 DB 迁移 `supabase/migrations/038_wecom_gateway_bind_tokens.sql`：新增 `wecom_bind_tokens` 表 + RLS + `iwish.rpc_wecom_bind_callback`（仅 `service_role` 可执行，防止绕过回调）。
+- 新增 `lib/wecom/gateway.ts`：统一网关发消息封装（`SYSTEM_KEY/SYSTEM_TOKEN` 鉴权、收件人去重、内容前缀强制）。
+- 调整 `lib/wecom/client.ts`：改为基于网关的兼容层，避免业务系统直连企微 API 受“固定出口 IP 白名单”影响。
+
+**变更原因（对应需求）**
+- 你提供了统一网关标准：扫码绑定必须使用一次性 `bindToken` + 回调落库鉴权；消息发送必须走网关统一鉴权入口。
+
+**影响范围**
+- 前端：新增 `/profile` 页面入口（TopBar 下拉菜单可进入）。
+- 服务端：新增两个 API 路由；需配置 `YOUR_BIND_CALLBACK_TOKEN` 与 `SUPABASE_SERVICE_ROLE_KEY` 才能完成回调落库。
+- DB：新增 `wecom_bind_tokens` 表与绑定回调 RPC（需要执行迁移）。
+
+
 ## 2026-01-04
+
 
 ### contracts-entity-and-permissions: 新增合同实体并接入权限与 RLS
 

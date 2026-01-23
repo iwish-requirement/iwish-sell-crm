@@ -12,12 +12,24 @@ import { PublicPool } from "@/components/public-pool"
 import { AuditLog } from "@/components/audit-log"
 import { DealCenter } from "@/components/deal-center"
 import { RenewalCenter } from "@/components/renewal-center"
+import { ProfileCenter } from "@/components/profile-center"
+
 
 
 import { getBrowserSupabaseClient } from "@/lib/supabase/client"
 
 
-export type AppView = "dashboard" | "leads" | "pool" | "deals" | "renewals" | "analytics" | "settings" | "audit"
+export type AppView =
+  | "dashboard"
+  | "leads"
+  | "pool"
+  | "deals"
+  | "renewals"
+  | "analytics"
+  | "settings"
+  | "audit"
+  | "profile"
+
 
 
 
@@ -72,8 +84,13 @@ function getViewFromPathname(pathname: string): AppView {
     return "audit"
   }
 
+  if (pathname.startsWith("/profile")) {
+    return "profile"
+  }
+
   return "dashboard"
 }
+
 
 export function AppRoot() {
   const pathname = usePathname() ?? "/"
@@ -167,6 +184,8 @@ export function AppRoot() {
 
             {activeView === "settings" && <SystemSettings />}
             {activeView === "audit" && <AuditLog />}
+            {activeView === "profile" && <ProfileCenter />}
+
 
           </main>
         </div>
