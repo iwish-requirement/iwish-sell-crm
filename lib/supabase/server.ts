@@ -3,22 +3,37 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import { cookies } from "next/headers"
 
 function resolveSupabaseUrl(): string {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.VITE_SUPABASE_URL ?? ""
+  const url =
+    process.env.NEXT_PUBLIC_SUPABASE_URL ??
+    process.env.VITE_SUPABASE_URL ??
+    process.env.SUPABASE_URL ??
+    ""
+
   if (!url) {
-    throw new Error("Supabase URL is not configured. Please set NEXT_PUBLIC_SUPABASE_URL or VITE_SUPABASE_URL.")
+    throw new Error(
+      "Supabase URL is not configured. Please set NEXT_PUBLIC_SUPABASE_URL (recommended) or SUPABASE_URL.",
+    )
   }
+
   return url
 }
 
 function resolveSupabaseAnonKey(): string {
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? process.env.VITE_SUPABASE_ANON_KEY ?? ""
+  const anonKey =
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
+    process.env.VITE_SUPABASE_ANON_KEY ??
+    process.env.SUPABASE_ANON_KEY ??
+    ""
+
   if (!anonKey) {
     throw new Error(
-      "Supabase anon key is not configured. Please set NEXT_PUBLIC_SUPABASE_ANON_KEY or VITE_SUPABASE_ANON_KEY.",
+      "Supabase anon key is not configured. Please set NEXT_PUBLIC_SUPABASE_ANON_KEY (recommended) or SUPABASE_ANON_KEY.",
     )
   }
+
   return anonKey
 }
+
 
 export function createRouteHandlerClient(): SupabaseClient {
   const cookieStore = cookies()

@@ -14,30 +14,45 @@ type WecomGatewayResponse = {
 const WECOM_GATEWAY_BASE_URL = "https://requirement.iwishweb.com"
 
 function getSystemKey(): string {
-  return (process.env.SYSTEM_KEY ?? "").trim() || (process.env.NEXT_PUBLIC_SYSTEM_KEY ?? "").trim() || "crm"
+  return (
+    (process.env.SYSTEM_KEY ?? "").trim() ||
+    (process.env.NEXT_PUBLIC_SYSTEM_KEY ?? "").trim() ||
+    (process.env.WECOM_GATEWAY_SYSTEM_KEY ?? "").trim() ||
+    "crm"
+  )
 }
 
 function getSystemToken(): string {
-  return (process.env.SYSTEM_TOKEN ?? "").trim()
+  return (
+    (process.env.SYSTEM_TOKEN ?? "").trim() ||
+    (process.env.WECOM_GATEWAY_SYSTEM_TOKEN ?? "").trim() ||
+    (process.env.WECOM_GATEWAY_SYSTEMKEY_TOKEN ?? "").trim()
+  )
 }
 
 function getPublicBaseUrl(): string {
-  return (process.env.PUBLIC_BASE_URL ?? "").trim().replace(/\/$/, "")
+  return ((process.env.PUBLIC_BASE_URL ?? "").trim() || (process.env.APP_PUBLIC_URL ?? "").trim()).replace(/\/$/, "")
 }
 
-function getSystemNameForPrefix(): string {
-  return (process.env.WECOM_SYSTEM_NAME ?? "CRM").trim() || "CRM"
+function getMessagePrefix(): string {
+  const raw = (process.env.WECOM_MESSAGE_PREFIX ?? "").trim()
+  if (raw) return raw
+
+  const name = (process.env.WECOM_SYSTEM_NAME ?? "CRM").trim() || "CRM"
+  return `【${name}】`
 }
 
 function ensurePrefixed(content: string): string {
-  const name = getSystemNameForPrefix()
-  const prefix = `【${name}】`
+  const prefix = getMessagePrefix()
   const trimmed = content.trim()
+
   if (!trimmed.startsWith(prefix)) {
     return `${prefix}${trimmed ? " " + trimmed : ""}`
   }
+
   return trimmed
 }
+
 
 function normalizeUserIds(ids: Array<string | null | undefined>): string[] {
   const unique = new Set<string>()

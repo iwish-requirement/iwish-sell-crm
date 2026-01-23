@@ -11,8 +11,9 @@ type RequestBody = {
 }
 
 function getCallbackToken(): string {
-  return process.env.YOUR_BIND_CALLBACK_TOKEN ?? ""
+  return (process.env.YOUR_BIND_CALLBACK_TOKEN ?? process.env.WECOM_GATEWAY_BIND_CALLBACK_TOKEN ?? "").trim()
 }
+
 
 export async function POST(req: Request) {
   try {
@@ -56,6 +57,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true })
   } catch (err: any) {
     const message = String(err?.message ?? "")
+    console.error("/api/wecom/bind-callback failed", err)
     return NextResponse.json({ ok: false, error: "unexpected", detail: message }, { status: 500 })
   }
 }
+

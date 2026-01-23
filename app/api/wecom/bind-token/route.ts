@@ -52,6 +52,18 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, bindToken, expiresAt })
   } catch (err: any) {
     const message = String(err?.message ?? "")
-    return NextResponse.json({ ok: false, error: "unexpected", detail: message }, { status: 500 })
+    console.error("/api/wecom/bind-token failed", err)
+
+    const isSupabaseConfigError = message.toLowerCase().includes("supabase") && message.toLowerCase().includes("not configured")
+
+    return NextResponse.json(
+      {
+        ok: false,
+        error: isSupabaseConfigError ? "server_misconfigured" : "unexpected",
+        detail: message,
+      },
+      { status: 500 },
+    )
   }
 }
+
