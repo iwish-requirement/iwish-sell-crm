@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server"
-import crypto from "crypto"
 
 import { createRouteHandlerClient } from "@/lib/supabase/server"
 
-export const runtime = "nodejs"
+export const runtime = "edge"
+
 
 type RequestBody = {
   ttlMinutes?: number
@@ -11,8 +11,11 @@ type RequestBody = {
 
 function createBindToken(): string {
   // 32 bytes -> 64 hex chars
-  return crypto.randomBytes(32).toString("hex")
+  const bytes = new Uint8Array(32)
+  crypto.getRandomValues(bytes)
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")
 }
+
 
 export async function POST(req: Request) {
   try {

@@ -2,7 +2,8 @@ import { NextResponse } from "next/server"
 
 import { createAdminSupabaseClient } from "@/lib/supabase/admin"
 
-export const runtime = "nodejs"
+export const runtime = "edge"
+
 
 type RequestBody = {
   bindToken?: string
