@@ -57,7 +57,9 @@ import { rpcGetRolePermissions, rpcRolePermissionsSetMatrix, type RolePermission
 import { mapRpcError, type RpcErrorFriendly } from "@/lib/rpc-error-mapper"
 import { toast } from "sonner"
 import { LeadGradesAndSourcesSettingsCard } from "./lead-grades-and-sources-settings-card"
+import { BusinessTypesSettingsCard } from "./business-types-settings-card"
 import { MePermissionsContext } from "@/components/app-root"
+
 
 
 
@@ -917,6 +919,8 @@ function BusinessRulesTab() {
 
             <LeadLockAndProtectionSettingsCard />
             <LeadGradesAndSourcesSettingsCard />
+            <BusinessTypesSettingsCard />
+
           </div>
         </TabsContent>
 

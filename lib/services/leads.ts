@@ -27,7 +27,10 @@ export interface LeadSecureRow {
   source_level1: string | null
   source_level2: string | null
   tags: string[] | null
+  business_categories?: { id: number; name: string }[] | null
+  business_types?: { id: number; name: string; category_id: number }[] | null
 }
+
 
 
 
@@ -46,8 +49,9 @@ export async function fetchLeadsSecureView(params: LeadSecureQueryParams = {}): 
   let query = supabase
     .from("leads_secure_view")
     .select(
-      "id, team_id, owner_id, created_by, name, source, stage, status, close_result, close_reason, last_contact_at, created_at, updated_at, customer_name, customer_phone, customer_email, address, budget, internal_score, blacklist_reason, next_contact_at, wechat, customer_grade, source_level1, source_level2, tags",
+      "id, team_id, owner_id, created_by, name, source, stage, status, close_result, close_reason, last_contact_at, created_at, updated_at, customer_name, customer_phone, customer_email, address, budget, internal_score, blacklist_reason, next_contact_at, wechat, customer_grade, source_level1, source_level2, tags, business_categories, business_types",
     )
+
 
 
 

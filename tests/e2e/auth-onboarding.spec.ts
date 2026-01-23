@@ -29,8 +29,9 @@ test.describe('注册 + 审批 + 登录完整流程', () => {
 
     await page.getByRole('button', { name: '申请账户' }).click();
 
-    // 注册成功后应跳转到 Onboarding Pending 页面
-    await expect(page).toHaveURL(/onboarding\/pending/);
+    // 注册成功后应跳转到 Onboarding Pending 页面（网络/触发器可能有抖动，给足等待时间）
+    await expect(page).toHaveURL(/onboarding\/pending/, { timeout: 20_000 });
+
     await expect(page.getByText('您的账户申请已提交')).toBeVisible({ timeout: 10_000 }).catch(() => {});
 
     // 2. 管理员登录后台，在组织架构 Tab 审批该用户

@@ -17,15 +17,21 @@ export interface UserPublicProfile {
   email: string | null;
 }
 
-// 简单的模块级缓存：在同一浏览器会话中避免重复查询当前用户 Profile
+// 仅在浏览器侧做简单缓存：避免同一会话反复查询当前用户 Profile。
+// ⚠️ 服务端（含 Middleware/SSR/Edge Runtime）禁止使用模块级缓存，否则会跨请求/跨用户污染。
 let cachedProfile: UserProfile | null | undefined;
 let cachedPublicProfile: UserPublicProfile | null | undefined;
+
+function isBrowserRuntime() {
+  return typeof window !== 'undefined';
+}
 
 export async function fetchCurrentUserProfile(
   supabaseClient: SupabaseClient,
 ): Promise<UserProfile | null> {
-  // 如果已经在本模块内缓存过结果，直接复用
-  if (cachedProfile !== undefined) {
+  const canUseCache = isBrowserRuntime();
+
+  if (canUseCache && cachedProfile !== undefined) {
     return cachedProfile;
   }
 
@@ -39,7 +45,11 @@ export async function fetchCurrentUserProfile(
     if (userError) {
       console.error('Failed to get auth user before loading current profile', userError);
     }
-    cachedProfile = null;
+
+    if (canUseCache) {
+      cachedProfile = null;
+    }
+
     return null;
   }
 
@@ -52,17 +62,23 @@ export async function fetchCurrentUserProfile(
   if (error) {
     // PGRST116 表示没有记录，其他错误视为异常
     if (error.code === 'PGRST116') {
-      cachedProfile = null;
+      if (canUseCache) {
+        cachedProfile = null;
+      }
       return null;
     }
 
     console.error('Failed to load current user profile', error);
-    cachedProfile = null;
+    if (canUseCache) {
+      cachedProfile = null;
+    }
     return null;
   }
 
   if (!data) {
-    cachedProfile = null;
+    if (canUseCache) {
+      cachedProfile = null;
+    }
     return null;
   }
 
@@ -73,14 +89,19 @@ export async function fetchCurrentUserProfile(
     roleId: (data as any).role_id ?? null,
   };
 
-  cachedProfile = result;
+  if (canUseCache) {
+    cachedProfile = result;
+  }
+
   return result;
 }
 
 export async function fetchCurrentUserPublicProfile(
   supabaseClient: SupabaseClient,
 ): Promise<UserPublicProfile | null> {
-  if (cachedPublicProfile !== undefined) {
+  const canUseCache = isBrowserRuntime();
+
+  if (canUseCache && cachedPublicProfile !== undefined) {
     return cachedPublicProfile;
   }
 
@@ -93,7 +114,11 @@ export async function fetchCurrentUserPublicProfile(
     if (userError) {
       console.error('Failed to get auth user before loading current public profile', userError);
     }
-    cachedPublicProfile = null;
+
+    if (canUseCache) {
+      cachedPublicProfile = null;
+    }
+
     return null;
   }
 
@@ -108,25 +133,35 @@ export async function fetchCurrentUserPublicProfile(
       console.error('Failed to load current user public profile', error);
     }
 
-    cachedPublicProfile = {
+    const fallback: UserPublicProfile = {
       id: user.id,
       fullName: user.email ?? '当前用户',
       avatarUrl: null,
       status: null,
       email: user.email ?? null,
     };
-    return cachedPublicProfile;
+
+    if (canUseCache) {
+      cachedPublicProfile = fallback;
+    }
+
+    return fallback;
   }
 
   if (!data) {
-    cachedPublicProfile = {
+    const fallback: UserPublicProfile = {
       id: user.id,
       fullName: user.email ?? '当前用户',
       avatarUrl: null,
       status: null,
       email: user.email ?? null,
     };
-    return cachedPublicProfile;
+
+    if (canUseCache) {
+      cachedPublicProfile = fallback;
+    }
+
+    return fallback;
   }
 
   const result: UserPublicProfile = {
@@ -137,6 +172,9 @@ export async function fetchCurrentUserPublicProfile(
     email: user.email ?? null,
   };
 
-  cachedPublicProfile = result;
+  if (canUseCache) {
+    cachedPublicProfile = result;
+  }
+
   return result;
 }

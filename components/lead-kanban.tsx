@@ -20,6 +20,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Textarea } from "@/components/ui/textarea"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { Checkbox } from "@/components/ui/checkbox"
+
 import {
   Plus,
   Calendar,
@@ -58,6 +60,8 @@ interface Lead {
   lastInteraction: number
   sourceLevel1?: string | null
   sourceLevel2?: string | null
+  businessCategories?: { id: number; name: string }[]
+  businessTypes?: { id: number; name: string; categoryId: number }[]
 
   lastContactAt: string | null
   stage: string
@@ -75,6 +79,7 @@ interface Lead {
   closeReason?: string | null
   interactions: Interaction[]
 }
+
 
 
 
@@ -157,7 +162,70 @@ const stages = [
   { id: "Won", label: "成交" },
 ]
 
-const FALLBACK_SOURCES = ["抖音", "展会", "官网", "转介绍", "电话", "其他"]
+const FALLBACK_SOURCE_CHANNELS: SourceChannel[] = [
+  {
+    key: "ads",
+    label: "广告投放",
+    children: [
+      { key: "ads_douyin", label: "抖音广告" },
+      { key: "ads_wechat_video", label: "视频号广告" },
+      { key: "ads_feed", label: "信息流广告" },
+      { key: "ads_search", label: "搜索广告" },
+    ],
+  },
+  {
+    key: "content_privacy",
+    label: "内容与私域",
+    children: [
+      { key: "content_douyin_live", label: "抖音直播间" },
+      { key: "content_wechat_live", label: "视频号直播" },
+      { key: "content_wechat_article", label: "公众号/内容文章" },
+      { key: "content_other", label: "其他内容平台" },
+    ],
+  },
+  {
+    key: "offline",
+    label: "线下活动",
+    children: [
+      { key: "offline_expo", label: "展会" },
+      { key: "offline_salon", label: "沙龙/培训" },
+      { key: "offline_promotion", label: "地推活动" },
+    ],
+  },
+  {
+    key: "website_forms",
+    label: "官网与表单",
+    children: [
+      { key: "website_form", label: "官网表单" },
+      { key: "landing_page", label: "着陆页" },
+      { key: "miniapp_form", label: "小程序表单" },
+    ],
+  },
+  {
+    key: "partners",
+    label: "渠道合作/代理商",
+    children: [
+      { key: "partner_referral", label: "渠道商推荐" },
+      { key: "partner_joint_campaign", label: "联合活动/联合运营" },
+    ],
+  },
+  {
+    key: "referrals",
+    label: "老客与转介绍",
+    children: [
+      { key: "existing_customer", label: "老客续费/增购引导" },
+      { key: "customer_referral", label: "客户转介绍" },
+    ],
+  },
+  {
+    key: "internal",
+    label: "内部线索",
+    children: [
+      { key: "internal_manual", label: "手工录入" },
+      { key: "internal_transfer", label: "内部转移/共享" },
+    ],
+  },
+]
 
 const FALLBACK_GRADES: GradeDefinition[] = [
   { key: "S", label: "S级（强成交 / 立即跟进）" },
@@ -176,7 +244,19 @@ function parseBudgetLabel(budget: string): number | null {
   return Number.isNaN(value) ? null : value
 }
 
-function LeadCard({ lead, onClick, riskConfig }: { lead: Lead; onClick: () => void; riskConfig: { warningHours: number; dangerHours: number } }) {
+function LeadCard({
+  lead,
+  onClick,
+  riskConfig,
+  sourceLevel1Label,
+  sourceLevel2Label,
+}: {
+  lead: Lead
+  onClick: () => void
+  riskConfig: { warningHours: number; dangerHours: number }
+  sourceLevel1Label: string | null
+  sourceLevel2Label: string | null
+}) {
   const getStatusBadge = () => {
     if (lead.status === "closed") {
       if (lead.closeResult === "won" || lead.closeResult === "成交") {
@@ -253,12 +333,38 @@ function LeadCard({ lead, onClick, riskConfig }: { lead: Lead; onClick: () => vo
         </div>
 
         <div className="flex flex-wrap gap-2">
-          <Badge variant="secondary" className="text-sm font-normal">
-            {lead.source}
-          </Badge>
+          {sourceLevel1Label || sourceLevel2Label ? (
+            <>
+              {sourceLevel1Label ? (
+                <Badge variant="secondary" className="text-sm font-normal">
+                  {sourceLevel1Label}
+                </Badge>
+              ) : null}
+              {sourceLevel2Label ? (
+                <Badge variant="outline" className="text-sm font-normal border-muted-foreground/20">
+                  {sourceLevel2Label}
+                </Badge>
+              ) : null}
+            </>
+          ) : (
+            <Badge variant="secondary" className="text-sm font-normal">
+              {lead.source}
+            </Badge>
+          )}
           <Badge variant="outline" className="text-sm font-normal">
             {lead.budget}
           </Badge>
+          {lead.businessCategories?.map((cat) => (
+            <Badge key={`cat-${cat.id}`} variant="outline" className="text-xs font-medium border-primary/30 text-primary">
+              {cat.name}
+            </Badge>
+          ))}
+          {lead.businessTypes?.map((bt) => (
+            <Badge key={`type-${bt.id}`} variant="secondary" className="text-xs font-medium">
+              {bt.name}
+            </Badge>
+          ))}
+
           {lead.grade && (
             <Badge variant="outline" className="text-sm font-medium border-primary/30 text-primary">
               级别 {lead.grade}
@@ -362,7 +468,10 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     owner: "",
     grade: "",
     tags: "",
+    businessCategoryIds: [] as string[],
+    businessTypeIds: [] as string[],
   })
+
 
 
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null)
@@ -411,11 +520,14 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     contact: "",
     phone: "",
     wechat: "",
-    source: "",
+    sourceLevel1: "",
+    sourceLevel2: "",
     budget: "",
     grade: "",
     tags: "",
+    businessTypeIds: [] as string[],
   })
+
 
   const [searchQuery, setSearchQuery] = useState("")
   const [stageFilter, setStageFilter] = useState<string>("all")
@@ -437,27 +549,24 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
   const [isAdvancedFilterOpen, setIsAdvancedFilterOpen] = useState(false)
 
   const [gradeDefinitions, setGradeDefinitions] = useState<GradeDefinition[]>([])
+  const [businessCategories, setBusinessCategories] = useState<{ id: number; name: string; sort_order?: number }[]>([])
+  const [businessTypes, setBusinessTypes] = useState<{ id: number; name: string; category_id: number; sort_order?: number }[]>([])
+
   const [sourceChannels, setSourceChannels] = useState<SourceChannel[]>([])
 
   const gradeOptions: GradeDefinition[] = gradeDefinitions.length > 0 ? gradeDefinitions : FALLBACK_GRADES
 
   const level1Options: SourceChannel[] = useMemo(
-    () =>
-      sourceChannels.length > 0
-        ? sourceChannels
-        : FALLBACK_SOURCES.map((label) => ({ key: label, label, children: [] as SourceTreeChild[] })),
+    () => (sourceChannels.length > 0 ? sourceChannels : FALLBACK_SOURCE_CHANNELS),
     [sourceChannels],
   )
 
   const sourceOptions: SourceOption[] = useMemo(() => {
-
-    if (sourceChannels.length === 0) {
-      return FALLBACK_SOURCES.map((label) => ({ key: label, label, level1Key: "legacy" }))
-    }
+    const channelsToUse = sourceChannels.length > 0 ? sourceChannels : FALLBACK_SOURCE_CHANNELS
 
     const flattened: SourceOption[] = []
 
-    for (const channel of sourceChannels) {
+    for (const channel of channelsToUse) { 
       const children = channel.children ?? []
       if (children.length === 0) {
         flattened.push({ key: channel.key, label: channel.label, level1Key: channel.key })
@@ -475,17 +584,37 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     return flattened
   }, [sourceChannels])
 
+  const businessTypeGroups = useMemo(
+    () =>
+      businessCategories.map((cat) => ({
+        ...cat,
+        types: businessTypes.filter((t) => t.category_id === cat.id),
+      })),
+    [businessCategories, businessTypes],
+  )
+
+  const businessTypeMap = useMemo(() => {
+    const map = new Map<number, { id: number; name: string; category_id: number; sort_order?: number }>()
+    for (const t of businessTypes) {
+      map.set(t.id, t)
+    }
+    return map
+  }, [businessTypes])
+
   const getChildrenForLevel1 = (level1Key: string): SourceTreeChild[] => {
     const channel = level1Options.find((c) => c.key === level1Key)
     return channel?.children ?? []
   }
 
+
   const resolveSourceLabel = (
     level1Key: string | null | undefined,
     level2Key: string | null | undefined,
   ): string => {
-    if (level1Key && sourceChannels.length > 0) {
-      const channel = sourceChannels.find((c) => c.key === level1Key)
+    const channelsToUse = sourceChannels.length > 0 ? sourceChannels : FALLBACK_SOURCE_CHANNELS
+
+    if (level1Key) {
+      const channel = channelsToUse.find((c) => c.key === level1Key)
       if (channel) {
         if (level2Key) {
           const child = (channel.children ?? []).find((ch) => ch.key === level2Key)
@@ -495,13 +624,38 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
         }
         return channel.label
       }
-    }
 
-    if (sourceChannels.length === 0 && level1Key) {
+      // 如果找不到配置，兜底返回 key（至少保证有值）
       return level1Key
     }
 
     return "其他"
+  }
+
+  const resolveSourceLevel1Label = (level1Key: string | null | undefined): string | null => {
+    if (!level1Key) return null
+
+    const channelsToUse = sourceChannels.length > 0 ? sourceChannels : FALLBACK_SOURCE_CHANNELS
+    const channel = channelsToUse.find((c) => c.key === level1Key)
+
+    return channel?.label ?? level1Key
+  }
+
+  const resolveSourceLevel2Label = (
+    level1Key: string | null | undefined,
+    level2Key: string | null | undefined,
+  ): string | null => {
+    if (!level2Key) return null
+
+    const channelsToUse = sourceChannels.length > 0 ? sourceChannels : FALLBACK_SOURCE_CHANNELS
+
+    if (level1Key) {
+      const channel = channelsToUse.find((c) => c.key === level1Key)
+      const child = (channel?.children ?? []).find((ch) => ch.key === level2Key)
+      return child?.label ?? level2Key
+    }
+
+    return level2Key
   }
 
   const [isLoading, setIsLoading] = useState(true)
@@ -547,10 +701,11 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
           supabase
             .from("leads_secure_view")
             .select(
-              "id, team_id, name, source, stage, status, close_result, close_reason, customer_name, customer_phone, customer_email, budget, last_contact_at, next_contact_at, owner_id, customer_grade, source_level1, source_level2, tags, first_contact_at, locked_until, protected_until, created_at, created_by",
+              "id, team_id, name, source, stage, status, close_result, close_reason, customer_name, customer_phone, customer_email, budget, last_contact_at, next_contact_at, owner_id, customer_grade, source_level1, source_level2, tags, first_contact_at, locked_until, protected_until, created_at, created_by, business_categories, business_types",
             )
             .in("status", ["open", "closed"]) 
             .order("updated_at", { ascending: false }),
+
           supabase.rpc("rpc_get_pipeline_business_rules"),
         ])
 
@@ -620,9 +775,16 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                 source: row.source ?? "其他",
                 sourceLevel1: (row.source_level1 as string | null) ?? null,
                 sourceLevel2: (row.source_level2 as string | null) ?? null,
+                businessCategories: Array.isArray(row.business_categories)
+                  ? (row.business_categories as any[]).map((bc) => ({ id: Number(bc.id), name: String(bc.name) }))
+                  : [],
+                businessTypes: Array.isArray(row.business_types)
+                  ? (row.business_types as any[]).map((bt) => ({ id: Number(bt.id), name: String(bt.name), categoryId: Number(bt.category_id) }))
+                  : [],
 
                 budget:
                   row.budget != null
+
                     ? `¥${Number(row.budget).toLocaleString("zh-CN")}`
                     : "待确认",
                 lastInteraction: daysSinceBase,
@@ -682,7 +844,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       try {
         const supabase = getBrowserSupabaseClient()
 
-        const [gradeResult, sourceResult] = await Promise.all([
+        const [gradeResult, sourceResult, categoryResult, typeResult] = await Promise.all([
           supabase
             .from("settings")
             .select("value")
@@ -693,7 +855,18 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
             .select("value")
             .eq("key", "leads.source_tree")
             .maybeSingle(),
+          supabase
+            .from("business_categories")
+            .select("id, name, sort_order, is_active")
+            .eq("is_active", true)
+            .order("sort_order", { ascending: true }),
+          supabase
+            .from("business_types")
+            .select("id, name, category_id, sort_order, is_active")
+            .eq("is_active", true)
+            .order("sort_order", { ascending: true }),
         ])
+
 
         if (!isMounted) {
           return
@@ -736,9 +909,31 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
             }
           }
         }
+
+        if (!categoryResult.error && Array.isArray(categoryResult.data)) {
+          setBusinessCategories(
+            (categoryResult.data as any[]).map((row) => ({
+              id: Number(row.id),
+              name: String(row.name),
+              sort_order: Number(row.sort_order ?? 100),
+            })),
+          )
+        }
+
+        if (!typeResult.error && Array.isArray(typeResult.data)) {
+          setBusinessTypes(
+            (typeResult.data as any[]).map((row) => ({
+              id: Number(row.id),
+              name: String(row.name),
+              category_id: Number(row.category_id),
+              sort_order: Number(row.sort_order ?? 100),
+            })),
+          )
+        }
       } catch (error) {
         console.error("Failed to load lead configs", error)
       }
+
     }
 
     loadLeadConfigs()
@@ -860,14 +1055,20 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
         )
 
         const normalized: SalesRep[] =
-          (data ?? []).map((row: any) => ({
-            id: row.id as string,
-            name: (row.full_name as string) ?? "未命名成员",
-            activeLeads: 0,
-            teamId: (row.team_id as number | null) ?? null,
-            avatarUrl: (row.avatar_url as string | null) ?? null,
-            isExcludedForAnalytics: excludedProfileIds.has(row.id as string),
-          }))
+          (data ?? []).map((row: any) => {
+            const teamId = (row.team_id as number | null) ?? null
+            const isExcluded = excludedProfileIds.has(row.id as string) || (teamId != null && excludedTeamIds.has(teamId))
+
+            return {
+              id: row.id as string,
+              name: (row.full_name as string) ?? "未命名成员",
+              activeLeads: 0,
+              teamId,
+              avatarUrl: (row.avatar_url as string | null) ?? null,
+              isExcludedForAnalytics: isExcluded,
+            }
+          })
+
 
 
         setSalesReps(normalized)
@@ -1112,7 +1313,15 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       return
     }
 
+    if (!newLead.businessTypeIds || newLead.businessTypeIds.length === 0) {
+      toast.error("请选择业务类型", {
+        description: "至少选择一个具体业务子类型",
+      })
+      return
+    }
+
     const trimmedBudget = newLead.budget.trim()
+
 
     let budgetValue: number | null = null
 
@@ -1141,9 +1350,19 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       }
 
       const canAssignLeads = mePermissions?.canAssignLeads ?? false
-      const ownerId = canAssignLeads && newLead.owner ? newLead.owner : profile.id
+      const isOwnerSelectable = canAssignLeads && newLead.owner && ownerOptions.some((rep) => rep.id === newLead.owner)
+      const ownerId = isOwnerSelectable ? newLead.owner : profile.id
+
 
       const sourceLabel = resolveSourceLabel(newLead.sourceLevel1, newLead.sourceLevel2 || null)
+      const selectedTypeIds = newLead.businessTypeIds.map((id) => Number(id)).filter((v) => Number.isFinite(v))
+      const resolvedCategoryIds = Array.from(
+        new Set(
+          selectedTypeIds
+            .map((id) => businessTypeMap.get(id)?.category_id)
+            .filter((id): id is number => id != null),
+        ),
+      )
 
       const payload: Record<string, unknown> = {
         team_id: profile.teamId,
@@ -1160,6 +1379,8 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
         customer_grade: newLead.grade || null,
         source_level1: newLead.sourceLevel1,
         source_level2: newLead.sourceLevel2 || null,
+        business_type_ids: selectedTypeIds,
+        business_category_ids: resolvedCategoryIds,
         tags:
 
 
@@ -1168,6 +1389,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
             .map((tag) => tag.trim())
             .filter((tag) => tag.length > 0),
       }
+
 
       const { data, error } = await supabase.rpc("rpc_lead_create", {
         payload,
@@ -1199,6 +1421,14 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
           source: sourceLabelForLocal,
           sourceLevel1: newLead.sourceLevel1 || null,
           sourceLevel2: newLead.sourceLevel2 || null,
+          businessTypes: selectedTypeIds.map((id) => {
+            const found = businessTypeMap.get(id)
+            return found ? { id: found.id, name: found.name, categoryId: found.category_id } : { id, name: `类型 #${id}`, categoryId: -1 }
+          }),
+          businessCategories: resolvedCategoryIds.map((cid) => {
+            const found = businessCategories.find((c) => c.id === cid)
+            return { id: cid, name: found?.name ?? `分类 #${cid}` }
+          }),
           budget: budgetLabel,
           lastInteraction: 0,
           lastContactAt: new Date().toISOString(),
@@ -1227,7 +1457,10 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
         owner: "",
         grade: "",
         tags: "",
+        businessCategoryIds: [],
+        businessTypeIds: [],
       })
+
 
       setDialogOpen(false)
       toast.success("线索添加成功", {
@@ -1562,13 +1795,16 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       contact: selectedLead.contact,
       phone: selectedLead.phone,
       wechat: selectedLead.wechat,
-      source: selectedLead.source,
+      sourceLevel1: selectedLead.sourceLevel1 ?? "",
+      sourceLevel2: selectedLead.sourceLevel2 ?? "",
       budget: budgetDigits || "",
       grade: selectedLead.grade || "",
       tags: (selectedLead.tags ?? []).join(","),
+      businessTypeIds: (selectedLead.businessTypes ?? []).map((t) => String(t.id)),
     })
     setIsEditing(true)
   }
+
 
   const handleCancelEdit = () => {
     if (!selectedLead) return
@@ -1580,13 +1816,16 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       contact: selectedLead.contact,
       phone: selectedLead.phone,
       wechat: selectedLead.wechat,
-      source: selectedLead.source,
+      sourceLevel1: selectedLead.sourceLevel1 ?? "",
+      sourceLevel2: selectedLead.sourceLevel2 ?? "",
       budget: budgetDigits || "",
       grade: selectedLead.grade || "",
       tags: (selectedLead.tags ?? []).join(","),
+      businessTypeIds: (selectedLead.businessTypes ?? []).map((t) => String(t.id)),
     })
     setIsEditing(false)
   }
+
 
   const handleSaveLeadDetails = async () => {
     if (!selectedLead) return
@@ -1601,6 +1840,13 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     if (!editLead.company.trim() || !editLead.phone.trim()) {
       toast.error("请填写必填字段", {
         description: "公司名称和联系电话为必填项",
+      })
+      return
+    }
+
+    if (!editLead.sourceLevel1) {
+      toast.error("请选择一级渠道", {
+        description: "线索来源的一级渠道为必选项",
       })
       return
     }
@@ -1620,8 +1866,10 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
     // 只提交实际发生变化的字段，避免无意义触发敏感字段权限校验
     const patch: Record<string, unknown> = {}
+    let resolvedCategoryIdsForEdit: number[] = []
 
     const companyTrimmed = editLead.company.trim()
+
     if (companyTrimmed !== selectedLead.company) {
       patch.name = companyTrimmed
     }
@@ -1641,14 +1889,15 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       patch.wechat = wechatTrimmed || null
     }
 
-    const sourceValue = editLead.source
-    if (sourceValue && sourceValue !== selectedLead.sourceLevel2) {
-      const selectedOption = sourceOptions.find((option) => option.key === sourceValue)
-      if (selectedOption) {
-        patch.source = selectedOption.label
-        patch.source_level1 = selectedOption.level1Key
-        patch.source_level2 = selectedOption.key
-      }
+    const nextSourceLevel1 = editLead.sourceLevel1
+    const nextSourceLevel2 = editLead.sourceLevel2 || ""
+    const prevSourceLevel1 = selectedLead.sourceLevel1 ?? ""
+    const prevSourceLevel2 = selectedLead.sourceLevel2 ?? ""
+
+    if (nextSourceLevel1 !== prevSourceLevel1 || nextSourceLevel2 !== prevSourceLevel2) {
+      patch.source = resolveSourceLabel(nextSourceLevel1, nextSourceLevel2 || null)
+      patch.source_level1 = nextSourceLevel1
+      patch.source_level2 = nextSourceLevel2 ? nextSourceLevel2 : null
     }
 
 
@@ -1667,7 +1916,29 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       patch.tags = parsedTags
     }
 
+    const nextTypeIds = editLead.businessTypeIds.map((id) => Number(id)).filter((v) => Number.isFinite(v))
+    const currentTypeIds = (selectedLead.businessTypes ?? []).map((bt) => bt.id)
+    const hasBusinessTypeChanged = nextTypeIds.join(",") !== currentTypeIds.join(",")
+    if (hasBusinessTypeChanged) {
+      if (nextTypeIds.length === 0) {
+        toast.error("业务类型不能为空", { description: "请至少选择一个业务子类型" })
+        setIsSavingEdit(false)
+        return
+      }
+      resolvedCategoryIdsForEdit = Array.from(
+        new Set(
+          nextTypeIds
+            .map((id) => businessTypeMap.get(id)?.category_id)
+            .filter((id): id is number => id != null),
+        ),
+      )
+      patch.business_type_ids = nextTypeIds
+      patch.business_category_ids = resolvedCategoryIdsForEdit
+    }
+
+
     if (budgetValue != null) {
+
       const originalBudgetDigits = selectedLead.budget.replace(/[^\d.-]/g, "")
       const originalBudget = originalBudgetDigits ? Number(originalBudgetDigits.replace(/,/g, "")) : null
       const hasBudgetChanged = originalBudget == null || originalBudget !== budgetValue
@@ -1692,13 +1963,33 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       const budgetLabel =
         budgetValue != null ? `¥${budgetValue.toLocaleString("zh-CN")}` : selectedLead.budget
 
-      const updatedSourceLabel =
-        editLead.source
-          ? sourceOptions.find((option) => option.key === editLead.source)?.label || selectedLead.source
-          : selectedLead.source
+      const updatedSourceLabel = typeof patch.source === "string" ? (patch.source as string) : selectedLead.source
+      const updatedSourceLevel1 =
+        typeof patch.source_level1 === "string" ? (patch.source_level1 as string) : selectedLead.sourceLevel1
+      const updatedSourceLevel2 =
+        patch.source_level2 === null
+          ? null
+          : typeof patch.source_level2 === "string"
+            ? (patch.source_level2 as string)
+            : selectedLead.sourceLevel2
+
+      const updatedBusinessTypes = hasBusinessTypeChanged
+        ? nextTypeIds.map((id) => {
+            const found = businessTypeMap.get(id)
+            return found ? { id: found.id, name: found.name, categoryId: found.category_id } : { id, name: `类型 #${id}`, categoryId: -1 }
+          })
+        : selectedLead.businessTypes ?? []
+
+      const updatedBusinessCategories = hasBusinessTypeChanged
+        ? (resolvedCategoryIdsForEdit ?? []).map((cid) => {
+            const found = businessCategories.find((c) => c.id === cid)
+            return { id: cid, name: found?.name ?? `分类 #${cid}` }
+          })
+        : selectedLead.businessCategories ?? []
 
       setLeads((prev) =>
         prev.map((l) =>
+
           l.id === selectedLead.id
             ? {
                 ...l,
@@ -1707,11 +1998,16 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                 phone: editLead.phone.trim(),
                 wechat: editLead.wechat.trim() || l.wechat,
                 source: updatedSourceLabel,
+                sourceLevel1: updatedSourceLevel1 ?? null,
+                sourceLevel2: updatedSourceLevel2 ?? null,
                 budget: budgetLabel,
+                businessTypes: updatedBusinessTypes,
+                businessCategories: updatedBusinessCategories,
               }
             : l,
         ),
       )
+
 
       setSelectedLead((prev) =>
         prev
@@ -1722,10 +2018,15 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
               phone: editLead.phone.trim(),
               wechat: editLead.wechat.trim() || prev.wechat,
               source: updatedSourceLabel,
+              sourceLevel1: updatedSourceLevel1 ?? null,
+              sourceLevel2: updatedSourceLevel2 ?? null,
               budget: budgetLabel,
+              businessTypes: updatedBusinessTypes,
+              businessCategories: updatedBusinessCategories,
             }
           : prev,
       )
+
 
 
       // 为了保证列表与详情和看板完全同步，这里在本地更新后触发一次数据重载
@@ -1941,9 +2242,10 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
             </Button>
           </DialogTrigger>
 
-          <DialogContent>
+          <DialogContent className="max-h-[85vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>新增线索</DialogTitle>
+
             </DialogHeader>
             <div className="space-y-4 py-4">
               <div className="space-y-2">
@@ -2026,6 +2328,55 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
               </Select>
             </div>
 
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <Label>业务类型 *</Label>
+                <p className="text-xs text-muted-foreground">至少选择一个子类型</p>
+              </div>
+              <div className="space-y-3 rounded-md border border-muted-foreground/20 p-3 max-h-72 overflow-y-auto">
+                {businessTypeGroups.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">暂无业务类型，请先在设置中配置</p>
+                ) : (
+                  businessTypeGroups.map((group) => (
+                    <div key={group.id} className="space-y-2">
+                      <div className="text-sm font-semibold text-foreground/80">{group.name}</div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {group.types.length === 0 ? (
+                          <p className="text-xs text-muted-foreground">该分类下暂无子类型</p>
+                        ) : (
+                          group.types.map((type) => {
+                            const checked = newLead.businessTypeIds.includes(String(type.id))
+                            return (
+                              <label
+                                key={type.id}
+                                className="flex items-center gap-2 rounded-md border border-muted-foreground/20 px-3 py-2 hover:border-primary/40"
+                              >
+                                <Checkbox
+                                  checked={checked}
+                                  onCheckedChange={(value) => {
+                                    setNewLead((prev) => {
+                                      const next = new Set(prev.businessTypeIds)
+                                      if (value) {
+                                        next.add(String(type.id))
+                                      } else {
+                                        next.delete(String(type.id))
+                                      }
+                                      return { ...prev, businessTypeIds: Array.from(next) }
+                                    })
+                                  }}
+                                />
+                                <span className="text-sm">{type.name}</span>
+                              </label>
+                            )
+                          })
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
             <div className="space-y-2">
               <Label htmlFor="grade">客户级别</Label>
               <Select value={newLead.grade} onValueChange={(value) => setNewLead({ ...newLead, grade: value })}>
@@ -2044,6 +2395,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
             <div className="space-y-2">
               <Label htmlFor="tags">标签</Label>
+
               <Input
                 id="tags"
                 value={newLead.tags}
@@ -2063,12 +2415,13 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                     <SelectValue placeholder={canAssignLeads ? "选择负责人（默认为当前登录人）" : "默认使用当前登录人"} />
                   </SelectTrigger>
                   <SelectContent>
-                    {salesReps.map((rep) => (
+                    {ownerOptions.map((rep) => (
                       <SelectItem key={rep.id} value={rep.id}>
                         {rep.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
+
                 </Select>
               </div>
             </div>
@@ -2492,7 +2845,14 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
               </div>
               <div className="space-y-4 min-h-[200px] md:min-h-[400px] p-2 rounded-xl border border-muted/20">
                 {stageLeads.map((lead) => (
-                  <LeadCard key={lead.id} lead={lead} onClick={() => handleLeadClick(lead)} riskConfig={riskConfigRef.current} />
+                  <LeadCard
+                    key={lead.id}
+                    lead={lead}
+                    onClick={() => handleLeadClick(lead)}
+                    riskConfig={riskConfigRef.current}
+                    sourceLevel1Label={resolveSourceLevel1Label(lead.sourceLevel1)}
+                    sourceLevel2Label={resolveSourceLevel2Label(lead.sourceLevel1, lead.sourceLevel2)}
+                  />
                 ))}
 
               </div>
@@ -2854,27 +3214,85 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                       <p className="text-base font-bold text-foreground">{selectedLead.wechat || "-"}</p>
                     )}
                   </div>
-                  <div className="space-y-1.5">
+                  <div className="space-y-1.5 col-span-2">
                     <p className="text-sm font-semibold text-muted-foreground">来源渠道</p>
-                    {isEditing ? (
-                      <Select
-                        value={editLead.source}
-                        onValueChange={(value) => setEditLead({ ...editLead, source: value })}
-                      >
-                        <SelectTrigger className="h-9 text-sm">
-                          <SelectValue placeholder="选择来源" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {sourceOptions.map((option) => (
-                            <SelectItem key={option.key} value={option.key}>
-                              {option.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
 
+                    {isEditing ? (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full">
+                        <div className="min-w-0">
+                          <Select
+                            value={editLead.sourceLevel1}
+                            onValueChange={(value) =>
+                              setEditLead((prev) => ({
+                                ...prev,
+                                sourceLevel1: value,
+                                sourceLevel2: "",
+                              }))
+                            }
+                          >
+                            <SelectTrigger className="h-9 text-sm w-full min-w-0">
+                              <SelectValue placeholder="一级渠道 *" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {level1Options.map((channel) => (
+                                <SelectItem key={channel.key} value={channel.key}>
+                                  {channel.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div className="min-w-0">
+                          <Select
+                            value={editLead.sourceLevel2 ? editLead.sourceLevel2 : "__none__"}
+                            onValueChange={(value) =>
+                              setEditLead((prev) => ({
+                                ...prev,
+                                sourceLevel2: value === "__none__" ? "" : value,
+                              }))
+                            }
+                            disabled={getChildrenForLevel1(editLead.sourceLevel1).length === 0}
+                          >
+                            <SelectTrigger className="h-9 text-sm w-full min-w-0">
+                              <SelectValue
+                                placeholder={
+                                  getChildrenForLevel1(editLead.sourceLevel1).length === 0
+                                    ? "二级渠道（无可选）"
+                                    : "二级渠道（可选）"
+                                }
+                              />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__none__">不选择二级渠道</SelectItem>
+                              {getChildrenForLevel1(editLead.sourceLevel1).map((child) => (
+                                <SelectItem key={child.key} value={child.key}>
+                                  {child.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
                     ) : (
-                      <Badge variant="secondary" className="text-sm font-medium h-7">{selectedLead.source}</Badge>
+                      <div className="flex flex-wrap gap-1.5">
+                        {resolveSourceLevel1Label(selectedLead.sourceLevel1) ? (
+                          <Badge variant="secondary" className="text-sm font-medium h-7">
+                            {resolveSourceLevel1Label(selectedLead.sourceLevel1)}
+                          </Badge>
+                        ) : null}
+                        {resolveSourceLevel2Label(selectedLead.sourceLevel1, selectedLead.sourceLevel2) ? (
+                          <Badge variant="outline" className="text-sm font-medium h-7 border-muted-foreground/20">
+                            {resolveSourceLevel2Label(selectedLead.sourceLevel1, selectedLead.sourceLevel2)}
+                          </Badge>
+                        ) : null}
+                        {!resolveSourceLevel1Label(selectedLead.sourceLevel1) &&
+                        !resolveSourceLevel2Label(selectedLead.sourceLevel1, selectedLead.sourceLevel2) ? (
+                          <Badge variant="secondary" className="text-sm font-medium h-7">
+                            {selectedLead.source}
+                          </Badge>
+                        ) : null}
+                      </div>
                     )}
                   </div>
                   <div className="space-y-1.5">
@@ -2890,7 +3308,66 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                       <p className="text-lg font-bold text-primary tracking-tight">{selectedLead.budget}</p>
                     )}
                   </div>
+
+                  <div className="space-y-1.5 col-span-2">
+                    <p className="text-sm font-semibold text-muted-foreground">业务类型</p>
+                    {isEditing ? (
+                      <div className="space-y-2 rounded-md border border-muted-foreground/20 p-3 max-h-64 overflow-y-auto">
+                        {businessTypeGroups.length === 0 ? (
+                          <p className="text-xs text-muted-foreground">暂无业务类型，请先在设置中配置</p>
+                        ) : (
+                          businessTypeGroups.map((group) => (
+                            <div key={group.id} className="space-y-1">
+                              <div className="text-xs font-semibold text-foreground/80">{group.name}</div>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                {group.types.length === 0 ? (
+                                  <p className="text-xs text-muted-foreground">该分类下暂无子类型</p>
+                                ) : (
+                                  group.types.map((type) => {
+                                    const checked = editLead.businessTypeIds.includes(String(type.id))
+                                    return (
+                                      <label
+                                        key={type.id}
+                                        className="flex items-center gap-2 rounded-md border border-muted-foreground/20 px-3 py-2 hover:border-primary/40"
+                                      >
+                                        <Checkbox
+                                          checked={checked}
+                                          onCheckedChange={(value) => {
+                                            setEditLead((prev) => {
+                                              const next = new Set(prev.businessTypeIds)
+                                              if (value) {
+                                                next.add(String(type.id))
+                                              } else {
+                                                next.delete(String(type.id))
+                                              }
+                                              return { ...prev, businessTypeIds: Array.from(next) }
+                                            })
+                                          }}
+                                        />
+                                        <span className="text-sm">{type.name}</span>
+                                      </label>
+                                    )
+                                  })
+                                )}
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    ) : selectedLead.businessTypes && selectedLead.businessTypes.length > 0 ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {selectedLead.businessTypes.map((bt) => (
+                          <Badge key={bt.id} variant="secondary" className="text-xs font-medium h-6">
+                            {bt.name}
+                          </Badge>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground font-medium">未设置业务类型</p>
+                    )}
+                  </div>
                   <div className="space-y-1.5">
+
                     <p className="text-sm font-semibold text-muted-foreground">客户分级</p>
                     {isEditing ? (
                       <Select
@@ -3104,13 +3581,17 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                 </SelectTrigger>
                 <SelectContent>
                   {salesReps
-                    .filter((rep) => rep.teamId != null && String(rep.teamId) === transferTargetTeamId)
+                    .filter(
+                      (rep) =>
+                        !rep.isExcludedForAnalytics && rep.teamId != null && String(rep.teamId) === transferTargetTeamId,
+                    )
                     .map((rep) => (
                       <SelectItem key={rep.id} value={rep.id}>
                         {rep.name}
                       </SelectItem>
                     ))}
                 </SelectContent>
+
               </Select>
             </div>
             <div className="space-y-2">

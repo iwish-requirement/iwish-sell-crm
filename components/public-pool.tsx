@@ -120,6 +120,31 @@ export function PublicPool() {
   const [importDialogOpen, setImportDialogOpen] = useState(false)
   const [assignDialogOpen, setAssignDialogOpen] = useState(false)
   const [claimingLeadId, setClaimingLeadId] = useState<string | null>(null)
+  const [defaultBusinessTypeId, setDefaultBusinessTypeId] = useState<number | null>(null)
+  const [defaultBusinessCategoryIds, setDefaultBusinessCategoryIds] = useState<number[]>([])
+
+  useEffect(() => {
+    const supabase = getBrowserSupabaseClient()
+    async function loadDefaultBusinessType() {
+      try {
+        const { data, error } = await supabase
+          .from("business_types")
+          .select("id, category_id, sort_order")
+          .eq("is_active", true)
+          .order("sort_order", { ascending: true })
+          .limit(1)
+        if (!error && data && data.length > 0) {
+          setDefaultBusinessTypeId(Number(data[0].id))
+          setDefaultBusinessCategoryIds(data[0].category_id != null ? [Number(data[0].category_id)] : [])
+        }
+      } catch (err) {
+        console.error("Failed to load default business type for public pool", err)
+      }
+    }
+    loadDefaultBusinessType()
+  }, [])
+
+
   const [selectedLeads, setSelectedLeads] = useState<string[]>([])
   const [assignToRep, setAssignToRep] = useState("")
   const [assignmentNote, setAssignmentNote] = useState("")
@@ -892,7 +917,8 @@ export function PublicPool() {
                     owner_id: profile.id,
                     name: company,
                     source,
-                    stage: "new",
+                    stage: "L1",
+
                     status: "pool",
                     customer_name: contact,
                     customer_phone: phone,
@@ -902,9 +928,21 @@ export function PublicPool() {
                     payload.budget = budget
                   }
 
+                  if (defaultBusinessTypeId) {
+                    payload.business_type_ids = [defaultBusinessTypeId]
+                    payload.business_category_ids = defaultBusinessCategoryIds
+                  } else {
+                    toast.error("缺少业务类型配置", {
+                      description: "请在系统设置中新增至少一个业务子类型后再导入",
+                    })
+                    failedCount += 1
+                    continue
+                  }
+
                   const { error: createError } = await supabase.rpc("rpc_lead_create", {
                     payload,
                   })
+
 
                   if (createError) {
                     console.error("Failed to create lead from import", createError)
