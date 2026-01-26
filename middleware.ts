@@ -63,11 +63,17 @@ function resolveSupabaseAnonKey(): string {
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
+  // 企微网关回调不依赖用户登录，通过专用 header token 做鉴权
+  if (pathname === '/api/wecom/bind-callback') {
+    return NextResponse.next()
+  }
+
   if (isPublicPath(pathname)) {
     return NextResponse.next()
   }
 
   const response = NextResponse.next()
+
 
   const supabase = createServerClient(resolveSupabaseUrl(), resolveSupabaseAnonKey(), {
     cookies: {
