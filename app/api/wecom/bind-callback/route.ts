@@ -14,6 +14,23 @@ function getCallbackToken(): string {
   return (process.env.YOUR_BIND_CALLBACK_TOKEN ?? process.env.WECOM_GATEWAY_BIND_CALLBACK_TOKEN ?? "").trim()
 }
 
+async function handleBind(bindToken: string, wecomUserId: string) {
+  const admin = createAdminSupabaseClient()
+
+  const { error } = await admin.rpc("rpc_wecom_bind_callback", {
+    p_bind_token: bindToken,
+    p_wecom_user_id: wecomUserId,
+  })
+
+  if (error) {
+    const message = error.message || "bind_callback_failed"
+    const status = message.includes("ERR_") ? 400 : 500
+    return NextResponse.json({ ok: false, error: message }, { status })
+  }
+
+  return NextResponse.json({ ok: true })
+}
+
 export async function POST(req: NextRequest) {
   try {
     const headerToken = req.headers.get("x-wecom-gateway-token") ?? ""
@@ -39,24 +56,43 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "missing_wecomUserId" }, { status: 400 })
     }
 
-    const admin = createAdminSupabaseClient()
-
-    const { error } = await admin.rpc("rpc_wecom_bind_callback", {
-      p_bind_token: bindToken,
-      p_wecom_user_id: wecomUserId,
-    })
-
-    if (error) {
-      // map RPC error message for gateway
-      const message = error.message || "bind_callback_failed"
-      const status = message.includes("ERR_") ? 400 : 500
-      return NextResponse.json({ ok: false, error: message }, { status })
-    }
-
-    return NextResponse.json({ ok: true })
+    return handleBind(bindToken, wecomUserId)
   } catch (err: any) {
     const message = String(err?.message ?? "")
-    console.error("/api/wecom/bind-callback failed", err)
+    console.error("/api/wecom/bind-callback POST failed", err)
+    return NextResponse.json({ ok: false, error: "unexpected", detail: message }, { status: 500 })
+  }
+}
+
+export async function GET(req: NextRequest) {
+  try {
+    const headerToken = req.headers.get("x-wecom-gateway-token") ?? ""
+    const expectedToken = getCallbackToken()
+
+    if (!expectedToken) {
+      return NextResponse.json({ ok: false, error: "server_misconfigured" }, { status: 500 })
+    }
+
+    if (!headerToken || headerToken !== expectedToken) {
+      return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 })
+    }
+
+    const url = new URL(req.url)
+    const bindToken = String(url.searchParams.get("bindToken") ?? "").trim()
+    const wecomUserId = String(url.searchParams.get("wecomUserId") ?? "").trim()
+
+    if (!bindToken) {
+      return NextResponse.json({ ok: false, error: "missing_bindToken" }, { status: 400 })
+    }
+
+    if (!wecomUserId) {
+      return NextResponse.json({ ok: false, error: "missing_wecomUserId" }, { status: 400 })
+    }
+
+    return handleBind(bindToken, wecomUserId)
+  } catch (err: any) {
+    const message = String(err?.message ?? "")
+    console.error("/api/wecom/bind-callback GET failed", err)
     return NextResponse.json({ ok: false, error: "unexpected", detail: message }, { status: 500 })
   }
 }
