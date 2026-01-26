@@ -71,13 +71,17 @@ export async function GET(req: NextRequest) {
         {
           ok: false,
           error: "gateway_failed",
-          detail: gatewayJson?.error ?? gatewayJson?.errmsg ?? gatewayJson,
+          detail: {
+            status: gatewayRes.status,
+            payload: gatewayJson,
+          },
         },
         { status: 502 },
       )
     }
 
     return NextResponse.json({ ok: true, url: String(gatewayJson.url) })
+
   } catch (err: any) {
     console.error("/api/wecom/bind/start failed", err)
     return NextResponse.json(
