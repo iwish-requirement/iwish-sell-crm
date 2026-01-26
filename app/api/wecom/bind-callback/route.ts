@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
 
 import { createAdminSupabaseClient } from "@/lib/supabase/admin"
 
@@ -14,8 +14,7 @@ function getCallbackToken(): string {
   return (process.env.YOUR_BIND_CALLBACK_TOKEN ?? process.env.WECOM_GATEWAY_BIND_CALLBACK_TOKEN ?? "").trim()
 }
 
-
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   try {
     const headerToken = req.headers.get("x-wecom-gateway-token") ?? ""
     const expectedToken = getCallbackToken()
@@ -61,4 +60,3 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "unexpected", detail: message }, { status: 500 })
   }
 }
-
