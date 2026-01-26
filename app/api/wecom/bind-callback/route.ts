@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "missing_wecomUserId" }, { status: 400 })
     }
 
-    return handleBind(bindToken, wecomUserId)
+    return await handleBind(bindToken, wecomUserId)
   } catch (err: any) {
     const message = String(err?.message ?? "")
     console.error("/api/wecom/bind-callback POST failed", err)
@@ -89,7 +89,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "missing_wecomUserId" }, { status: 400 })
     }
 
-    return handleBind(bindToken, wecomUserId)
+    return await handleBind(bindToken, wecomUserId)
   } catch (err: any) {
     const message = String(err?.message ?? "")
     console.error("/api/wecom/bind-callback GET failed", err)
