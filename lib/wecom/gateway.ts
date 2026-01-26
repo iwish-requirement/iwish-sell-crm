@@ -11,7 +11,8 @@ type WecomGatewayResponse = {
   detail?: any
 }
 
-const WECOM_GATEWAY_BASE_URL = "https://requirement.iwishweb.com"
+const WECOM_GATEWAY_BASE_URL = (process.env.WECOM_GATEWAY_BASE_URL ?? "https://requirement.iwishweb.com").replace(/\/$/, "")
+
 
 function getSystemKey(): string {
   return (

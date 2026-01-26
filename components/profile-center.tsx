@@ -19,11 +19,6 @@ type WecomProfileState = {
   boundAt: string | null
 }
 
-const WECOM_GATEWAY_BASE_URL = "https://requirement.iwishweb.com"
-
-function getSystemKey(): string {
-  return (process.env.NEXT_PUBLIC_SYSTEM_KEY ?? "").trim() || "crm"
-}
 
 function formatDateTime(value: string | null): string {
   if (!value) return "-"
@@ -120,37 +115,17 @@ export function ProfileCenter() {
     try {
       setIsStartingBind(true)
 
-      const tokenRes = await fetch("/api/wecom/bind-token", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ ttlMinutes: 10 }),
-      })
+      const res = await fetch("/api/wecom/bind/start")
+      const json = (await res.json().catch(() => null)) as any
 
-      const tokenJson = (await tokenRes.json()) as any
-      if (!tokenRes.ok || !tokenJson?.ok) {
-        throw new Error(String(tokenJson?.error ?? tokenJson?.detail ?? "生成 bindToken 失败"))
+      const url = json && typeof json.url === "string" ? json.url.trim() : ""
+
+      if (!res.ok || !url) {
+        const message = String(json?.error ?? json?.detail ?? "网关返回异常")
+        throw new Error(message)
       }
 
-      const bindToken = String(tokenJson.bindToken ?? "").trim()
-      if (!bindToken) {
-        throw new Error("生成 bindToken 失败")
-      }
-
-      const systemKey = encodeURIComponent(getSystemKey())
-      const returnTo = encodeURIComponent("/profile")
-
-      const startUrl = `${WECOM_GATEWAY_BASE_URL}/api/wecom-gateway/bind/start?systemKey=${systemKey}&bindToken=${encodeURIComponent(
-        bindToken,
-      )}&returnTo=${returnTo}`
-
-      const res = await fetch(startUrl, { method: "GET" })
-      const json = (await res.json()) as any
-
-      if (!res.ok || !json?.url) {
-        throw new Error(String(json?.error ?? "网关返回异常"))
-      }
-
-      window.location.href = String(json.url)
+      window.location.href = url
     } catch (err: any) {
       const message = String(err?.message ?? "")
       toast.error("发起企微绑定失败", { description: message || "请稍后重试" })
@@ -158,6 +133,7 @@ export function ProfileCenter() {
       setIsStartingBind(false)
     }
   }
+
 
   const statusInfo = getStatusLabel(profile?.bindStatus ?? null)
 
