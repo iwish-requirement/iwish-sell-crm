@@ -1,6 +1,6 @@
 import { createServerClient } from "@supabase/ssr"
 import type { SupabaseClient } from "@supabase/supabase-js"
-import { cookies } from "next/headers"
+import type { NextRequest } from "next/server"
 
 function resolveSupabaseUrl(): string {
   const url =
@@ -34,20 +34,17 @@ function resolveSupabaseAnonKey(): string {
   return anonKey
 }
 
-
-export function createRouteHandlerClient(): SupabaseClient {
-  const cookieStore = cookies()
+// Cloudflare Pages / Edge 环境下，next/headers 的 cookies() 兼容性不稳定。
+// 这里改为基于 NextRequest.cookies 读取登录态 cookie，避免出现 “xxx.get is not a function”。
+export function createRouteHandlerClient(req: NextRequest): SupabaseClient {
   return createServerClient(resolveSupabaseUrl(), resolveSupabaseAnonKey(), {
     cookies: {
       get(name: string) {
-        return cookieStore.get(name)?.value
+        return req.cookies.get(name)?.value
       },
-      set(name: string, value: string, options: any) {
-        cookieStore.set({ name, value, ...options })
-      },
-      remove(name: string, options: any) {
-        cookieStore.set({ name, value: "", ...options, maxAge: 0 })
-      },
+      // 本接口只需要读取 cookie 来获取当前用户；不需要写回 cookie
+      set(_name: string, _value: string, _options: any) {},
+      remove(_name: string, _options: any) {},
     },
   })
 }
