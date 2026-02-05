@@ -3,6 +3,50 @@
 > 本文件用于记录 AI 助手在本仓库内做出的重要结构/逻辑变更，方便你审计、回顾与回滚。
 > 按时间倒序追加；同一天多次修改可在同一日期下追加小节。
 
+## 2026-02-02
+
+### wecom-renewal-notify: 续费预警企微自动通知 + 设置开关
+
+**变更点**
+- 新增迁移 `supabase/migrations/039_wecom_notifications_and_renewal_job.sql`：
+  - 定义 `iwish.get_wecom_notifications_settings()` 与公开包装 `public.rpc_get_wecom_notifications_settings()`，从 `public.settings` 的 `wecom.notifications` 配置中读取 WeCom 通知相关设置，并提供 `renewal_upcoming.enabled/days_before` 两个字段，未配置时默认开启且提前 30 天；
+  - 新增 `iwish.get_renewal_upcoming_wecom_targets()` 与 `public.rpc_get_renewal_upcoming_wecom_targets()`：按当前日期 + 提前天数计算目标到期日，筛选 `contracts` 中 `status='active'` 且在该日到期的合同，关联 `leads` 与 `profiles`，仅返回负责人已绑定企微(`wecom_bind_status='bound'` 且有 `wecom_user_id`) 且最近一次 `wecom_last_notified_at` 早于今天的记录，并按负责人聚合合同列表，以 JSON 形式返回给调用方；
+  - 新增 `iwish.rpc_wecom_mark_notified(p_profile_ids uuid[])` 与公开包装 `public.rpc_wecom_mark_notified(uuid[])`，用于在发送通知成功后批量更新对应 `profiles.wecom_last_notified_at = now()`，避免同一负责人在短时间内被重复提醒。
+- 新增 Edge API 路由 `/api/jobs/renewal-wecom-notify`：
+  - 使用 `SUPABASE_SERVICE_ROLE_KEY` 通过 `createAdminSupabaseClient` 调用 `rpc_get_renewal_upcoming_wecom_targets` 获取“今天应发送续费预警”的负责人及其合同列表；
+  - 通过 `x-job-token` 请求头 + 环境变量 `RENEWAL_WECHAT_JOB_TOKEN/WECOM_RENEWAL_JOB_TOKEN` 做最小化的 job 调用鉴权，防止外部未授权触发；
+  - 对每个负责人生成一条聚合文案（包含客户名称、合同编号、到期日期、金额，并附上续费中心链接 `buildPublicUrl("/renewals")`），调用 `sendWecomGatewayText` 通过统一网关发送企微文本消息；
+  - 对发送成功的负责人收集 `profile_id` 列表，最后调用 `rpc_wecom_mark_notified` 更新 `wecom_last_notified_at`；接口返回 `ok/notifiedProfiles/totalContracts` 便于运维在外部 Cron 或监控系统中查看执行效果。
+- 更新 `components/system-settings.tsx` 中的 `BusinessRulesTab`：
+  - 在原有“公海池掉落天数 + 预警/风险阈值”基础上，新增本地状态 `renewalNotifyEnabled` 与 `renewalNotifyDaysBefore`，并在加载时同时从 `settings` 读取 `pipeline.business_rules` 与 `wecom.notifications` 两个配置 key，对应填充原有线索业务规则和续费预警配置；
+  - 在“业务规则配置”卡片中增加“续费预警企微通知”区域：提供一个开关用于控制是否启用续费预警企微消息，以及一个“提前天数”数字输入框（仅在开关开启时可编辑），提示说明系统会在合同到期前指定天数自动给负责人发送续费提醒，且只对已绑定企微的负责人生效；
+  - 保存逻辑调整为一次性 `upsert` 两条 `settings` 记录：`pipeline.business_rules`（原字段不变）与新的 `wecom.notifications`（当前仅包含 `renewal_upcoming.enabled/days_before`），并在校验时要求所有数值型字段为大于 0 的有效数字，保持与既有 `settings.pipeline.manage` 权限和错误提示一致。
+
+**变更原因（对应需求）**
+- 你明确提出续费预警的业务需求是“根据系统设置的提前天数（例如合同到期前 30 天）自动通知”，而不是简单地在已经到期或临近到期时做静态视图统计；
+- 现有系统已经有合同实体、续费中心视图及 WeCom 绑定和统一网关发送能力，但缺少“通知配置 + 自动触发”的闭环；
+- 通过在 `settings` 中引入 `wecom.notifications` 配置、在 Supabase 写 RPC 计算“到期前 N 天”的目标合同列表，再由 Next.js job 路由调用统一网关发企微消息，可以在不破坏现有 UI 结构的前提下实现真正的“提前续费预警”，同时保留扩展空间为其他通知类型预设配置。
+
+**影响范围**
+- DB / RPC：
+  - 新增 3 个函数（含公开包装）：`get_wecom_notifications_settings`、`get_renewal_upcoming_wecom_targets`、`rpc_wecom_mark_notified`，依赖现有的 `public.settings`、`contracts`、`leads`、`profiles` 结构和 `wecom_last_notified_at` 字段，不改变既有 RLS 与权限点，仅通过 `security definer` 在受控场景下暴露给 `authenticated/service_role`；
+  - 续费预警通知的候选合同筛选逻辑完全在数据库层完成，前端/服务端仅消费聚合后的 JSON 结果，有利于后续在报表与审计中复用相同口径。
+- 后端服务：
+  - 新增 `/api/jobs/renewal-wecom-notify` 作为自动任务入口，需要在 Cloudflare/Supabase Edge Functions 等外部调度系统中配置定时请求（携带正确的 `x-job-token`），推荐每日固定时间触发，使“到期前 N 天”判断语义稳定；
+  - 统一网关环境变量需保证已正确配置 `WECOM_GATEWAY_BASE_URL`、`SYSTEM_KEY`、`SYSTEM_TOKEN` 以及公共访问地址 `PUBLIC_BASE_URL/APP_PUBLIC_URL`，否则 job 执行时会在日志中输出错误并返回 `ok=false`，但不会影响其它业务接口；
+  - `wecom_last_notified_at` 现在正式用于控制通知频率：同一负责人在同一天内不会重复收到续费预警企微消息。
+- 前端 / 设置页：
+  - SystemSettings → 业务规则 Tab 中新增“续费预警企微通知”小节，权限与错误提示复用 `settings.pipeline.manage`，管理员可随时调整是否开启通知以及提前天数（如 15/30/45 天）；
+  - 续费中心 `components/renewal-center.tsx` 的行为保持不变，仍然作为“视图库”和手工跟进工作台使用，但在 job 与配置生效后，销售会在合同到期前预设天数收到企微提醒，并可通过续费中心跳转查看详情。
+
+**回滚方式**
+- DB：
+  - 可在新的迁移中执行 `drop function if exists public.rpc_get_wecom_notifications_settings(); drop function if exists iwish.get_wecom_notifications_settings(); drop function if exists public.rpc_get_renewal_upcoming_wecom_targets(); drop function if exists iwish.get_renewal_upcoming_wecom_targets(); drop function if exists public.rpc_wecom_mark_notified(uuid[]); drop function if exists iwish.rpc_wecom_mark_notified(uuid[]);` 取消此次新增的 RPC 和 helper 函数；
+  - 如不再需要 WeCom 通知配置，可在迁移中删除 `public.settings` 中 `key = 'wecom.notifications'` 的记录（注意这会清空所有通知开关与参数）。
+- 后端服务 / UI：
+  - 删除 `app/api/jobs/renewal-wecom-notify/route.ts` 文件或将其导出的 `POST` 置为空实现，让外部 Cron 调用不再触发任何动作；
+  - 在 `components/system-settings.tsx` 中移除 `renewalNotifyEnabled/renewalNotifyDaysBefore` 相关状态、加载和保存逻辑，以及“续费预警企微通知” UI 区域即可，将业务规则页恢复为仅配置公海与线索预警阈值的版本。
+
 ## 2026-01-23
 
 ### wecom-gateway-bind: 企微统一网关接入（扫码绑定 + 回调落库 + 统一发消息）
@@ -110,7 +154,7 @@
     - 在“重新分配”“跨团队转移”“退回公海”按钮点击时，前端直接弹出友好提示并阻止打开弹窗，避免用户在保护期内频繁收到低层错误；
     - 在实际执行退回公海的 `handleReturnToPool` 中再次加一层保护期判断，确保并发/状态变化下也不会误发请求。
 - 公海池 `components/public-pool.tsx` 不改变既有行为：
-  - 继续只展示 `status = 'pool'` 的线索，认领/分配操作仍通过 `rpc_lead_claim_from_pool` 与 `rpc_lead_assign + rpc_lead_update` 完成；
+  - 继续只展示 `status = 'pool'` 的线索，认领/分配操作仍通过 `rpc_lead_claim_from_pool` 与 `rpc_lead_update` 完成；
   - 保护期约束仅对非公海的 open 线索生效，保证“未退回公海的保护期线索只能由本人处理”，而一旦退回公海则回到当前的公海规则。
 
 **变更原因（对应 PRD/原型）**
@@ -170,140 +214,6 @@
 - 如需回滚团队一致性收紧，可在后续迁移中用 `create or replace function` 恢复 `iwish.rpc_lead_create/iwish.rpc_lead_assign/iwish.rpc_lead_transfer/iwish.rpc_profile_update_org` 为本次修改前版本，并删除触发器 `trg_leads_sync_team_with_owner` 与函数 `iwish.leads_sync_team_with_owner`；
 - 如不再需要细分的校验错误文案，可在 `lib/rpc-error-mapper.ts` 中移除针对 `ERR_VALIDATION:*` 的特例分支，让所有校验错误重新回退为统一的“参数校验失败”提示；
 - 若认为 Realtime 行为不再需要，也可在 `components/lead-kanban.tsx` 和 `components/public-pool.tsx` 中移除订阅与静默刷新逻辑，改为完全手动刷新（不推荐，会明显降低多人协作体验）。
-
-## 2025-12-30
-
-
-### leads-lifecycle-stage-limits: 线索生命周期阶段约束与推进规则
-
-**变更点**
-- 新增 `supabase/migrations/025_lead_stage_lifecycle.sql`：
-  - 将历史数据中 `stage = 'new'` 的线索统一迁移为 `L1`，与当前前端默认阶段保持一致，避免旧数据游离在标准生命周期之外；
-  - 为 `public.leads.stage` 增加 `leads_stage_valid` 校验约束，仅允许 `L1/L2/L3/L4/Won` 五个阶段值，并将默认值设置为 `L1`，将生命周期“写死”在数据库层；
-  - 重新定义 `iwish.rpc_lead_update(uuid, jsonb, text)` 与 `public.rpc_lead_update` 包装：
-    - 在更新前对阶段变更做校验，禁止在通用更新 RPC 中对已关闭线索修改阶段；
-    - 建立简单的阶段顺序（L1→L2→L3→L4→Won），只允许“向前”推进，禁止任何形式的降级（否则抛出 `ERR_INVALID_STAGE_TRANSITION:cannot_downgrade`）；
-    - 若检测到阶段从低阶推进到高阶，则强制要求 `p_reason` 非空（否则抛出 `ERR_VALIDATION:stage_reason_required`），确保每次升级都有审计理由；
-    - 保留并复用原有字段级权限校验（敏感字段、内部字段）与“退回公海”专有权限 `leads.pool.return` 的逻辑。
-  - 重新定义 `iwish.rpc_lead_close(uuid, text, text)`：
-    - 仍然要求 `p_result` 只能为 `won/lost`，并通过 `leads.close` 权限与 `iwish.in_scope_for_lead` 进行范围校验；
-    - 在关闭线索时，将 `status` 置为 `closed`，并在 `p_result = 'won'` 时自动将 `stage` 更新为 `Won`，使已成交线索在生命周期与看板上落到“成交”阶段，而丢单线索保留原阶段便于复盘；
-    - 所有关闭操作继续写入 `audit_logs`，包含前后镜像与关闭原因。
-
-**变更原因（对应 PRD/原型）**
-- PRD 要求线索生命周期采用标准化阶段（L1 询盘 → L2 意向 → L3 关键意向 → L4 谈判 → 成交），且阶段推进必须“有凭有据”，不可随意来回拖动；
-- 现有实现中 `stage` 为自由文本，既可以降级也缺少后端级约束，前端看板虽然有 L1–L4+成交 UI，但无法防止绕过 UI 的错误写入或脚本修改；
-- 通过在 DB 层限制合法阶段集合、在 RPC 中禁止降级并强制记录升级原因，同时在成交时自动把阶段落到 `Won`，可以让生命周期成为一个可审计、可依赖的“骨架”，为后续在设置页配置“阶段必填字段规则”和在报表中做 L1→L4→成交漏斗分析提供可靠基础。
-
-**影响范围**
-- DB / RLS / RPC：
-  - `public.leads.stage` 现在受 `leads_stage_valid` 约束，任何直接 SQL 或 RPC 试图写入非 L1–L4/Won 的阶段值都会失败，避免出现非标准状态；
-  - `iwish.rpc_lead_update` 与 `iwish.rpc_lead_close` 的调用签名保持不变（前者仍为 `(uuid, jsonb, text)`，后者为 `(uuid, text, text)`），但在阶段相关更新时会多抛出几类业务错误码（例如阶段无效、禁止降级、缺少推进原因）；
-  - 不修改现有 RLS 与权限点集合，只在现有权限体系之上增强了生命周期的状态机和审计约束。
-- 前端 / 业务体验：
-  - `components/lead-kanban.tsx` 中“推进阶段”按钮本身已经要求用户填写推进原因，并通过 `p_reason` 传给 `rpc_lead_update`，与本次后端约束天然兼容；
-  - 成交/丢单操作继续通过 `rpc_lead_close` 完成，但成交后该线索会自动进入“成交”列，并从风险提醒统计中排除，更贴近销售看板的直觉；
-  - 若后续有脚本或后台工具试图对 closed 线索重新调整阶段，将被数据库拒绝，避免生命周期被静默篡改。
-
-**回滚方式**
-- 如需回滚生命周期约束，可在新的迁移中：
-  - 执行 `alter table public.leads drop constraint if exists leads_stage_valid;` 取消阶段合法值校验，并视需要将默认值改回 `new` 或其他值；
-  - 使用 `create or replace function` 将 `iwish.rpc_lead_update` 与 `iwish.rpc_lead_close` 恢复为本次修改前的定义（可从 Git 历史或 004/017/023 迁移文件中还原）；
-  - 如不再需要 `Won` 阶段，也可以配合前端调整，从看板阶段配置中移除对应列。
-
-### leads-structured-fields: 线索结构化字段（客户级别、来源分层、标签）
-
-### leads-grade-and-source-settings: 客户级别与来源渠道配置默认种子
-
-
-**变更点**
-- 新增 `supabase/migrations/024_leads_grade_and_source_settings.sql`：
-  - 向 `public.settings` 中插入 `leads.grade_definitions` 配置项（仅在不存在时插入），包含 S/A/B/C 四个客户级别的 `key/label/description`，分别描述“强成交 / 立即跟进、重点培育 / 近期可成交、普通意向 / 需持续教育、低优先级 / 长期培育”的业务含义；
-  - 向 `public.settings` 中插入 `leads.source_tree` 配置项（仅在不存在时插入），以树形 JSON 形式预置一级渠道（广告投放、内容与私域、线下活动、官网与表单、渠道合作/代理商、老客与转介绍、内部线索）及其二级子项（如抖音广告、视频号广告、展会、官网表单等），用于前端线索录入时提供标准的来源分层选项。
-
-**变更原因（对应 PRD/原型）**
-- PRD 要求客户级别 S/A/B/C 与来源渠道枚举都应“可配置”，而不是写死在代码里，以便随着业务发展调整各级别说明和渠道列表；
-- 现有系统中尚未存在这两类配置项，导致线索分层和来源统计只能依赖自由文本或硬编码判断，不利于后续按级别/来源维度做意向分层、保护策略和 ROI 分析；
-- 通过在 `settings` 中预置这两类配置，后续只需在 SystemSettings 中提供编辑 UI，即可让你或上级在不改代码的情况下，灵活调整客户级别文案与渠道树结构。
-
-**影响范围**
-- DB / 配置：
-  - 仅向 `public.settings` 表插入两条新配置记录，使用 `on conflict (key) do nothing` 保证不会覆盖你手动调整后的配置；
-  - 触发 `iwish.audit_settings_change` 审计函数，在 `audit_logs` 中记录新增配置，满足“设置变更必须可追溯”的要求。
-- UI / 业务逻辑：
-  - 当前前端尚未读取 `leads.grade_definitions` 和 `leads.source_tree`，所有现有页面与接口行为保持不变；
-  - 为后续在 SystemSettings 中增加“客户级别配置”和“来源渠道配置”入口、以及在线索表单中用下拉选择替代自由文本输入提供了数据基础。
-
-**回滚方式**
-- 如需回滚，可在后续迁移中执行 `delete from public.settings where key in ('leads.grade_definitions','leads.source_tree');` 删除这两条配置记录，并视需要删除 `024_leads_grade_and_source_settings.sql` 迁移文件或在数据库层手动清理；
-- 回滚后，线索结构字段 `customer_grade/source_level1/source_level2` 仍然存在，但前端若开始依赖这些配置项，需要对应恢复或改为使用本地枚举。
-
-
-**变更点**
-- 新增 `supabase/migrations/023_leads_structured_fields.sql`：
-  - 为 `public.leads` 增加 `customer_grade text`（S/A/B/C 客户级别）、`source_level1 text`（一级来源渠道）、`source_level2 text`（二级活动/行业/合作方）以及 `tags text[]`（标签数组，默认空数组），用于支撑后续的客户分层、来源分层与多标签管理；
-  - 基于现有实现重新定义 `public.leads_secure_view`，在保持电话/邮箱/地址/预算脱敏逻辑不变的前提下，追加暴露 `customer_grade/source_level1/source_level2/tags` 字段，避免影响依赖旧列顺序的客户端；
-  - 基于 `017_lead_stage_reason_audit.sql` 的版本重写 `iwish.rpc_lead_update`，在保留退回公海专有权限与 `p_reason` 审计原因的基础上，支持通过 `patch` 更新上述新字段（含 tags 数组），并保证仍然走同一套权限与审计流程。
-
-**变更原因（对应 PRD/原型）**
-- 上级在 PRD 中强调需要按“客户级别 S/A/B/C + 标签 + 来源渠道（一级/二级）”进行结构化管理，以支撑后续按级别、渠道、责任人维度的意向分层、转化率与 ROI 分析；
-- 现有实现仅有单一 `source` 文本字段与少量基础信息，无法直接表达来源层级、客户分级与多标签，导致在报表和业务规则（比如不同等级不同保护期）上需要大量硬编码判断，不利于后续扩展；
-- 通过在 DB 层添加结构化字段并在 secure view 中统一暴露，为之后在前端表单/看板/报表中逐步接入这些字段、以及在 RLS/RPC 中基于来源/级别做更精细控制打下基础。
-
-**影响范围**
-- DB / RLS / 视图：
-  - `public.leads` 表结构向后兼容扩展，旧数据的 `customer_grade/source_level* /tags` 默认为 null/空数组，不影响现有查询与统计；
-  - `public.leads_secure_view` 列表尾部新增 4 个字段，保持敏感字段脱敏策略与现有 RLS 策略不变，所有前端仍通过视图访问线索数据，不会绕开字段级控制；
-- RPC：
-  - `iwish.rpc_lead_update` 的签名保持为 `(uuid, jsonb, text)`，所有已有调用方无需修改；
-  - 新增只是在 update 语句中允许通过 `patch` 写入 `customer_grade/source_level1/source_level2/tags`，且继续复用原有的权限校验与审计逻辑。
-
-**回滚方式**
-- DB：
-  - 如需彻底回滚，可在后续迁移中执行 `alter table public.leads drop column customer_grade, drop column source_level1, drop column source_level2, drop column tags;`，并重新创建 `public.leads_secure_view` 与 `iwish.rpc_lead_update` 为 017 之前的定义；
-  - 或直接通过 Git 回滚 `023_leads_structured_fields.sql` 并重新运行迁移，使数据库恢复到本次变更前的结构。
-
-### roles-role-type-and-recommended-templates: 角色类型字段与推荐权限模板
-
-
-**变更点**
-- 新增 `supabase/migrations/022_roles_role_type_and_templates.sql`：
-  - 定义枚举类型 `role_type_enum`，包含 `sales_rep`（销售顾问/一线销售）、`sales_manager`（销售经理/主管）、`marketing`（市场角色）、`biz_owner`（业务负责人/总经理）、`tech_maintainer`（技术维护/系统维护）、`other`（其他）。
-  - 为 `public.roles` 表增加非空字段 `role_type role_type_enum NOT NULL DEFAULT 'other'`，不影响既有数据；
-  - 根据中文名称做一次启发式归类，将名称中包含“销售经理/主管/总监”的角色标记为 `sales_manager`，包含“销售顾问/销售/BD/商务”的标记为 `sales_rep`，包含“市场/投放/运营”的标记为 `marketing`，包含“总经理/负责人/老板/合伙人”的标记为 `biz_owner`，包含“技术维护/系统管理/运维”的标记为 `tech_maintainer`，其余保持为 `other`，后续可在前端手动调整。
-- 更新 `components/system-settings.tsx` 权限 Tab：
-  - 在 `Role` 类型中新增 `roleType` 字段（与 `role_type_enum` 对应），加载角色列表时从 Supabase 选择并映射 `role_type`，新建角色默认类型为 `sales_rep`；
-  - 在“编辑角色权限”侧边栏的“基本信息”区域新增“角色类型”下拉框，可在销售顾问/销售经理/市场/业务负责人/技术维护/其他之间切换，保存时若名称或类型发生变化，会通过 `update public.roles set name=..., role_type=... where id=...` 落库；
-  - 定义 `RECOMMENDED_ROLE_TEMPLATES` 常量，为不同 `roleType` 提供一份推荐的数据范围（DataScope）与权限开关组合（基于现有 `RolePermissionFlags`），例如：销售顾问默认仅本人数据 + 不导出/不分配/可退回公海，销售经理默认团队数据 + 可分配/可退回公海/可看报表等；
-  - 打开角色编辑时，根据当前 `roleType` 与推荐模板计算出“数据范围 + 权限开关”与模板的差异数量，在“业务 & 管理操作权限”区域展示 Badge 提示（“当前配置与推荐模板一致”或“与推荐模板有 N 项差异”）；
-  - 在权限矩阵标题下增加“应用推荐配置”按钮，点击后会根据当前 `roleType` 将推荐的数据范围与权限开关一键写入 `editingRole`，并重新计算差异计数，便于你在模板基础上做少量增删。
-
-**变更原因（对应 PRD/原型）**
-- 上级需求中对“销售顾问/销售经理/市场/业务负责人与技术维护”等角色的责任边界有较清晰的默认划分，但同时希望将来可以根据团队发展自由调整每个角色实际拥有哪些权限；
-- 原有实现只提供了通用的权限开关矩阵，没有角色类型与推荐模板的概念，导致：
-  - 新增或调整角色时缺乏一个清晰的“官方建议 baseline”，你需要记住每个权限点的含义然后从零勾选；
-  - 角色边界更多体现在“能不能点某个按钮”，而不是“这个角色一般负责哪段业务链路 + 默认可以做什么”，产品感较弱。
-- 通过为 `roles` 引入 `role_type` 并在前端叠加推荐模板与差异提示，可以：
-  - 明确表达“这个角色大致是哪一类（销售顾问/经理/市场/业务负责人/技术维护）”；
-  - 让你在创建/编辑角色时快速一键套用产品级的“推荐边界”，再按个别需求细调开关；
-  - 保持完全的可配置性——实际生效的权限仍然只由权限矩阵 + RLS 决定，角色名称和类型不会改变安全语义。
-
-**影响范围**
-- DB / RLS / RPC：
-  - 新增枚举类型 `role_type_enum` 与 `roles.role_type` 字段，不改变现有 RLS 策略与权限校验，`iwish.has_permission` 及相关 RPC 逻辑保持不变；
-  - 通过一次性 `UPDATE public.roles ...` 语句对现有数据做启发式初始归类，仅影响展示与前端加载，不改变任何 `role_permissions`/`user_permissions` 记录；
-  - 新建或编辑角色时额外更新 `role_type` 字段，不引入新的表或 RPC。
-- UI：
-  - SystemSettings → 角色权限页中，角色列表与编辑抽屉现在都包含“角色类型”的概念，帮助你和上级快速确认“这个角色大致扮演什么职责”；
-  - 编辑角色时可以看到与推荐模板的差异数量，以及一键应用推荐配置的按钮，使“产品级”的默认边界与“业务侧的灵活调整”同时存在；
-  - 对已有角色，不修改其当前实际权限，只是在你打开编辑时展示其 `roleType`（若未匹配则为 “其他”）和与模板的差异提示，方便逐步按推荐模型收敛。
-
-**回滚方式**
-- DB：
-  - 如需回滚，可在数据库中执行 `ALTER TABLE public.roles DROP COLUMN role_type;` 并按需删除 `role_type_enum` 类型（前提是没有其他对象依赖），同时删除本次新增的迁移文件或在后续迁移中显式回退。
-- UI：
-  - 可在 `components/system-settings.tsx` 中移除与 `roleType` 相关的类型字段、下拉框、`RECOMMENDED_ROLE_TEMPLATES` 常量及差异计算逻辑，将角色编辑恢复为仅基于数据范围与权限开关的简单矩阵；
-  - 如仅想暂时隐藏推荐模板功能，可保留 `role_type` 字段与后端结构，仅注释掉“角色类型”下拉和“应用推荐配置”按钮，让现有角色继续按当前权限运行。
 
 ### dashboard-recent-activities-permission-aware: 仪表盘最近动态按权限与关联度返回
 
@@ -383,4 +293,4 @@
 - 鉴于后端使用的是 `roles.id` 和权限矩阵中的 `permission_key`/`scope_type` 作为真正的安全与逻辑依据，`roles.name` 仅作为展示文案，因此放开对名称的编辑不会破坏安全边界和权限语义。
 
 **影响范围（略）**
-...
+- ...

@@ -719,6 +719,10 @@ function BusinessRulesTab() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [businessSubTab, setBusinessSubTab] = useState("leads")
 
+  const [renewalNotifyEnabled, setRenewalNotifyEnabled] = useState(true)
+  const [renewalNotifyDaysBefore, setRenewalNotifyDaysBefore] = useState("30")
+
+
   useEffect(() => {
     let isMounted = true
 
@@ -727,9 +731,9 @@ function BusinessRulesTab() {
         const supabase = getBrowserSupabaseClient()
         const { data, error } = await supabase
           .from("settings")
-          .select("value")
-          .eq("key", "pipeline.business_rules")
-          .maybeSingle()
+          .select("key, value")
+          .in("key", ["pipeline.business_rules", "wecom.notifications"])
+
 
         if (!isMounted) {
           return
@@ -747,19 +751,38 @@ function BusinessRulesTab() {
           return
         }
 
-        const value = (data?.value as any) ?? null
+        const rows = (data ?? []) as any[]
 
-        if (value) {
-          if (value.public_pool_days != null) {
-            setPublicPoolDays(String(value.public_pool_days))
+        const pipelineRow = rows.find((row) => row.key === "pipeline.business_rules") as any
+        const wecomRow = rows.find((row) => row.key === "wecom.notifications") as any
+
+        const pipelineValue = (pipelineRow?.value as any) ?? null
+
+        if (pipelineValue) {
+          if (pipelineValue.public_pool_days != null) {
+            setPublicPoolDays(String(pipelineValue.public_pool_days))
           }
-          if (value.warning_hours != null) {
-            setWarningHours(String(value.warning_hours))
+          if (pipelineValue.warning_hours != null) {
+            setWarningHours(String(pipelineValue.warning_hours))
           }
-          if (value.danger_hours != null) {
-            setDangerHours(String(value.danger_hours))
+          if (pipelineValue.danger_hours != null) {
+            setDangerHours(String(pipelineValue.danger_hours))
           }
         }
+
+        const wecomValue = (wecomRow?.value as any) ?? null
+        if (wecomValue && typeof wecomValue === "object") {
+          const renewalCfg = (wecomValue as any).renewal_upcoming as any
+          if (renewalCfg && typeof renewalCfg === "object") {
+            if (typeof renewalCfg.enabled === "boolean") {
+              setRenewalNotifyEnabled(renewalCfg.enabled)
+            }
+            if (renewalCfg.days_before != null) {
+              setRenewalNotifyDaysBefore(String(renewalCfg.days_before))
+            }
+          }
+        }
+
 
         setLoadError(null)
         setIsLoading(false)
@@ -783,6 +806,7 @@ function BusinessRulesTab() {
     const poolDays = Number.parseInt(publicPoolDays, 10)
     const warnHours = Number.parseInt(warningHours, 10)
     const dangerHoursValue = Number.parseInt(dangerHours, 10)
+    const renewalDays = Number.parseInt(renewalNotifyDaysBefore, 10)
 
     if (
       Number.isNaN(poolDays) ||
@@ -790,7 +814,8 @@ function BusinessRulesTab() {
       Number.isNaN(dangerHoursValue) ||
       poolDays <= 0 ||
       warnHours <= 0 ||
-      dangerHoursValue <= 0
+      dangerHoursValue <= 0 ||
+      (renewalNotifyEnabled && (Number.isNaN(renewalDays) || renewalDays <= 0))
     ) {
       toast.error("保存失败", { description: "请填写大于 0 的有效数字" })
       return
@@ -802,16 +827,28 @@ function BusinessRulesTab() {
       const { error } = await supabase
         .from("settings")
         .upsert(
-          {
-            key: "pipeline.business_rules",
-            value: {
-              public_pool_days: poolDays,
-              warning_hours: warnHours,
-              danger_hours: dangerHoursValue,
+          [
+            {
+              key: "pipeline.business_rules",
+              value: {
+                public_pool_days: poolDays,
+                warning_hours: warnHours,
+                danger_hours: dangerHoursValue,
+              },
             },
-          },
+            {
+              key: "wecom.notifications",
+              value: {
+                renewal_upcoming: {
+                  enabled: renewalNotifyEnabled,
+                  days_before: renewalDays > 0 ? renewalDays : 30,
+                },
+              },
+            },
+          ],
           { onConflict: "key" },
         )
+
 
       if (error) {
         console.error("Failed to save business rules settings", error)
@@ -910,10 +947,50 @@ function BusinessRulesTab() {
                     <p className="text-xs text-muted-foreground">超过此时间未跟进将显示红色风险标识</p>
                   </div>
                 </div>
+
+                <Separator />
+
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label className="font-medium">续费预警企微通知</Label>
+                      <p className="text-xs text-muted-foreground">
+                        开启后，系统会在合同到期前指定天数，自动通过企微给负责人发送续费提醒。
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        checked={renewalNotifyEnabled}
+                        onCheckedChange={(v) => setRenewalNotifyEnabled(Boolean(v))}
+                        disabled={isLoading || isSaving}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 pl-0 sm:pl-6">
+                    <Label htmlFor="renewalNotifyDays">提前天数</Label>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        id="renewalNotifyDays"
+                        type="number"
+                        value={renewalNotifyDaysBefore}
+                        onChange={(e) => setRenewalNotifyDaysBefore(e.target.value)}
+                        className="w-24"
+                        disabled={isLoading || isSaving || !renewalNotifyEnabled}
+                      />
+                      <span className="text-sm text-muted-foreground">天（例如 30 表示到期前 30 天提醒）</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      仅对有绑定企微的负责人生效，系统会按负责人聚合同一天到期的合同一次性提醒。
+                    </p>
+                  </div>
+                </div>
+
                 <Button onClick={handleSave} disabled={isSaving || isLoading}>
                   <Save className="w-4 h-4 mr-2" />
                   {isSaving ? "保存中..." : "保存规则"}
                 </Button>
+
               </CardContent>
             </Card>
 
