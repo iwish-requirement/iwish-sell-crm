@@ -3834,19 +3834,26 @@ function PermissionsTab() {
         }
       }
 
+      pushToggle("createLeads", editingRole.permissions.createLeads)
+      pushToggle("updateLeads", editingRole.permissions.updateLeads)
+      pushToggle("closeLeads", editingRole.permissions.closeLeads)
       pushToggle("viewUnmaskedPhone", editingRole.permissions.viewUnmaskedPhone)
       pushToggle("exportData", editingRole.permissions.exportData, "org")
       pushToggle("importLeads", editingRole.permissions.importLeads, "org")
       pushToggle("assignLeads", editingRole.permissions.assignLeads)
       pushToggle("deleteLeads", editingRole.permissions.deleteLeads, "org")
       pushToggle("returnToPool", editingRole.permissions.returnToPool)
+      pushToggle("manageLeadNotes", editingRole.permissions.manageLeadNotes)
       pushToggle("manageTeams", editingRole.permissions.manageTeams, "org")
       pushToggle("editSettings", editingRole.permissions.editSettings, "org")
       pushToggle("editSensitiveFields", editingRole.permissions.editSensitiveFields)
       pushToggle("viewInternalFields", editingRole.permissions.viewInternalFields)
       pushToggle("editInternalFields", editingRole.permissions.editInternalFields)
+      pushToggle("viewReports", editingRole.permissions.viewReports)
+      pushToggle("viewAudit", editingRole.permissions.viewAudit)
       pushToggle("viewContracts", editingRole.permissions.viewContracts)
       pushToggle("manageContracts", editingRole.permissions.manageContracts)
+
 
       const { error: rpcError } = await rpcRolePermissionsSetMatrix(editingRole.id, items)
 
