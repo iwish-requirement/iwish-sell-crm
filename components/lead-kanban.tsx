@@ -234,7 +234,8 @@ const FALLBACK_GRADES: GradeDefinition[] = [
   { key: "C", label: "C级（低优先级 / 长期培育）" },
 ]
 
-const PAGE_SIZE = 20
+const PAGE_SIZE = 10
+
 
 
 function parseBudgetLabel(budget: string): number | null {
@@ -318,8 +319,9 @@ function LeadCard({
   const remainingTagsCount = allTags.length - displayedTags.length
 
   return (
-    <Card className="cursor-pointer hover:shadow-md transition-shadow border-muted-foreground/10" onClick={onClick}>
-      <CardContent className="p-4 space-y-3">
+    <Card className="cursor-pointer hover:shadow-md transition-shadow border-muted-foreground/10 overflow-hidden" onClick={onClick}>
+      <CardContent className="p-4 space-y-3 break-words">
+
         <div className="flex items-start justify-between gap-2">
           <div>
             <p className="text-lg font-bold text-foreground leading-tight">{lead.company}</p>
@@ -374,7 +376,9 @@ function LeadCard({
         {displayedTags.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
             {displayedTags.map((tag) => (
-              <Badge key={tag} variant="secondary" className="text-[11px] px-1.5 py-0 h-5 bg-muted/50 text-muted-foreground">
+              <Badge key={tag} variant="secondary" className="text-[11px] px-2 py-1 bg-muted/50 text-muted-foreground max-w-full whitespace-normal break-words w-full text-left">
+
+
                 {tag}
               </Badge>
             ))}
@@ -2207,11 +2211,16 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
   })
 
   const totalLeads = sortedLeads.length
-  const totalPages = Math.max(1, Math.ceil(totalLeads / PAGE_SIZE))
+
+  const stageCountsById: Record<string, number> = {}
+  for (const lead of sortedLeads) {
+    stageCountsById[lead.stage] = (stageCountsById[lead.stage] ?? 0) + 1
+  }
+  const maxStageCount = Object.values(stageCountsById).reduce((max, count) => Math.max(max, count), 0)
+
+  const totalPages = Math.max(1, Math.ceil(maxStageCount / PAGE_SIZE))
   const currentPageSafe = Math.min(currentPage, totalPages)
-  const startIndex = (currentPageSafe - 1) * PAGE_SIZE
-  const endIndex = Math.min(startIndex + PAGE_SIZE, totalLeads)
-  const pagedLeads = sortedLeads.slice(startIndex, endIndex)
+
 
   if (isLoading) {
     return (
@@ -2830,7 +2839,11 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
       <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         {stages.map((stage) => {
-          const stageLeads = pagedLeads.filter((lead) => lead.stage === stage.id)
+          const allStageLeads = sortedLeads.filter((lead) => lead.stage === stage.id)
+          const startIndex = (currentPageSafe - 1) * PAGE_SIZE
+          const endIndex = Math.min(startIndex + PAGE_SIZE, allStageLeads.length)
+          const stageLeads = allStageLeads.slice(startIndex, endIndex)
+          const stageTotalCount = allStageLeads.length
           const stageConfig = getStageConfig(stage.id)
           return (
             <div key={stage.id} className="space-y-4">
@@ -2840,11 +2853,12 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                   <h3 className="font-bold text-sm text-foreground uppercase tracking-wider">{stage.label}</h3>
                 </div>
                 <Badge variant="secondary" className="text-xs font-bold rounded-full px-2 h-5 min-w-[20px] flex items-center justify-center">
-                  {stageLeads.length}
+                  {stageTotalCount}
                 </Badge>
               </div>
               <div className="space-y-4 min-h-[200px] md:min-h-[400px] p-2 rounded-xl border border-muted/20">
                 {stageLeads.map((lead) => (
+
                   <LeadCard
                     key={lead.id}
                     lead={lead}
@@ -2865,8 +2879,9 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       {totalLeads > 0 && (
         <div className="flex items-center justify-between text-sm text-muted-foreground p-3 rounded-lg border border-muted/20">
           <div className="font-medium">
-            显示第 <span className="text-foreground">{startIndex + 1}–{endIndex}</span> 条，共 <span className="text-foreground font-bold">{totalLeads}</span> 条线索
+            每个意向阶段每页最多显示 <span className="text-foreground">{PAGE_SIZE}</span> 条线索；当前第 <span className="text-foreground">{currentPageSafe}</span> 页，共 <span className="text-foreground font-bold">{totalLeads}</span> 条线索
           </div>
+
           <div className="flex items-center gap-3">
             <Button
               variant="outline"
@@ -3405,7 +3420,9 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                     ) : selectedLead.tags && selectedLead.tags.length > 0 ? (
                       <div className="flex flex-wrap gap-1.5">
                         {selectedLead.tags.map((tag) => (
-                          <Badge key={tag} variant="secondary" className="text-xs font-normal bg-muted/50 text-muted-foreground h-6">
+                          <Badge key={tag} variant="secondary" className="text-xs font-normal bg-muted/50 text-muted-foreground max-w-full whitespace-normal break-words w-full text-left px-2 py-1">
+
+
                             {tag}
                           </Badge>
                         ))}

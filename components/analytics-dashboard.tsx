@@ -381,6 +381,8 @@ export function AnalyticsDashboard() {
         }
       }
       const revenueBySource = new Map<string, { newAmount: number; renewalAmount: number }>()
+      const revenueByOwner = new Map<string, { newAmount: number; renewalAmount: number }>()
+
       let expiringSoon = 0
       let expiredRecently = 0
       let newAmount = 0
@@ -416,18 +418,25 @@ export function AnalyticsDashboard() {
             if (signedAt >= dateRange.from && signedAt <= dateRange.to) {
               const lead = leadById.get(leadId)
               const sourceKey = lead && (lead as any).source ? ((lead as any).source as string) : "其他"
-              const currentRevenue =
+              const currentRevenueBySource =
                 revenueBySource.get(sourceKey) ?? { newAmount: 0, renewalAmount: 0 }
+              const ownerId = lead && (lead as any).owner_id ? ((lead as any).owner_id as string) : "unassigned"
+              const currentRevenueByOwner =
+                revenueByOwner.get(ownerId) ?? { newAmount: 0, renewalAmount: 0 }
 
               if (isRenewal) {
                 renewalAmount += amount
-                currentRevenue.renewalAmount += amount
+                currentRevenueBySource.renewalAmount += amount
+                currentRevenueByOwner.renewalAmount += amount
               } else {
                 newAmount += amount
-                currentRevenue.newAmount += amount
+                currentRevenueBySource.newAmount += amount
+                currentRevenueByOwner.newAmount += amount
               }
 
-              revenueBySource.set(sourceKey, currentRevenue)
+              revenueBySource.set(sourceKey, currentRevenueBySource)
+              revenueByOwner.set(ownerId, currentRevenueByOwner)
+
             }
           }
         }
@@ -575,23 +584,21 @@ export function AnalyticsDashboard() {
 
       nextSourceRoi.sort((a, b) => b.totalAmount - a.totalAmount || b.winRate - a.winRate)
 
-      const ownerStats = new Map<string, { leads: number; won: number; value: number }>()
+      const ownerStats = new Map<string, { leads: number; won: number }>()
       for (const lead of filteredLeads) {
         const ownerId = lead.owner_id ?? "unassigned"
-        const current = ownerStats.get(ownerId) ?? { leads: 0, won: 0, value: 0 }
+        const current = ownerStats.get(ownerId) ?? { leads: 0, won: 0 }
 
         current.leads += 1
 
         const logicalStage = getLogicalStage(lead)
         if (logicalStage === "Won") {
           current.won += 1
-          if (typeof lead.budget === "number") {
-            current.value += lead.budget
-          }
         }
 
         ownerStats.set(ownerId, current)
       }
+
 
       const leadIds = filteredLeads.map((lead) => lead.id)
       const interactionsByUserId = new Map<string, number>()
@@ -725,10 +732,12 @@ export function AnalyticsDashboard() {
 
       // 先为每个参与统计的成员生成一行，即使没有任何线索也会显示 0
       for (const profile of leaderboardProfiles) {
-        const stats = ownerStats.get(profile.id) ?? { leads: 0, won: 0, value: 0 }
+        const stats = ownerStats.get(profile.id) ?? { leads: 0, won: 0 }
         const totalLeads = stats.leads
         const winRate = totalLeads === 0 ? 0 : stats.won / totalLeads
-        const avgDealValue = stats.won === 0 ? 0 : stats.value / stats.won
+        const ownerRevenue = revenueByOwner.get(profile.id) ?? { newAmount: 0, renewalAmount: 0 }
+        const totalAmount = ownerRevenue.newAmount + ownerRevenue.renewalAmount
+        const avgDealValue = stats.won === 0 ? 0 : totalAmount / stats.won
         const trend: "up" | "down" = winRate >= 0.3 ? "up" : "down"
         const interactions = interactionsByUserId.get(profile.id) ?? 0
 
@@ -739,7 +748,7 @@ export function AnalyticsDashboard() {
           leads: stats.leads,
           interactions,
           won: stats.won,
-          value: stats.value,
+          value: totalAmount,
           winRate,
           avgDealValue,
           trend,
@@ -751,8 +760,9 @@ export function AnalyticsDashboard() {
       if (unassignedStats && unassignedStats.leads > 0) {
         const totalLeads = unassignedStats.leads
         const winRate = totalLeads === 0 ? 0 : unassignedStats.won / totalLeads
-        const avgDealValue =
-          unassignedStats.won === 0 ? 0 : unassignedStats.value / unassignedStats.won
+        const ownerRevenue = revenueByOwner.get("unassigned") ?? { newAmount: 0, renewalAmount: 0 }
+        const totalAmount = ownerRevenue.newAmount + ownerRevenue.renewalAmount
+        const avgDealValue = unassignedStats.won === 0 ? 0 : totalAmount / unassignedStats.won
         const trend: "up" | "down" = winRate >= 0.3 ? "up" : "down"
 
         nextTeamData.push({
@@ -762,7 +772,7 @@ export function AnalyticsDashboard() {
           leads: unassignedStats.leads,
           interactions: 0,
           won: unassignedStats.won,
-          value: unassignedStats.value,
+          value: totalAmount,
           winRate,
           avgDealValue,
           trend,
@@ -770,6 +780,7 @@ export function AnalyticsDashboard() {
       }
 
       nextTeamData.sort((a, b) => b.value - a.value || b.won - a.won || b.leads - a.leads)
+
 
       setFunnelData(nextFunnelData)
       setSourceVolumeData(nextSourceVolume)
