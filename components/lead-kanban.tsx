@@ -62,6 +62,13 @@ interface Lead {
   sourceLevel2?: string | null
   businessCategories?: { id: number; name: string }[]
   businessTypes?: { id: number; name: string; categoryId: number }[]
+  // 责任归因与来源细分字段（来自 leads_secure_view）
+  responsibilityType?: string | null
+  devMethodKey?: string | null
+  referralCustomerName?: string | null
+  referralTypeKey?: string | null
+  activityName?: string | null
+  sourceDepartmentKey?: string | null
 
   lastContactAt: string | null
   stage: string
@@ -79,6 +86,7 @@ interface Lead {
   closeReason?: string | null
   interactions: Interaction[]
 }
+
 
 
 
@@ -150,8 +158,104 @@ interface SourceOption {
   level1Key?: string
 }
 
+interface ResponsibilityTypeOption {
+  key: string
+  label: string
+}
+
+interface DevMethodOption {
+  key: string
+  label: string
+}
+
+interface ReferralTypeOption {
+  key: string
+  label: string
+}
+
+interface SourceDepartmentOption {
+  key: string
+  label: string
+}
+
+const FALLBACK_RESPONSIBILITY_TYPES: ResponsibilityTypeOption[] = [
+  { key: "company_resource", label: "公司分配资源" },
+  { key: "sales_self", label: "销售自主开发" },
+  { key: "customer_referral", label: "客户转介绍" },
+]
+
+const FALLBACK_DEV_METHODS: DevMethodOption[] = [
+  { key: "email_outreach", label: "邮件开发" },
+  { key: "private_domain", label: "私域运营/朋友圈" },
+  { key: "old_customer_mining", label: "老客挖掘" },
+  { key: "short_video", label: "短视频/内容引流" },
+  { key: "other", label: "其他" },
+]
+
+const FALLBACK_REFERRAL_TYPES: ReferralTypeOption[] = [
+  { key: "existing_customer", label: "老客户介绍" },
+  { key: "partner", label: "渠道伙伴介绍" },
+  { key: "friend", label: "朋友/人脉介绍" },
+]
+
+const FALLBACK_SOURCE_DEPARTMENTS: SourceDepartmentOption[] = [
+  { key: "sz_sales", label: "深圳销售团队" },
+  { key: "sz_cs", label: "深圳客服团队" },
+  { key: "hz_sales", label: "杭州销售团队" },
+]
+
+// 公司分配资源场景下的二级来源分组（与设置页默认值保持一致）
+const FALLBACK_COMPANY_RESOURCE_GROUPS: SourceChannel[] = [
+  {
+    key: "social_media",
+    label: "社媒渠道",
+    children: [
+      { key: "wechat_company", label: "视频号（公司号）" },
+      { key: "wechat_ip_1", label: "视频号（IP号）" },
+      { key: "wechat_ip_2", label: "视频号（IP号2）" },
+      { key: "xiaohongshu", label: "小红书" },
+      { key: "douyin", label: "抖音" },
+      { key: "official_account", label: "公众号" },
+      { key: "community", label: "社群" },
+    ],
+  },
+  {
+    key: "website",
+    label: "官网来源",
+    children: [
+      { key: "website_form", label: "官网表单" },
+      { key: "website_wechat", label: "官网加微信" },
+    ],
+  },
+  {
+    key: "offline_events",
+    label: "线下活动",
+    children: [
+      { key: "strategy_course", label: "一号位战略课" },
+      { key: "traffic_course", label: "流量系列课" },
+      { key: "brand_course", label: "品牌系列课" },
+      { key: "seo_course", label: "SEO系列课" },
+      { key: "expo", label: "展会" },
+      { key: "public_workshop", label: "公开课分享会" },
+      { key: "other_event", label: "其他活动" },
+    ],
+  },
+  {
+    key: "livestream",
+    label: "直播类",
+    children: [{ key: "livestream_lead", label: "直播间线索" }],
+  },
+]
+
+const responsibilityTypeOptions: ResponsibilityTypeOption[] = FALLBACK_RESPONSIBILITY_TYPES
+const devMethodOptions: DevMethodOption[] = FALLBACK_DEV_METHODS
+const referralTypeOptions: ReferralTypeOption[] = FALLBACK_REFERRAL_TYPES
+const sourceDepartmentOptions: SourceDepartmentOption[] = FALLBACK_SOURCE_DEPARTMENTS
+const companyResourceGroupOptions: SourceChannel[] = FALLBACK_COMPANY_RESOURCE_GROUPS
 
 // 线索列表由 Supabase 实时加载，这里不再保留历史 mock 数据，以免造成误解
+
+
 
 
 const stages = [
@@ -474,7 +578,14 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     tags: "",
     businessCategoryIds: [] as string[],
     businessTypeIds: [] as string[],
+    responsibilityType: "",
+    devMethodKey: "",
+    referralCustomerName: "",
+    referralTypeKey: "",
+    activityName: "",
+    sourceDepartmentKey: "",
   })
+
 
 
 
@@ -530,7 +641,14 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     grade: "",
     tags: "",
     businessTypeIds: [] as string[],
+    responsibilityType: "",
+    devMethodKey: "",
+    referralCustomerName: "",
+    referralTypeKey: "",
+    activityName: "",
+    sourceDepartmentKey: "",
   })
+
 
 
   const [searchQuery, setSearchQuery] = useState("")
@@ -615,6 +733,20 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     level1Key: string | null | undefined,
     level2Key: string | null | undefined,
   ): string => {
+    // 新来源模型下，source_level1 即责任归因，source_level2 在公司分配资源场景下表示二级来源
+    if (level1Key && FALLBACK_RESPONSIBILITY_TYPES.some((item) => item.key === level1Key)) {
+      const resp = FALLBACK_RESPONSIBILITY_TYPES.find((item) => item.key === level1Key)
+      if (level1Key === "company_resource" && level2Key) {
+        for (const group of companyResourceGroupOptions) {
+          const child = (group.children ?? []).find((ch) => ch.key === level2Key)
+          if (child) {
+            return child.label
+          }
+        }
+      }
+      return resp?.label ?? level1Key
+    }
+
     const channelsToUse = sourceChannels.length > 0 ? sourceChannels : FALLBACK_SOURCE_CHANNELS
 
     if (level1Key) {
@@ -639,6 +771,11 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
   const resolveSourceLevel1Label = (level1Key: string | null | undefined): string | null => {
     if (!level1Key) return null
 
+    const resp = FALLBACK_RESPONSIBILITY_TYPES.find((item) => item.key === level1Key)
+    if (resp) {
+      return resp.label
+    }
+
     const channelsToUse = sourceChannels.length > 0 ? sourceChannels : FALLBACK_SOURCE_CHANNELS
     const channel = channelsToUse.find((c) => c.key === level1Key)
 
@@ -651,6 +788,16 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
   ): string | null => {
     if (!level2Key) return null
 
+    if (level1Key === "company_resource") {
+      for (const group of companyResourceGroupOptions) {
+        const child = (group.children ?? []).find((ch) => ch.key === level2Key)
+        if (child) {
+          return child.label
+        }
+      }
+      return level2Key
+    }
+
     const channelsToUse = sourceChannels.length > 0 ? sourceChannels : FALLBACK_SOURCE_CHANNELS
 
     if (level1Key) {
@@ -661,6 +808,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
     return level2Key
   }
+
 
   const [isLoading, setIsLoading] = useState(true)
 
@@ -705,8 +853,9 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
           supabase
             .from("leads_secure_view")
             .select(
-              "id, team_id, name, source, stage, status, close_result, close_reason, customer_name, customer_phone, customer_email, budget, last_contact_at, next_contact_at, owner_id, customer_grade, source_level1, source_level2, tags, first_contact_at, locked_until, protected_until, created_at, created_by, business_categories, business_types",
+              "id, team_id, owner_id, created_by, name, source, stage, status, close_result, close_reason, last_contact_at, created_at, updated_at, customer_name, customer_phone, customer_email, address, budget, internal_score, blacklist_reason, next_contact_at, wechat, customer_grade, source_level1, source_level2, tags, first_contact_at, locked_by, locked_until, protected_until, business_categories, business_types, responsibility_type, dev_method_key, referral_customer_name, referral_type_key, activity_name, source_department_key, source_locked_at",
             )
+
             .in("status", ["open", "closed"]) 
             .order("updated_at", { ascending: false }),
 
@@ -806,7 +955,14 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                 createdAt: (row.created_at as string | null) ?? null,
                 closeResult: (row.close_result as string | null) ?? null,
                 closeReason: (row.close_reason as string | null) ?? null,
+                responsibilityType: (row.responsibility_type as string | null) ?? null,
+                devMethodKey: (row.dev_method_key as string | null) ?? null,
+                referralCustomerName: (row.referral_customer_name as string | null) ?? null,
+                referralTypeKey: (row.referral_type_key as string | null) ?? null,
+                activityName: (row.activity_name as string | null) ?? null,
+                sourceDepartmentKey: (row.source_department_key as string | null) ?? null,
                 interactions: [],
+
 
 
               }
@@ -1232,7 +1388,8 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
   }, [leadScopeType, currentUserId, ownerFilter])
 
   useEffect(() => {
-    if (!currentProfile?.id) {
+    const profileId = currentProfile?.id
+    if (!profileId) {
       return
     }
 
@@ -1244,8 +1401,9 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
         const { data, error } = await supabase
           .from("lead_view_presets")
           .select("id, name, filters, is_default")
-          .eq("profile_id", currentProfile.id)
+          .eq("profile_id", profileId)
           .order("created_at", { ascending: true })
+
 
         if (!isMounted) {
           return
@@ -1310,14 +1468,38 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       return
     }
 
-    if (!newLead.sourceLevel1) {
-      toast.error("请选择一级渠道", {
-        description: "线索来源的一级渠道为必选项",
+    if (!newLead.responsibilityType) {
+      toast.error("请选择责任归因", {
+        description: "一级来源（责任归因）为必填项",
       })
       return
     }
 
+    if (newLead.responsibilityType === "company_resource" && !newLead.sourceLevel2) {
+      toast.error("请选择二级来源", {
+        description: "当责任归因为公司分配资源时，必须选择二级来源",
+      })
+      return
+    }
+
+    if (newLead.responsibilityType === "sales_self" && !newLead.devMethodKey) {
+      toast.error("请选择开发方式", {
+        description: "当责任归因为销售自主开发时，必须选择开发方式",
+      })
+      return
+    }
+
+    if (newLead.responsibilityType === "customer_referral") {
+      if (!newLead.referralCustomerName || !newLead.referralTypeKey) {
+        toast.error("请补全转介绍信息", {
+          description: "当责任归因为客户转介绍时，必须填写来源客户和转介绍类型",
+        })
+        return
+      }
+    }
+
     if (!newLead.businessTypeIds || newLead.businessTypeIds.length === 0) {
+
       toast.error("请选择业务类型", {
         description: "至少选择一个具体业务子类型",
       })
@@ -1358,7 +1540,8 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       const ownerId = isOwnerSelectable ? newLead.owner : profile.id
 
 
-      const sourceLabel = resolveSourceLabel(newLead.sourceLevel1, newLead.sourceLevel2 || null)
+      const sourceLabel = resolveSourceLabel(newLead.responsibilityType, newLead.sourceLevel2 || null)
+
       const selectedTypeIds = newLead.businessTypeIds.map((id) => Number(id)).filter((v) => Number.isFinite(v))
       const resolvedCategoryIds = Array.from(
         new Set(
@@ -1381,11 +1564,20 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
         budget: budgetValue,
         last_contact_at: new Date().toISOString(),
         customer_grade: newLead.grade || null,
-        source_level1: newLead.sourceLevel1,
+        source_level1: newLead.responsibilityType,
         source_level2: newLead.sourceLevel2 || null,
+        responsibility_type: newLead.responsibilityType,
+        dev_method_key: newLead.devMethodKey || null,
+        referral_customer_name:
+          newLead.responsibilityType === "customer_referral" ? newLead.referralCustomerName || null : null,
+        referral_type_key:
+          newLead.responsibilityType === "customer_referral" ? newLead.referralTypeKey || null : null,
+        activity_name: newLead.activityName || null,
+        source_department_key: newLead.sourceDepartmentKey || null,
         business_type_ids: selectedTypeIds,
         business_category_ids: resolvedCategoryIds,
         tags:
+
 
 
           newLead.tags
@@ -1412,7 +1604,8 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       const budgetLabel =
         budgetValue != null ? `¥${budgetValue.toLocaleString("zh-CN")}` : "待确认"
 
-      const sourceLabelForLocal = resolveSourceLabel(newLead.sourceLevel1, newLead.sourceLevel2 || null)
+      const sourceLabelForLocal = resolveSourceLabel(newLead.responsibilityType, newLead.sourceLevel2 || null)
+
 
       setLeads([
         ...leads,
@@ -1423,8 +1616,9 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
           phone: newLead.phone,
           wechat: "",
           source: sourceLabelForLocal,
-          sourceLevel1: newLead.sourceLevel1 || null,
+          sourceLevel1: newLead.responsibilityType || null,
           sourceLevel2: newLead.sourceLevel2 || null,
+
           businessTypes: selectedTypeIds.map((id) => {
             const found = businessTypeMap.get(id)
             return found ? { id: found.id, name: found.name, categoryId: found.category_id } : { id, name: `类型 #${id}`, categoryId: -1 }
@@ -1463,7 +1657,14 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
         tags: "",
         businessCategoryIds: [],
         businessTypeIds: [],
+        responsibilityType: "",
+        devMethodKey: "",
+        referralCustomerName: "",
+        referralTypeKey: "",
+        activityName: "",
+        sourceDepartmentKey: "",
       })
+
 
 
       setDialogOpen(false)
@@ -1557,14 +1758,25 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       contact: lead.contact,
       phone: lead.phone,
       wechat: lead.wechat,
-      source: lead.source,
+      sourceLevel1: lead.sourceLevel1 ?? "",
+      sourceLevel2: lead.sourceLevel2 ?? "",
       budget: budgetDigits || "",
+      grade: lead.grade || "",
+      tags: (lead.tags ?? []).join(","),
+      businessTypeIds: (lead.businessTypes ?? []).map((t) => String(t.id)),
+      responsibilityType: lead.responsibilityType ?? "",
+      devMethodKey: lead.devMethodKey ?? "",
+      referralCustomerName: lead.referralCustomerName ?? "",
+      referralTypeKey: lead.referralTypeKey ?? "",
+      activityName: lead.activityName ?? "",
+      sourceDepartmentKey: lead.sourceDepartmentKey ?? "",
     })
     setIsEditing(false)
 
     setSheetOpen(true)
     void loadLeadInteractions(lead.id)
   }
+
 
   const handleReturnToPool = async () => {
     if (!selectedLead) {
@@ -1805,9 +2017,16 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       grade: selectedLead.grade || "",
       tags: (selectedLead.tags ?? []).join(","),
       businessTypeIds: (selectedLead.businessTypes ?? []).map((t) => String(t.id)),
+      responsibilityType: selectedLead.responsibilityType ?? "",
+      devMethodKey: selectedLead.devMethodKey ?? "",
+      referralCustomerName: selectedLead.referralCustomerName ?? "",
+      referralTypeKey: selectedLead.referralTypeKey ?? "",
+      activityName: selectedLead.activityName ?? "",
+      sourceDepartmentKey: selectedLead.sourceDepartmentKey ?? "",
     })
     setIsEditing(true)
   }
+
 
 
   const handleCancelEdit = () => {
@@ -1826,9 +2045,16 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       grade: selectedLead.grade || "",
       tags: (selectedLead.tags ?? []).join(","),
       businessTypeIds: (selectedLead.businessTypes ?? []).map((t) => String(t.id)),
+      responsibilityType: selectedLead.responsibilityType ?? "",
+      devMethodKey: selectedLead.devMethodKey ?? "",
+      referralCustomerName: selectedLead.referralCustomerName ?? "",
+      referralTypeKey: selectedLead.referralTypeKey ?? "",
+      activityName: selectedLead.activityName ?? "",
+      sourceDepartmentKey: selectedLead.sourceDepartmentKey ?? "",
     })
     setIsEditing(false)
   }
+
 
 
   const handleSaveLeadDetails = async () => {
@@ -2296,46 +2522,153 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                 />
               </div>
             <div className="space-y-2">
-              <Label htmlFor="source-level1">一级渠道 *</Label>
+              <Label htmlFor="responsibility-type">责任归因（一级来源） *</Label>
               <Select
-                value={newLead.sourceLevel1}
-                onValueChange={(value) => setNewLead((prev) => ({ ...prev, sourceLevel1: value, sourceLevel2: "" }))}
+                value={newLead.responsibilityType}
+                onValueChange={(value) =>
+                  setNewLead((prev) => ({
+                    ...prev,
+                    responsibilityType: value,
+                    // 保持 sourceLevel1 与责任归因同步，兼容历史视图/筛选
+                    sourceLevel1: value,
+                    // 切换责任归因时重置下游条件字段
+                    sourceLevel2: "",
+                    devMethodKey: "",
+                    referralCustomerName: "",
+                    referralTypeKey: "",
+                    activityName: "",
+                  }))
+                }
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="选择一级渠道" />
+                  <SelectValue placeholder="选择责任归因" />
                 </SelectTrigger>
                 <SelectContent>
-                  {level1Options.map((channel) => (
-                    <SelectItem key={channel.key} value={channel.key}>
-                      {channel.label}
+                  {responsibilityTypeOptions.map((item) => (
+                    <SelectItem key={item.key} value={item.key}>
+                      {item.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
+
+            {newLead.responsibilityType === "company_resource" && (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="source-level2">二级来源 *</Label>
+                  <Select
+                    value={newLead.sourceLevel2}
+                    onValueChange={(value) => setNewLead((prev) => ({ ...prev, sourceLevel2: value }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="选择具体来源渠道" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {companyResourceGroupOptions.map((group) => (
+                        <React.Fragment key={group.key}>
+                          <SelectItem value={group.key} disabled>
+                            <span className="text-xs font-semibold text-muted-foreground">{group.label}</span>
+                          </SelectItem>
+                          {(group.children ?? []).map((child) => (
+                            <SelectItem key={child.key} value={child.key}>
+                              {child.label}
+                            </SelectItem>
+                          ))}
+                        </React.Fragment>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="source-department">来源责任部门（可选）</Label>
+                  <Select
+                    value={newLead.sourceDepartmentKey}
+                    onValueChange={(value) =>
+                      setNewLead((prev) => ({ ...prev, sourceDepartmentKey: value }))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="可选：用于内部复盘来源责任部门" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {sourceDepartmentOptions.map((item) => (
+                        <SelectItem key={item.key} value={item.key}>
+                          {item.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </>
+            )}
+
+            {newLead.responsibilityType === "sales_self" && (
+              <div className="space-y-2">
+                <Label htmlFor="dev-method">开发方式 *</Label>
+                <Select
+                  value={newLead.devMethodKey}
+                  onValueChange={(value) => setNewLead((prev) => ({ ...prev, devMethodKey: value }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="选择开发方式，例如邮件开发/私域运营等" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {devMethodOptions.map((item) => (
+                      <SelectItem key={item.key} value={item.key}>
+                        {item.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {newLead.responsibilityType === "customer_referral" && (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="referral-customer">转介绍客户名称 *</Label>
+                  <Input
+                    id="referral-customer"
+                    value={newLead.referralCustomerName}
+                    onChange={(e) =>
+                      setNewLead((prev) => ({ ...prev, referralCustomerName: e.target.value }))
+                    }
+                    placeholder="例如：XX 科技（老客户）"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="referral-type">转介绍类型 *</Label>
+                  <Select
+                    value={newLead.referralTypeKey}
+                    onValueChange={(value) => setNewLead((prev) => ({ ...prev, referralTypeKey: value }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="选择转介绍类型" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {referralTypeOptions.map((item) => (
+                        <SelectItem key={item.key} value={item.key}>
+                          {item.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </>
+            )}
+
             <div className="space-y-2">
-              <Label htmlFor="source-level2">二级渠道（可选）</Label>
-              <Select
-                value={newLead.sourceLevel2}
-                onValueChange={(value) => setNewLead((prev) => ({ ...prev, sourceLevel2: value }))}
-                disabled={getChildrenForLevel1(newLead.sourceLevel1).length === 0}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder={
-                    getChildrenForLevel1(newLead.sourceLevel1).length === 0
-                      ? "当前一级渠道下暂无二级渠道"
-                      : "选择二级渠道（可选）"
-                  } />
-                </SelectTrigger>
-                <SelectContent>
-                  {getChildrenForLevel1(newLead.sourceLevel1).map((child) => (
-                    <SelectItem key={child.key} value={child.key}>
-                      {child.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label htmlFor="activity-name">活动名称（可选）</Label>
+              <Input
+                id="activity-name"
+                value={newLead.activityName}
+                onChange={(e) => setNewLead((prev) => ({ ...prev, activityName: e.target.value }))}
+                placeholder="例如：一号位战略课 / 某场路演等"
+              />
             </div>
+
 
             <div className="space-y-3">
               <div className="flex items-center justify-between">

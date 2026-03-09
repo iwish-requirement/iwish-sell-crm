@@ -100,7 +100,50 @@ function normalizeKey(value: string) {
   return value.trim()
 }
 
+const DEFAULT_COMPANY_RESOURCE_GROUPS: SourceChannelSetting[] = [
+  {
+    key: "social_media",
+    label: "社媒渠道",
+    children: [
+      { key: "wechat_company", label: "视频号（公司号）" },
+      { key: "wechat_ip_1", label: "视频号（IP号）" },
+      { key: "wechat_ip_2", label: "视频号（IP号2）" },
+      { key: "xiaohongshu", label: "小红书" },
+      { key: "douyin", label: "抖音" },
+      { key: "official_account", label: "公众号" },
+      { key: "community", label: "社群" },
+    ],
+  },
+  {
+    key: "website",
+    label: "官网来源",
+    children: [
+      { key: "website_form", label: "官网表单" },
+      { key: "website_wechat", label: "官网加微信" },
+    ],
+  },
+  {
+    key: "offline_events",
+    label: "线下活动",
+    children: [
+      { key: "strategy_course", label: "一号位战略课" },
+      { key: "traffic_course", label: "流量系列课" },
+      { key: "brand_course", label: "品牌系列课" },
+      { key: "seo_course", label: "SEO系列课" },
+      { key: "expo", label: "展会" },
+      { key: "public_workshop", label: "公开课分享会" },
+      { key: "other_event", label: "其他活动" },
+    ],
+  },
+  {
+    key: "livestream",
+    label: "直播类",
+    children: [{ key: "livestream_lead", label: "直播间线索" }],
+  },
+]
+
 export function LeadGradesAndSourcesSettingsCard() {
+
   const [grades, setGrades] = useState<GradeDefinitionSetting[]>([])
   const [channels, setChannels] = useState<SourceChannelSetting[]>([])
   const [selectedChannelKey, setSelectedChannelKey] = useState<string | null>(null)
@@ -142,8 +185,9 @@ export function LeadGradesAndSourcesSettingsCard() {
 
       const [gradeResult, sourceResult] = await Promise.all([
         supabase.from("settings").select("value").eq("key", "leads.grade_definitions").maybeSingle(),
-        supabase.from("settings").select("value").eq("key", "leads.source_tree").maybeSingle(),
+        supabase.from("settings").select("value").eq("key", "leads.company_resource_source_groups").maybeSingle(),
       ])
+
 
       const gradeValue = (gradeResult.data?.value as any) ?? null
       const sourceValue = (sourceResult.data?.value as any) ?? null
@@ -181,22 +225,23 @@ export function LeadGradesAndSourcesSettingsCard() {
             ]
 
       const nextChannels: SourceChannelSetting[] =
-        sourceValue && Array.isArray(sourceValue.channels)
-          ? sourceValue.channels
+        sourceValue && Array.isArray(sourceValue.groups)
+          ? sourceValue.groups
               .filter((c: any) => c && typeof c.key === "string" && typeof c.label === "string")
               .map((c: any) => ({
-                key: String(c.key),
-                label: String(c.label),
-                children: Array.isArray(c.children)
-                  ? c.children
-                      .filter((child: any) => child && typeof child.key === "string" && typeof child.label === "string")
-                      .map((child: any) => ({
-                        key: String(child.key),
-                        label: String(child.label),
-                      }))
-                  : [],
-              }))
-          : []
+                  key: String(c.key),
+                  label: String(c.label),
+                  children: Array.isArray(c.children)
+                    ? c.children
+                        .filter((child: any) => child && typeof child.key === "string" && typeof child.label === "string")
+                        .map((child: any) => ({
+                          key: String(child.key),
+                          label: String(child.label),
+                        }))
+                    : [],
+                }))
+          : DEFAULT_COMPANY_RESOURCE_GROUPS
+
 
       setGrades(nextGrades)
       setChannels(nextChannels)
@@ -210,7 +255,8 @@ export function LeadGradesAndSourcesSettingsCard() {
       setIsLoading(false)
     } catch (error) {
       console.error("Failed to load grade and source settings", error)
-      setLoadError("客户级别和渠道配置加载失败，请稍后重试")
+      setLoadError("客户级别和来源配置加载失败，请稍后重试")
+
       setIsLoading(false)
     }
   }
@@ -306,7 +352,8 @@ export function LeadGradesAndSourcesSettingsCard() {
     const key = normalizeKey(channelDraft.key)
     const label = channelDraft.label.trim()
     if (!key || !label) {
-      toast.error("请填写一级渠道 Key 与名称")
+      toast.error("请填写来源分类 Key 与名称")
+
       return
     }
 
@@ -347,8 +394,9 @@ export function LeadGradesAndSourcesSettingsCard() {
       kind: "channel",
       index,
       channelKey: row.key,
-      title: "删除一级渠道",
-      description: `确认删除一级渠道「${row.label}」吗？其下所有二级渠道也会被删除。此操作仅影响本地草稿，点击“保存配置”后才会生效。`,
+      title: "删除来源分类",
+      description: `确认删除来源分类「${row.label}」吗？其下所有二级来源也会被删除。此操作仅影响本地草稿，点击“保存配置”后才会生效。`,
+
     })
     setDeleteDialogOpen(true)
   }
@@ -371,7 +419,8 @@ export function LeadGradesAndSourcesSettingsCard() {
     const key = normalizeKey(childDraft.key)
     const label = childDraft.label.trim()
     if (!key || !label) {
-      toast.error("请填写二级渠道 Key 与名称")
+      toast.error("请填写二级来源 Key 与名称")
+
       return
     }
 
@@ -403,8 +452,9 @@ export function LeadGradesAndSourcesSettingsCard() {
       kind: "child",
       channelIndex,
       childIndex,
-      title: "删除二级渠道",
-      description: `确认删除二级渠道「${row.label}」吗？此操作仅影响本地草稿，点击“保存配置”后才会生效。`,
+      title: "删除二级来源",
+      description: `确认删除二级来源「${row.label}」吗？此操作仅影响本地草稿，点击“保存配置”后才会生效。`,
+
     })
     setDeleteDialogOpen(true)
   }
@@ -483,11 +533,12 @@ export function LeadGradesAndSourcesSettingsCard() {
               },
             },
             {
-              key: "leads.source_tree",
+              key: "leads.company_resource_source_groups",
               value: {
-                channels: trimmedChannels,
+                groups: trimmedChannels,
               },
             },
+
           ],
           { onConflict: "key" },
         )
@@ -503,15 +554,17 @@ export function LeadGradesAndSourcesSettingsCard() {
             description: "当前账号无权修改线索配置，请联系系统管理员开通相应设置权限",
           })
         } else {
-          toast.error("保存失败", { description: "保存客户级别与渠道配置时出错，请稍后重试" })
+          toast.error("保存失败", { description: "保存客户级别与来源配置时出错，请稍后重试" })
+
         }
         return
       }
 
-      toast.success("客户级别与渠道配置已保存")
+      toast.success("客户级别与来源配置已保存")
     } catch (error) {
       console.error("Unexpected error while saving grade and source settings", error)
-      toast.error("保存失败", { description: "保存客户级别与渠道配置时发生异常，请稍后重试或联系管理员" })
+      toast.error("保存失败", { description: "保存客户级别与来源配置时发生异常，请稍后重试或联系管理员" })
+
     } finally {
       setIsSaving(false)
     }
@@ -520,10 +573,11 @@ export function LeadGradesAndSourcesSettingsCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>客户级别与渠道配置</CardTitle>
+        <CardTitle>客户级别与来源配置</CardTitle>
         <CardDescription>
-          配置 S/A/B/C 客户级别含义，以及线索来源的一级渠道与二级渠道枚举，前端录入和筛选会使用这里的配置。
+          配置 S/A/B/C 客户级别含义，以及“公司分配资源”场景下的来源分类与二级来源枚举；历史渠道树继续用于兼容旧线索展示。
         </CardDescription>
+
         {loadError && <p className="mt-2 text-xs text-destructive/80">{loadError}</p>}
       </CardHeader>
 
@@ -551,38 +605,42 @@ export function LeadGradesAndSourcesSettingsCard() {
 
         <Separator />
 
-        {/* 主：渠道 */}
+        {/* 主：来源配置 */}
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-sm font-medium">线索来源渠道</h3>
-              <p className="text-xs text-muted-foreground">左侧维护一级渠道，右侧维护选中一级渠道下的二级渠道。</p>
+              <h3 className="text-sm font-medium">公司分配资源二级来源</h3>
+              <p className="text-xs text-muted-foreground">左侧维护来源分类，右侧维护选中分类下的二级来源。</p>
             </div>
+
             <div className="flex items-center gap-2">
               <Badge variant="outline" className="text-xs">
                 {channels.length} 个一级
               </Badge>
               <Button size="sm" onClick={openCreateChannel} disabled={isLoading || isSaving}>
-                <Plus className="mr-2 h-4 w-4" /> 新增一级
+                <Plus className="mr-2 h-4 w-4" /> 新增分类
               </Button>
+
             </div>
           </div>
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <h4 className="text-sm font-medium">一级渠道</h4>
+                <h4 className="text-sm font-medium">来源分类</h4>
                 <Badge variant="outline" className="text-xs">
                   {channels.length} 个
                 </Badge>
               </div>
+
               <div className="rounded-md border">
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="w-[160px]">Key</TableHead>
-                      <TableHead>名称</TableHead>
-                      <TableHead className="w-[110px] text-center">二级数量</TableHead>
+              <TableHead className="w-[160px]">Key</TableHead>
+              <TableHead>名称</TableHead>
+              <TableHead className="w-[110px] text-center">二级来源数</TableHead>
+
                       <TableHead className="w-[72px] text-right">操作</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -620,10 +678,11 @@ export function LeadGradesAndSourcesSettingsCard() {
                     {channels.length === 0 && (
                       <TableRow>
                         <TableCell colSpan={4} className="h-20 text-center text-muted-foreground">
-                          暂无一级渠道，请先新增一个
+                          暂无来源分类，请先新增一个
                         </TableCell>
                       </TableRow>
                     )}
+
                   </TableBody>
                 </Table>
               </div>
@@ -632,9 +691,10 @@ export function LeadGradesAndSourcesSettingsCard() {
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <h4 className="text-sm font-medium">二级渠道</h4>
+                  <h4 className="text-sm font-medium">二级来源</h4>
                   {selectedChannel ? (
                     <Badge variant="secondary" className="text-xs">
+
                       {selectedChannel.label}
                     </Badge>
                   ) : null}
@@ -647,7 +707,8 @@ export function LeadGradesAndSourcesSettingsCard() {
                   }}
                   disabled={isLoading || isSaving || selectedChannelIndex == null}
                 >
-                  <Plus className="mr-2 h-4 w-4" /> 新增二级
+                  <Plus className="mr-2 h-4 w-4" /> 新增二级来源
+
                 </Button>
               </div>
 
@@ -664,7 +725,7 @@ export function LeadGradesAndSourcesSettingsCard() {
                     {selectedChannelIndex == null && (
                       <TableRow>
                         <TableCell colSpan={3} className="h-20 text-center text-muted-foreground">
-                          请先在左侧选择一个一级渠道
+                          请先在左侧选择一个来源分类
                         </TableCell>
                       </TableRow>
                     )}
@@ -672,10 +733,11 @@ export function LeadGradesAndSourcesSettingsCard() {
                     {selectedChannelIndex != null && selectedChildren.length === 0 && (
                       <TableRow>
                         <TableCell colSpan={3} className="h-20 text-center text-muted-foreground">
-                          当前一级渠道下暂无二级渠道
+                          当前来源分类下暂无二级来源
                         </TableCell>
                       </TableRow>
                     )}
+
 
                     {selectedChannelIndex != null &&
                       selectedChildren.map((row, childIndex) => (
@@ -831,7 +893,8 @@ export function LeadGradesAndSourcesSettingsCard() {
         <Dialog open={channelDialogOpen} onOpenChange={setChannelDialogOpen}>
           <DialogContent className="sm:max-w-lg">
             <DialogHeader>
-              <DialogTitle>{channelDraft?.index == null ? "新增一级渠道" : "编辑一级渠道"}</DialogTitle>
+              <DialogTitle>{channelDraft?.index == null ? "新增来源分类" : "编辑来源分类"}</DialogTitle>
+
               <DialogDescription>Key 用于存储与筛选，建议使用英文/短横线风格，避免随意变更。</DialogDescription>
             </DialogHeader>
 
@@ -870,8 +933,9 @@ export function LeadGradesAndSourcesSettingsCard() {
         <Dialog open={childDialogOpen} onOpenChange={setChildDialogOpen}>
           <DialogContent className="sm:max-w-lg">
             <DialogHeader>
-              <DialogTitle>{childDraft?.childIndex == null ? "新增二级渠道" : "编辑二级渠道"}</DialogTitle>
-              <DialogDescription>二级渠道会随一级渠道一起用于表单选择与筛选。</DialogDescription>
+              <DialogTitle>{childDraft?.childIndex == null ? "新增二级来源" : "编辑二级来源"}</DialogTitle>
+              <DialogDescription>二级来源会随来源分类一起用于线索录入与筛选。</DialogDescription>
+
             </DialogHeader>
 
             <div className="space-y-4">
