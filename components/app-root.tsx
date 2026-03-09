@@ -44,6 +44,7 @@ export type MePermissions = {
   canViewPublicPool: boolean
   canReadContracts: boolean
   canManageContracts: boolean
+  canImportLeads: boolean
   leadScopeType: "self" | "team" | "org" | "custom"
 }
 
@@ -120,6 +121,7 @@ export function AppRoot() {
             canViewPublicPool: false,
             canReadContracts: false,
             canManageContracts: false,
+            canImportLeads: false,
             leadScopeType: "self",
           })
 
@@ -138,6 +140,7 @@ export function AppRoot() {
           canViewPublicPool: Boolean(value.canViewPublicPool),
           canReadContracts: Boolean(value.canReadContracts),
           canManageContracts: Boolean(value.canManageContracts),
+          canImportLeads: Boolean(value.canImportLeads),
           leadScopeType: (value.leadScopeType as MePermissions["leadScopeType"]) ?? "self",
         })
 
@@ -155,6 +158,7 @@ export function AppRoot() {
           canViewPublicPool: false,
           canReadContracts: false,
           canManageContracts: false,
+          canImportLeads: false,
           leadScopeType: "self",
         })
 

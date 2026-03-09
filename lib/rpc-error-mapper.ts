@@ -153,7 +153,48 @@ export function mapRpcError(
       }
     }
 
+    if (code === "responsibility_type_required") {
+      return {
+        kind: "validation",
+        title: "请选择一级来源",
+        description: "一级来源（责任归因）为必填项，未填写时无法保存。",
+        canRetry: false,
+        rawMessage,
+      }
+    }
+
+    if (code === "secondary_source_required_for_company_resource") {
+      return {
+        kind: "validation",
+        title: "请选择二级来源",
+        description: "当一级来源为公司分配资源时，必须选择二级来源。",
+        canRetry: false,
+        rawMessage,
+      }
+    }
+
+    if (code === "dev_method_required_for_sales_self") {
+      return {
+        kind: "validation",
+        title: "请选择开发方式",
+        description: "当一级来源为销售自主开发时，必须填写开发方式。",
+        canRetry: false,
+        rawMessage,
+      }
+    }
+
+    if (code === "referral_info_required_for_customer_referral") {
+      return {
+        kind: "validation",
+        title: "请补全转介绍信息",
+        description: "当一级来源为客户转介绍时，必须填写来源客户和转介绍类型。",
+        canRetry: false,
+        rawMessage,
+      }
+    }
+
     return {
+
       kind: "validation",
       title: "参数校验失败",
       description: "提交的参数不符合要求，请检查输入后重试。",
@@ -165,6 +206,18 @@ export function mapRpcError(
 
   const invalidStatus = rawMessage.match(/ERR_INVALID_STATUS:([a-zA-Z0-9_.-]+)/)
   if (invalidStatus) {
+    const code = invalidStatus[1]
+
+    if (code === "cannot_change_source_when_closed") {
+      return {
+        kind: "invalid_status",
+        title: "当前线索已锁定来源",
+        description: "成交或关闭后的线索不允许再修改一级来源、二级来源或相关归因字段。",
+        canRetry: false,
+        rawMessage,
+      }
+    }
+
     return {
       kind: "invalid_status",
       title: "状态不允许",
@@ -173,6 +226,7 @@ export function mapRpcError(
       rawMessage,
     }
   }
+
 
   const notFound = rawMessage.match(/ERR_NOT_FOUND:([a-zA-Z0-9_.-]+)/)
   if (notFound) {

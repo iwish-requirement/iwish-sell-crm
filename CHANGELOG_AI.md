@@ -3,6 +3,97 @@
 > 本文件用于记录 AI 助手在本仓库内做出的重要结构/逻辑变更，方便你审计、回顾与回滚。
 > 按时间倒序追加；同一天多次修改可在同一日期下追加小节。
 
+## 2026-03-09
+
+### lead-source-model-alignment: 线索来源模型重定义为“一级来源 / 二级来源”，并兼容历史渠道数据
+
+**变更点**
+- 新增迁移 `supabase/migrations/042_lead_source_model_alignment.sql`：
+  - 新增 `settings.key = 'leads.company_resource_source_groups'`，用于承载“公司分配资源”场景下的二级来源配置（社媒渠道 / 官网来源 / 线下活动 / 直播类）；
+  - 修正 `leads.responsibility_types` 预置文案，将 `company_resource` 对齐为“公司分配资源”；
+  - 重写 `iwish.rpc_lead_create` 与 `iwish.rpc_lead_update` 的来源校验语义：`source_level1` 统一表示一级来源（责任归因），`source_level2` 仅在 `company_resource` 场景下作为二级来源（渠道归因）使用；
+  - 取消 `company_resource` 场景对 `source_department_key` 的强制要求，不再把“来源责任部门”作为主流程必填；
+  - 保留历史数据兼容策略：不对旧线索做强制回填，旧 `source_level1/source_level2` 仍可按历史渠道含义继续展示；只有当用户显式修改来源时，才会按新版模型写入并锁定 `source_locked_at`。
+- 更新 `components/lead-kanban.tsx`：
+  - “新增线索”弹窗改为以“一级来源（责任归因）/ 二级来源（渠道归因）/ 条件字段”为核心录入模型；
+  - 公司分配资源时展示二级来源，销售自主开发时展示开发方式，客户转介绍时展示来源客户与转介绍类型，活动名称仅在线下活动类二级来源下展示且为选填；
+  - 详情页编辑态同样切换为新版来源模型，并在历史线索上显示“修改后将按新版模型保存”的兼容提示；
+  - 高级筛选文案改为“一级来源 / 二级来源”，同时继续兼容历史渠道树和旧视图预设。
+- 更新 `components/lead-grades-and-sources-settings-card.tsx`：
+  - 配置项由旧的通用 `leads.source_tree` 迁移为面向新模型的 `leads.company_resource_source_groups`，用于维护“公司分配资源”的来源分类与二级来源；
+  - 文案同步改为“来源分类 / 二级来源”，保留历史渠道树仅用于旧数据展示。
+- 更新 `lib/rpc-error-mapper.ts` 与 `lib/services/leads.ts`：
+  - 补充新版来源校验错误码的中文提示；
+  - 为 `leads_secure_view` 的来源相关字段补全前端类型声明。
+
+**变更原因（对应 PRD/原型）**
+- 你明确纠正当前需求并强调：旧的“一级渠道 / 二级渠道”已经被新的来源模型替代，最终结构应为“一级来源 = 责任归因；二级来源 = 渠道归因；条件字段 = 细分归因；锁定时间 = 数据保护”；
+- 现有实现把 `responsibility_type` 当作附加字段，仍要求“来源责任部门”等旧语义字段，和业务实际不一致；
+- 同时线上已存在大量历史线索仍使用旧渠道结构，不能直接粗暴回填或覆盖，因此采用“前端兼容展示 + 修改时迁移”的渐进式兼容方案。
+
+**影响范围**
+- DB / RPC：创建与编辑线索时，来源字段的校验和落库语义已对齐新版模型；历史线索在未被修改来源前保持原样；
+- 前端 / 交互：新增、详情编辑、筛选与配置后台的来源文案和录入方式均切换为新版模型；
+- 兼容性：旧 `leads.source_tree` 继续作为历史数据显示字典存在，但不再作为新录入模型的主配置来源。
+
+**回滚方式**
+- DB：回滚 `042_lead_source_model_alignment.sql` 中的函数覆盖和新配置 key，恢复 `041` 的旧校验逻辑；
+- 前端：恢复 `components/lead-kanban.tsx` 中旧的“一级渠道 / 二级渠道”表单与详情编辑逻辑，并将设置卡片重新指向 `leads.source_tree`；
+- 若只需停止新版来源配置，可删除 `settings.key = 'leads.company_resource_source_groups'`，前端会回退到内置 fallback 配置。
+
+## 2026-03-06
+
+
+### leads-responsibility-and-source: 线索责任归因 + 来源条件必填 + 可配置枚举
+
+**变更点**
+- 新增迁移 `supabase/migrations/041_lead_responsibility_and_source.sql`：
+  - 为 `public.leads` 增加责任归因相关字段：`responsibility_type/dev_method_key/referral_customer_name/referral_type_key/activity_name/source_department_key/source_locked_at`，并为 `responsibility_type` 增加枚举约束，仅允许 `company_resource/sales_self/customer_referral` 或为空；
+  - 重建 `public.leads_secure_view`，在不改变原有列顺序与脱敏策略的前提下，在末尾追加上述责任归因字段，保证前端继续只读视图、不直接 select 底表；
+  - 基于最新版本的 `iwish.rpc_lead_create(payload jsonb)` 扩展：在原有权限、scope 以及业务类型校验逻辑不变的前提下，新增解析并校验责任归因相关字段：
+    - `responsibility_type` 必填；
+    - `company_resource` 场景下 `source_level1` 与 `source_department_key` 必填，一级渠道为 `offline` 时 `activity_name` 也必填；
+    - `sales_self` 场景下 `dev_method_key` 必填；
+    - `customer_referral` 场景下 `referral_customer_name` 与 `referral_type_key` 必填；
+    - 成功创建时同时写入 `source_locked_at = now()` 以锁定首次来源归因；
+  - 基于最新版本的 `iwish.rpc_lead_update(p_lead_id uuid, patch jsonb, p_reason text default null)` 扩展：在保留现有“自范围 override + 阶段前进校验 + 公海退回权限 + 审计”逻辑基础上新增：
+    - 对 `status='closed'` 的成交线索，禁止修改任何责任归因或来源字段（`responsibility_type/source_level1/source_level2/dev_method_key/referral_*/activity_name/source_department_key`），否则抛出 `ERR_INVALID_STATUS:cannot_change_source_when_closed`；
+    - 对“已进入新来源体系”的线索（已有 `responsibility_type` 或本次 patch 带上）强制执行与创建时一致的条件必填校验，避免通过补丁更新绕过前端校验；
+    - 在从“无责任归因”首次写入 `responsibility_type` 时自动填充 `source_locked_at = now()`，其余场景不回写该字段，保证来源锁定时间单调；
+  - 重建 `public.rpc_lead_create` 与 `public.rpc_lead_update` 包装函数，保持签名与权限不变，仅透传到新的 `iwish.*` 实现。
+- 新增 4 个 `public.settings` 配置 key，用于承载可配置枚举并与前端的 fallback 对齐：
+  - `leads.responsibility_types`：`company_resource/sales_self/customer_referral` 三种责任归因；
+  - `leads.dev_methods`：邮件开发、私域/朋友圈、老客挖掘、短视频引流、其他；
+  - `leads.referral_types`：老客户介绍、渠道伙伴介绍、朋友/人脉介绍；
+  - `leads.source_departments`：示例预置为深圳销售团队、深圳客服团队、杭州销售团队；所有插入均使用 `on conflict (key) do nothing`，不会覆盖线上已经存在的自定义配置。
+- 前端（已在此前对话中完成落地，仅在此补充记录）：
+  - `components/lead-kanban.tsx` 的“新增线索”弹窗新增“责任归因”区域及联动字段（开发方式、转介绍客户名称与类型、来源责任部门、活动名称），并基于责任类型实现条件必填校验，与新的 RPC 字段一一对应；
+  - 新增本地 fallback 列表 `FALLBACK_RESPONSIBILITY_TYPES/FALLBACK_DEV_METHODS/FALLBACK_REFERRAL_TYPES/FALLBACK_SOURCE_DEPARTMENTS`，并在加载 `public.settings` 成功时自动覆盖，保证在未配置 settings 的环境下也能直接使用你领导提供的字段语义。
+
+**变更原因（对应 PRD/原型）**
+- PRD 明确要求“来源责任归因 + 渠道归因 + 条件必填”必须在后端层面强制执行，而不是只在前端做表单校验，同时需要支持后续按业务调整责任类型、开发方式、转介绍类型与来源部门枚举；
+- 现有实现中，线索的 `source/source_level1/source_level2` 虽然已结构化，但无法表达“公司资源 vs 销售自拓 vs 客户转介绍”的责任边界，也缺少对成交后来源信息的锁定与审计；
+- 通过在 `public.leads` 上新增责任归因字段、将其暴露到 `leads_secure_view` 并在 `rpc_lead_create/update` 中集中校验，可以在不破坏既有 UI 结构的前提下，将“责任归因 + 来源条件必填 + 锁定时间”落到数据库层，同时保持枚举值在 `public.settings` 中可配置，满足领导对灵活性与安全性的双重要求。
+
+**影响范围**
+- DB / 视图 / RPC：
+  - `public.leads` 表结构发生向后兼容式扩展，新字段默认允许为 null，不对历史数据做强制回填；
+  - `public.leads_secure_view` 的列集扩展，所有既有消费方可以无感继续使用旧列，新列仅供需要责任归因信息的新功能读取；
+  - `iwish.rpc_lead_create` 与 `iwish.rpc_lead_update` 的签名保持不变，但新增对责任归因与来源字段的强校验和 `source_locked_at` 写入逻辑，调用方在传入不符合业务规则的 payload 时会收到更细粒度的 `ERR_VALIDATION:*` 或 `ERR_INVALID_STATUS:*` 错误码；
+  - `public.settings` 新增 4 个与线索责任/来源相关的配置 key，可通过 Settings UI 后续接入管理界面。
+- 前端 / 交互：
+  - “新增线索”表单在责任归因选择后会动态展示/隐藏相关字段，并在提交前进行前端校验，减少触发后端错误的频率，同时与 RPC 校验规则保持一致；
+  - 由于 `leads_secure_view` 返回了责任相关字段，后续可以在看板卡片、详情抽屉或报表中展示“责任归因 + 渠道 + 活动 + 来源部门”，用于内部复盘和 ROI 归因。
+
+**回滚方式**
+- DB：
+  - 可在后续迁移中对 `public.leads` 执行 `alter table public.leads drop column ...` 逐个删除本次新增的责任归因相关字段，并还原旧版 `public.leads_secure_view` 定义；
+  - 可从 `004_rpc_and_audit.sql/030_leads_update_self_scope_override.sql/031_business_types_and_wecom.sql` 中拷贝旧版 `iwish.rpc_lead_create` 与 `iwish.rpc_lead_update` 定义，在新的迁移中 `create or replace function` 覆盖当前实现；
+  - 若不再需要可配置枚举，可删除 `public.settings` 中 `key in ('leads.responsibility_types','leads.dev_methods','leads.referral_types','leads.source_departments')` 的记录。
+- 前端：
+  - 在 `components/lead-kanban.tsx` 中移除“责任归因”相关字段状态与表单 UI，并恢复原有的新增线索校验逻辑；
+  - 删除 fallback 列表与从 `public.settings` 读取责任归因配置的代码，使新增线索回退到仅依赖 `source_level1/source_level2` 的旧版来源模型。
+
 ## 2026-02-02
 
 ### wecom-renewal-notify: 续费预警企微自动通知 + 设置开关

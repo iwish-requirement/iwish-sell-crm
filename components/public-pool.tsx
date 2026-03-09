@@ -107,6 +107,31 @@ const EMPTY_SALES_REPS: SalesRep[] = []
 // 公海池列表由 Supabase 实时加载，这里不再保留历史 mock 数据，以免造成误解
 const mockPoolLeads: PoolLead[] = []
 
+// 导入模板中“二级来源(渠道)”列与内部来源 key 的映射
+const IMPORT_PRIMARY_SOURCE_FOR_POOL = "company_resource" as const
+
+const IMPORT_SECONDARY_LABEL_TO_KEY: Record<string, string> = {
+  抖音: "douyin",
+  "视频号（公司号）": "wechat_company",
+  "视频号（IP号）": "wechat_ip_1",
+  "视频号（IP号2）": "wechat_ip_2",
+  小红书: "xiaohongshu",
+  公众号: "official_account",
+  社群: "community",
+  官网表单: "website_form",
+  官网加微信: "website_wechat",
+  一号位战略课: "strategy_course",
+  流量系列课: "traffic_course",
+  品牌系列课: "brand_course",
+  SEO系列课: "seo_course",
+  展会: "expo",
+  公开课分享会: "public_workshop",
+  其他活动: "other_event",
+  直播间线索: "livestream_lead",
+}
+
+const IMPORT_FALLBACK_SECONDARY_KEY = "other_event" as const
+
 
 type ImportStage = "idle" | "uploading" | "checking" | "complete"
 
@@ -116,6 +141,7 @@ export function PublicPool() {
   const canAssignLeads = mePermissions?.canAssignLeads ?? false
   const canDeleteLeads = mePermissions?.canDeleteLeads ?? false
   const canViewPublicPool = mePermissions?.canViewPublicPool ?? false
+  const canImportLeads = mePermissions?.canImportLeads ?? false
   const [searchQuery, setSearchQuery] = useState("")
   const [importDialogOpen, setImportDialogOpen] = useState(false)
   const [assignDialogOpen, setAssignDialogOpen] = useState(false)
@@ -831,6 +857,13 @@ export function PublicPool() {
   const handleConfirmImport = async () => {
     const supabase = getBrowserSupabaseClient()
 
+    if (!canImportLeads) {
+      toast.error("没有导入线索的权限", {
+        description: "当前账号未开通线索导入权限，如需调整权限，请联系系统管理员。",
+      })
+      return
+    }
+
     if (importStage === "complete" && uploadedFile && !isSubmittingImport && parsedImportRows) {
       try {
         setIsSubmittingImport(true)
@@ -887,7 +920,7 @@ export function PublicPool() {
                 for (const cols of rowsToUse) {
                   if (cols.length < 6) continue
 
-                  const [company, contact, phone, wechat, source, budgetStr] = cols.map((c) => c.trim())
+                  const [company, contact, phone, wechat, sourceLabel, budgetStr] = cols.map((c) => c.trim())
                   const budget = budgetStr ? Number(budgetStr) : null
 
                   // 数据库级去重：若该手机号已存在可见线索，则跳过本行
@@ -912,17 +945,29 @@ export function PublicPool() {
                     }
                   }
 
+                  const rawSourceLabel = sourceLabel || ""
+                  const primarySource = IMPORT_PRIMARY_SOURCE_FOR_POOL
+                  let secondarySourceKey = IMPORT_SECONDARY_LABEL_TO_KEY[rawSourceLabel] ?? ""
+
+                  if (!secondarySourceKey) {
+                    // 对于模板中未识别的来源标签，统一归入“其他活动”
+                    secondarySourceKey = IMPORT_FALLBACK_SECONDARY_KEY
+                  }
+
                   const payload: any = {
                     team_id: profile.team_id,
                     owner_id: profile.id,
                     name: company,
-                    source,
+                    source: rawSourceLabel || "公司分配资源",
                     stage: "L1",
-
                     status: "pool",
                     customer_name: contact,
                     customer_phone: phone,
+                    responsibility_type: primarySource,
+                    source_level1: primarySource,
+                    source_level2: secondarySourceKey,
                   }
+
 
                   if (budget !== null && !Number.isNaN(budget)) {
                     payload.budget = budget
@@ -1225,7 +1270,9 @@ export function PublicPool() {
                     } else {
                       const { data, error: leadsError } = await supabase
                         .from("leads_secure_view")
-                        .select("name, customer_name, customer_phone, source, budget, stage, status")
+                        .select(
+                          "name, customer_name, customer_phone, wechat, source, budget, stage, status, responsibility_type, source_level1, source_level2",
+                        )
                         .eq("status", "pool")
 
                       if (leadsError) {
@@ -1233,7 +1280,7 @@ export function PublicPool() {
                         toast.error("导出失败", { description: "加载线索数据失败，请稍后重试" })
                       } else {
                         const rows = data ?? []
-                        const header = ["公司名称", "联系人", "电话", "来源", "预算", "阶段", "状态"]
+                        const header = ["公司名称", "联系人", "电话", "微信号", "二级来源(渠道)", "预算(元)"]
                         const csvLines = [
                           header.join(","),
                           ...rows.map((row: any) =>
@@ -1241,14 +1288,13 @@ export function PublicPool() {
                               row.name ?? "",
                               row.customer_name ?? "",
                               row.customer_phone ?? "",
-                              row.source ?? "",
+                              row.wechat ?? "",
+                              getPublicPoolExportSourceLabel(row),
                               row.budget ?? "",
-                              row.stage ?? "",
-                              row.status ?? "",
                             ]
                               .map((value) => {
                                 const v = String(value ?? "")
-                                if (v.includes(",") || v.includes("\"")) {
+                                if (v.includes(",") || v.includes("\"") || v.includes("\n")) {
                                   return `"${v.replace(/"/g, '""')}"`
                                 }
                                 return v

@@ -51,6 +51,18 @@ import {
   AlertTriangle,
 } from "lucide-react"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import {
+  AlertDialog,
+  AlertDialogTrigger,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+
 import { cn } from "@/lib/utils"
 import { getBrowserSupabaseClient } from "@/lib/supabase/client"
 import { rpcGetRolePermissions, rpcRolePermissionsSetMatrix, type RolePermissionMatrixItem } from "@/lib/services/role-permissions"
@@ -2005,6 +2017,8 @@ function OrganizationTab() {
   const [roleEditRoleId, setRoleEditRoleId] = useState<string>("")
   const [isUpdatingOrg, setIsUpdatingOrg] = useState(false)
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false)
+  const [deleteTeamDialogOpen, setDeleteTeamDialogOpen] = useState(false)
+
   const [rejectReason, setRejectReason] = useState("")
   const [statusDialogTarget, setStatusDialogTarget] = useState<TeamMember | null>(null)
   const [disableDialogOpen, setDisableDialogOpen] = useState(false)
@@ -2176,7 +2190,61 @@ function OrganizationTab() {
     }
   }, [])
 
+  const handleDeleteTeam = async () => {
+    const currentTeam = selectedTeam
+
+    if (!currentTeam) return
+
+    if (currentTeam.members.length > 0) {
+      toast.error("无法删除团队", {
+        description: "该团队下仍有成员，请先转移或移除所有成员后再删除。",
+      })
+      return
+    }
+
+    try {
+      const supabase = getBrowserSupabaseClient()
+      const { error } = await supabase
+        .from("teams")
+        .delete()
+        .eq("id", currentTeam.id)
+
+      if (error) {
+        console.error("Failed to delete team", error)
+        const message = error.message ?? ""
+        if (message.includes("ERR_NO_PERMISSION:teams.manage")) {
+          toast.error("删除失败", {
+            description: "当前账号无权删除团队。如需开通 teams.manage 权限，请联系系统管理员。",
+          })
+        } else if (message.includes("violates foreign key constraint") || message.includes("foreign key")) {
+          toast.error("删除失败", {
+            description: "该团队仍被成员或业务数据引用，无法删除。请先清理相关引用。",
+          })
+        } else {
+          toast.error("删除失败", { description: "删除团队时出错，请稍后重试或联系管理员" })
+        }
+        return
+      }
+
+      setTeams((prev) => prev.filter((team) => team.id !== currentTeam.id))
+      setDbTeams((prev) => prev.filter((team) => team.id !== currentTeam.id))
+
+      setSelectedTeamId((prevSelected) => {
+        if (prevSelected !== currentTeam.id) return prevSelected
+        const remaining = teams.filter((team) => team.id !== currentTeam.id)
+        return remaining.length > 0 ? remaining[0].id : null
+      })
+
+      setDeleteTeamDialogOpen(false)
+      toast.success(`团队 "${currentTeam.name}" 已删除`)
+    } catch (error) {
+      console.error("Failed to delete team", error)
+      toast.error("删除失败", { description: "删除团队时发生异常，请稍后重试或联系管理员" })
+    }
+  }
+
   const handleAddTeam = async () => {
+
     const name = newTeamName.trim()
     if (!name) {
       return
@@ -2801,7 +2869,40 @@ function OrganizationTab() {
                   </Dialog>
                 </div>
                 <div className="flex gap-2">
+                  <AlertDialog open={deleteTeamDialogOpen} onOpenChange={setDeleteTeamDialogOpen}>
+                    <AlertDialogTrigger asChild>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="border-destructive text-destructive hover:bg-destructive/5"
+                        disabled={!selectedTeam}
+                      >
+                        <Trash2 className="w-4 h-4 mr-1" /> 删除团队
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>删除团队</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          确认删除团队「{selectedTeam?.name}」吗？该操作不可撤销，且仅当团队下没有任何成员且未被业务数据引用时才会成功。
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>取消</AlertDialogCancel>
+                        <AlertDialogAction
+                          className="bg-destructive text-white hover:bg-destructive/90"
+                          onClick={(e) => {
+                            e.preventDefault()
+                            void handleDeleteTeam()
+                          }}
+                        >
+                          确认删除
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
                   <Dialog open={addMemberDialogOpen} onOpenChange={setAddMemberDialogOpen}>
+
                     <DialogTrigger asChild>
                       <Button size="sm">
                         <UserPlus className="w-4 h-4 mr-2" />
