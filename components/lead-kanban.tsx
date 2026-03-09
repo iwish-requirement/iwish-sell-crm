@@ -570,6 +570,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     company: "",
     contact: "",
     phone: "",
+    wechat: "",
     sourceLevel1: "",
     sourceLevel2: "",
     budget: "",
@@ -585,6 +586,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     activityName: "",
     sourceDepartmentKey: "",
   })
+
 
 
 
@@ -723,10 +725,43 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     return map
   }, [businessTypes])
 
+  const legacySourceLevel1Keys = useMemo<string[]>(() => {
+    const keys = new Set<string>()
+    const responsibilityKeys = new Set(responsibilityTypeOptions.map((item) => item.key))
+    for (const lead of leads) {
+      const key = lead.sourceLevel1
+      if (key && !responsibilityKeys.has(key)) {
+        keys.add(key)
+      }
+    }
+    return Array.from(keys).sort()
+  }, [leads])
+
   const getChildrenForLevel1 = (level1Key: string): SourceTreeChild[] => {
     const channel = level1Options.find((c) => c.key === level1Key)
     return channel?.children ?? []
   }
+
+  const getSecondarySourceOptionsForFilter = (level1Key: string): SourceTreeChild[] => {
+    if (!level1Key || level1Key === "all") {
+      return []
+    }
+
+    // 新来源模型：公司分配资源场景下，二级来源来自公司分配资源分组配置
+    if (level1Key === "company_resource") {
+      const children: SourceTreeChild[] = []
+      for (const group of companyResourceGroupOptions) {
+        for (const child of group.children ?? []) {
+          children.push(child)
+        }
+      }
+      return children
+    }
+
+    // 历史渠道树：用于兼容旧线索的一级/二级来源
+    return getChildrenForLevel1(level1Key)
+  }
+
 
 
   const resolveSourceLabel = (
@@ -1461,12 +1496,13 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
   const handleAddLead = async () => {
 
-    if (!newLead.company || !newLead.phone) {
+    if (!newLead.company || (!newLead.phone && !newLead.wechat)) {
       toast.error("请填写必填字段", {
-        description: "公司名称和联系电话为必填项",
+        description: "公司名称，以及联系电话 / 微信至少填写一个",
       })
       return
     }
+
 
     if (!newLead.responsibilityType) {
       toast.error("请选择责任归因", {
@@ -1506,10 +1542,13 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       return
     }
 
+    const trimmedPhone = newLead.phone.trim()
+    const trimmedWechat = (newLead.wechat ?? "").trim()
     const trimmedBudget = newLead.budget.trim()
 
 
     let budgetValue: number | null = null
+
 
     if (trimmedBudget) {
       const parsed = Number(trimmedBudget.replace(/,/g, ""))
@@ -1559,9 +1598,10 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
         stage: "L1",
         status: "open",
         customer_name: newLead.contact || "新联系人",
-        customer_phone: newLead.phone,
+        customer_phone: trimmedPhone || null,
         customer_email: null,
         budget: budgetValue,
+
         last_contact_at: new Date().toISOString(),
         customer_grade: newLead.grade || null,
         source_level1: newLead.responsibilityType,
@@ -1604,7 +1644,16 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       const budgetLabel =
         budgetValue != null ? `¥${budgetValue.toLocaleString("zh-CN")}` : "待确认"
 
+      if (trimmedWechat && typeof createdId === "string" && !createdId.startsWith("temp-")) {
+        try {
+          await updateLead(createdId, { wechat: trimmedWechat }, "补充微信联系方式")
+        } catch (updateErr) {
+          console.error("Failed to update wechat for new lead", updateErr)
+        }
+      }
+
       const sourceLabelForLocal = resolveSourceLabel(newLead.responsibilityType, newLead.sourceLevel2 || null)
+
 
 
       setLeads([
@@ -1613,8 +1662,9 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
           id: createdId,
           company: newLead.company,
           contact: newLead.contact || "新联系人",
-          phone: newLead.phone,
-          wechat: "",
+          phone: trimmedPhone,
+          wechat: trimmedWechat,
+
           source: sourceLabelForLocal,
           sourceLevel1: newLead.responsibilityType || null,
           sourceLevel2: newLead.sourceLevel2 || null,
@@ -1649,6 +1699,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
         company: "",
         contact: "",
         phone: "",
+        wechat: "",
         sourceLevel1: "",
         sourceLevel2: "",
         budget: "",
@@ -1664,6 +1715,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
         activityName: "",
         sourceDepartmentKey: "",
       })
+
 
 
 
@@ -2075,13 +2127,50 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     }
 
     if (!editLead.sourceLevel1) {
-      toast.error("请选择一级渠道", {
-        description: "线索来源的一级渠道为必选项",
+      toast.error("请选择一级来源", {
+        description: "线索来源的一级来源为必选项",
       })
       return
     }
 
+
+    const effectiveResponsibility = (
+      editLead.responsibilityType || selectedLead.responsibilityType || ""
+    ).trim()
+
+    if (effectiveResponsibility === "company_resource") {
+      const secondary = (editLead.sourceLevel2 || "").trim()
+      if (!secondary) {
+        toast.error("请选择二级来源", {
+          description: "公司分配资源场景下需要选择具体二级来源",
+        })
+        return
+      }
+    }
+
+    if (effectiveResponsibility === "sales_self") {
+      const devMethod = (editLead.devMethodKey || "").trim()
+      if (!devMethod) {
+        toast.error("请选择开发方式", {
+          description: "销售自主开发场景下需要选择开发方式",
+        })
+        return
+      }
+    }
+
+    if (effectiveResponsibility === "customer_referral") {
+      const referralName = (editLead.referralCustomerName || "").trim()
+      const referralType = (editLead.referralTypeKey || "").trim()
+      if (!referralName || !referralType) {
+        toast.error("请补全转介绍信息", {
+          description: "转介绍客户名称和转介绍类型为必填项",
+        })
+        return
+      }
+    }
+
     const trimmedBudget = editLead.budget.trim()
+
     let budgetValue: number | null = null
     if (trimmedBudget) {
       const parsed = Number(trimmedBudget.replace(/,/g, ""))
@@ -2166,6 +2255,42 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       patch.business_category_ids = resolvedCategoryIdsForEdit
     }
 
+    const nextResponsibility = editLead.responsibilityType.trim()
+    const prevResponsibility = selectedLead.responsibilityType ?? ""
+
+    if (nextResponsibility && nextResponsibility !== prevResponsibility) {
+      patch.responsibility_type = nextResponsibility
+    }
+
+    const nextDevMethod = editLead.devMethodKey.trim()
+    const prevDevMethod = selectedLead.devMethodKey ?? ""
+    if (nextDevMethod !== prevDevMethod) {
+      patch.dev_method_key = nextDevMethod || null
+    }
+
+    const nextReferralCustomer = editLead.referralCustomerName.trim()
+    const prevReferralCustomer = selectedLead.referralCustomerName ?? ""
+    if (nextReferralCustomer !== prevReferralCustomer) {
+      patch.referral_customer_name = nextReferralCustomer || null
+    }
+
+    const nextReferralType = editLead.referralTypeKey.trim()
+    const prevReferralType = selectedLead.referralTypeKey ?? ""
+    if (nextReferralType !== prevReferralType) {
+      patch.referral_type_key = nextReferralType || null
+    }
+
+    const nextActivityName = editLead.activityName.trim()
+    const prevActivityName = selectedLead.activityName ?? ""
+    if (nextActivityName !== prevActivityName) {
+      patch.activity_name = nextActivityName || null
+    }
+
+    const nextSourceDepartment = editLead.sourceDepartmentKey.trim()
+    const prevSourceDepartment = selectedLead.sourceDepartmentKey ?? ""
+    if (nextSourceDepartment !== prevSourceDepartment) {
+      patch.source_department_key = nextSourceDepartment || null
+    }
 
     if (budgetValue != null) {
 
@@ -2177,6 +2302,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
         patch.budget = budgetValue
       }
     }
+
 
     if (Object.keys(patch).length === 0) {
       setIsEditing(false)
@@ -2502,18 +2628,28 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="phone">
-                  联系电话 * <span className="text-xs text-muted-foreground">(唯一)</span>
+                <Label className="flex items-center justify-between">
+                  <span>联系方式（电话 / 微信） *</span>
+                  <span className="text-xs text-muted-foreground">至少填写一个，电话建议唯一</span>
                 </Label>
-                <Input
-                  id="phone"
-                  value={newLead.phone}
-                  onChange={(e) => setNewLead({ ...newLead, phone: e.target.value })}
-                  placeholder="输入联系电话"
-                />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <Input
+                    id="phone"
+                    value={newLead.phone}
+                    onChange={(e) => setNewLead({ ...newLead, phone: e.target.value })}
+                    placeholder="联系电话（可选）"
+                  />
+                  <Input
+                    id="wechat"
+                    value={newLead.wechat}
+                    onChange={(e) => setNewLead({ ...newLead, wechat: e.target.value })}
+                    placeholder="微信号（可选）"
+                  />
+                </div>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="budget">预算（元）</Label>
+
                 <Input
                   id="budget"
                   value={newLead.budget}
@@ -2522,7 +2658,8 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                 />
               </div>
             <div className="space-y-2">
-              <Label htmlFor="responsibility-type">责任归因（一级来源） *</Label>
+              <Label htmlFor="responsibility-type">一级来源（责任归因） *</Label>
+
               <Select
                 value={newLead.responsibilityType}
                 onValueChange={(value) =>
@@ -2541,8 +2678,9 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                 }
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="选择责任归因" />
+                  <SelectValue placeholder="选择一级来源" />
                 </SelectTrigger>
+
                 <SelectContent>
                   {responsibilityTypeOptions.map((item) => (
                     <SelectItem key={item.key} value={item.key}>
@@ -2894,7 +3032,8 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
             <div className="space-y-4">
               <div className="space-y-2">
-                <p className="text-sm font-semibold text-foreground/80">一级渠道</p>
+                <p className="text-sm font-semibold text-foreground/80">一级来源（责任归因）</p>
+
                 <Select
                   value={sourceLevel1Filter}
                   onValueChange={(value) => {
@@ -2903,46 +3042,61 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                   }}
                 >
                   <SelectTrigger className="h-10">
-                    <SelectValue placeholder="全部一级渠道" />
+                    <SelectValue placeholder="全部一级来源" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">全部一级渠道</SelectItem>
-                    {level1Options.map((channel) => (
-                      <SelectItem key={channel.key} value={channel.key}>
-                        {channel.label}
+                    <SelectItem value="all">全部一级来源</SelectItem>
+
+                    {responsibilityTypeOptions.map((item) => (
+                      <SelectItem key={item.key} value={item.key}>
+                        {item.label}
                       </SelectItem>
                     ))}
+                    {legacySourceLevel1Keys.length > 0 && (
+                      <>
+                        <SelectItem value="__legacy_header" disabled>
+                          <span className="text-xs text-muted-foreground">历史来源（兼容旧线索）</span>
+                        </SelectItem>
+                        {legacySourceLevel1Keys.map((key) => (
+                          <SelectItem key={key} value={key}>
+                            {resolveSourceLevel1Label(key)}
+                          </SelectItem>
+                        ))}
+                      </>
+                    )}
                   </SelectContent>
                 </Select>
               </div>
 
               <div className="space-y-2">
-                <p className="text-sm font-semibold text-foreground/80">二级渠道</p>
+                <p className="text-sm font-semibold text-foreground/80">二级来源</p>
                 <Select
                   value={sourceLevel2Filter}
                   onValueChange={setSourceLevel2Filter}
                   disabled={
                     sourceLevel1Filter === "all" ||
-                    getChildrenForLevel1(sourceLevel1Filter).length === 0
+                    getSecondarySourceOptionsForFilter(sourceLevel1Filter).length === 0
                   }
                 >
                   <SelectTrigger className="h-10">
                     <SelectValue
                       placeholder={
                         sourceLevel1Filter === "all" ||
-                        getChildrenForLevel1(sourceLevel1Filter).length === 0
-                          ? "请选择一级渠道后筛选二级渠道"
-                          : "全部二级渠道"
+                        getSecondarySourceOptionsForFilter(sourceLevel1Filter).length === 0
+                          ? "请选择一级来源后筛选二级来源"
+                          : "全部二级来源"
+
                       }
                     />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">
-                      {getChildrenForLevel1(sourceLevel1Filter).length === 0
-                        ? "当前一级渠道下暂无二级渠道"
-                        : "全部二级渠道"}
+                      {getSecondarySourceOptionsForFilter(sourceLevel1Filter).length === 0
+                        ? "当前一级来源下暂无二级来源"
+                        : "全部二级来源"}
                     </SelectItem>
-                    {getChildrenForLevel1(sourceLevel1Filter).map((child) => (
+
+                    {getSecondarySourceOptionsForFilter(sourceLevel1Filter).map((child) => (
                       <SelectItem key={child.key} value={child.key}>
                         {child.label}
                       </SelectItem>
@@ -2950,6 +3104,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                   </SelectContent>
                 </Select>
               </div>
+
 
               <div className="space-y-2">
 
@@ -3563,64 +3718,188 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                     )}
                   </div>
                   <div className="space-y-1.5 col-span-2">
-                    <p className="text-sm font-semibold text-muted-foreground">来源渠道</p>
+                    <p className="text-sm font-semibold text-muted-foreground">一级来源（责任归因）</p>
+
 
                     {isEditing ? (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full">
-                        <div className="min-w-0">
-                          <Select
-                            value={editLead.sourceLevel1}
-                            onValueChange={(value) =>
-                              setEditLead((prev) => ({
-                                ...prev,
-                                sourceLevel1: value,
-                                sourceLevel2: "",
-                              }))
-                            }
-                          >
-                            <SelectTrigger className="h-9 text-sm w-full min-w-0">
-                              <SelectValue placeholder="一级渠道 *" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {level1Options.map((channel) => (
-                                <SelectItem key={channel.key} value={channel.key}>
-                                  {channel.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                      <div className="space-y-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full">
+                          <div className="min-w-0 space-y-1">
+                            <Label className="text-xs text-muted-foreground">一级来源（责任归因） *</Label>
+
+                            <Select
+                              value={editLead.responsibilityType}
+                              onValueChange={(value) =>
+                                setEditLead((prev) => ({
+                                  ...prev,
+                                  responsibilityType: value,
+                                  sourceLevel1: value,
+                                  sourceLevel2: "",
+                                  devMethodKey: "",
+                                  referralCustomerName: "",
+                                  referralTypeKey: "",
+                                  activityName: "",
+                                }))
+                              }
+                            >
+                              <SelectTrigger className="h-9 text-sm w-full min-w-0">
+                                <SelectValue placeholder="选择责任归因" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {responsibilityTypeOptions.map((item) => (
+                                  <SelectItem key={item.key} value={item.key}>
+                                    {item.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          {editLead.responsibilityType === "company_resource" && (
+                            <div className="min-w-0 space-y-1">
+                              <Label className="text-xs text-muted-foreground">二级来源 *</Label>
+                              <Select
+                                value={editLead.sourceLevel2 || ""}
+                                onValueChange={(value) =>
+                                  setEditLead((prev) => ({
+                                    ...prev,
+                                    sourceLevel2: value,
+                                  }))
+                                }
+                              >
+                                <SelectTrigger className="h-9 text-sm w-full min-w-0">
+                                  <SelectValue placeholder="选择具体来源渠道" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {companyResourceGroupOptions.map((group) => (
+                                    <React.Fragment key={group.key}>
+                                      <SelectItem value={group.key} disabled>
+                                        <span className="text-xs font-semibold text-muted-foreground">
+                                          {group.label}
+                                        </span>
+                                      </SelectItem>
+                                      {(group.children ?? []).map((child) => (
+                                        <SelectItem key={child.key} value={child.key}>
+                                          {child.label}
+                                        </SelectItem>
+                                      ))}
+                                    </React.Fragment>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          )}
                         </div>
 
-                        <div className="min-w-0">
-                          <Select
-                            value={editLead.sourceLevel2 ? editLead.sourceLevel2 : "__none__"}
-                            onValueChange={(value) =>
-                              setEditLead((prev) => ({
-                                ...prev,
-                                sourceLevel2: value === "__none__" ? "" : value,
-                              }))
-                            }
-                            disabled={getChildrenForLevel1(editLead.sourceLevel1).length === 0}
-                          >
-                            <SelectTrigger className="h-9 text-sm w-full min-w-0">
-                              <SelectValue
-                                placeholder={
-                                  getChildrenForLevel1(editLead.sourceLevel1).length === 0
-                                    ? "二级渠道（无可选）"
-                                    : "二级渠道（可选）"
+                        {editLead.responsibilityType === "company_resource" && (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <div className="space-y-1">
+                              <Label className="text-xs text-muted-foreground">来源责任部门（可选）</Label>
+                              <Select
+                                value={editLead.sourceDepartmentKey || ""}
+                                onValueChange={(value) =>
+                                  setEditLead((prev) => ({
+                                    ...prev,
+                                    sourceDepartmentKey: value,
+                                  }))
                                 }
+                              >
+                                <SelectTrigger className="h-9 text-sm w-full min-w-0">
+                                  <SelectValue placeholder="可选：用于内部复盘来源责任部门" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {sourceDepartmentOptions.map((item) => (
+                                    <SelectItem key={item.key} value={item.key}>
+                                      {item.label}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs text-muted-foreground">活动名称（可选）</Label>
+                              <Input
+                                value={editLead.activityName}
+                                onChange={(e) =>
+                                  setEditLead((prev) => ({
+                                    ...prev,
+                                    activityName: e.target.value,
+                                  }))
+                                }
+                                className="h-9 text-sm"
+                                placeholder="例如：一号位战略课 / 某场路演等"
                               />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="__none__">不选择二级渠道</SelectItem>
-                              {getChildrenForLevel1(editLead.sourceLevel1).map((child) => (
-                                <SelectItem key={child.key} value={child.key}>
-                                  {child.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {editLead.responsibilityType === "sales_self" && (
+                          <div className="space-y-1">
+                            <Label className="text-xs text-muted-foreground">开发方式 *</Label>
+                            <Select
+                              value={editLead.devMethodKey}
+                              onValueChange={(value) =>
+                                setEditLead((prev) => ({
+                                  ...prev,
+                                  devMethodKey: value,
+                                }))
+                              }
+                            >
+                              <SelectTrigger className="h-9 text-sm w-full min-w-0">
+                                <SelectValue placeholder="选择开发方式，例如邮件开发/私域运营等" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {devMethodOptions.map((item) => (
+                                  <SelectItem key={item.key} value={item.key}>
+                                    {item.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        )}
+
+                        {editLead.responsibilityType === "customer_referral" && (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <div className="space-y-1">
+                              <Label className="text-xs text-muted-foreground">转介绍客户名称 *</Label>
+                              <Input
+                                value={editLead.referralCustomerName}
+                                onChange={(e) =>
+                                  setEditLead((prev) => ({
+                                    ...prev,
+                                    referralCustomerName: e.target.value,
+                                  }))
+                                }
+                                className="h-9 text-sm"
+                                placeholder="例如：XX 科技（老客户）"
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs text-muted-foreground">转介绍类型 *</Label>
+                              <Select
+                                value={editLead.referralTypeKey}
+                                onValueChange={(value) =>
+                                  setEditLead((prev) => ({
+                                    ...prev,
+                                    referralTypeKey: value,
+                                  }))
+                                }
+                              >
+                                <SelectTrigger className="h-9 text-sm w-full min-w-0">
+                                  <SelectValue placeholder="选择转介绍类型" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {referralTypeOptions.map((item) => (
+                                    <SelectItem key={item.key} value={item.key}>
+                                      {item.label}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <div className="flex flex-wrap gap-1.5">
@@ -3643,6 +3922,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                       </div>
                     )}
                   </div>
+
                   <div className="space-y-1.5">
                     <p className="text-sm font-semibold text-muted-foreground">预算金额</p>
                     {isEditing ? (
