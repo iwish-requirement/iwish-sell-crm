@@ -217,7 +217,7 @@ export function PublicPool() {
         const { data, error } = await supabase
           .from("leads_secure_view")
           .select(
-            "id, name, stage, status, source, customer_name, customer_phone, budget, updated_at, created_by, team_id, owner_id",
+            "id, name, website, stage, status, source, customer_name, customer_phone, budget, updated_at, created_by, team_id, owner_id",
           )
           .eq("status", "pool")
           .order("updated_at", { ascending: false })
@@ -302,6 +302,7 @@ export function PublicPool() {
             return {
               id: leadId,
               company: (row.name as string) ?? "未命名线索",
+              website: (row as any).website ?? "",
               contact: (row.customer_name as string) ?? "未填写联系人",
               phone: (row.customer_phone as string) ?? "",
               source: (row.source as string) ?? "其他",
@@ -1362,7 +1363,7 @@ export function PublicPool() {
             <div className="relative flex-1 max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
-                placeholder="搜索公司名称、联系人、电话..."
+                placeholder="搜索公司名称、网址、联系人、电话..."
                 className="pl-9"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
@@ -1428,6 +1429,9 @@ export function PublicPool() {
                     />
                   </TableCell>
                   <TableCell className="font-bold text-sm text-foreground">{lead.company}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground max-w-[220px] break-all">
+                    {lead.website}
+                  </TableCell>
                   <TableCell className="text-sm font-medium">{lead.contact}</TableCell>
                   <TableCell className="font-mono text-sm font-medium text-foreground/80">{lead.phone}</TableCell>
                   <TableCell>
@@ -1620,15 +1624,22 @@ export function PublicPool() {
       >
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle className="text-2xl font-bold tracking-tight">{detailLead?.company ?? "线索详情"}</DialogTitle>
+            <DialogTitle className="text-2xl font-bold tracking-tight">
+              {detailLead?.company || detailLead?.website || "线索详情"}
+            </DialogTitle>
             {detailLead && (
-              <DialogDescription className="text-sm font-medium flex items-center gap-2 mt-1">
-                {detailLead.contact && <span className="text-foreground/80">{detailLead.contact}</span>}
-                {detailLead.phone && (
-                  <span className="font-mono text-sm bg-muted px-2 py-0.5 rounded border border-muted-foreground/10 text-muted-foreground">
-                    {detailLead.phone}
-                  </span>
+              <DialogDescription className="text-sm font-medium flex flex-col gap-1 mt-1">
+                {detailLead.website && (
+                  <span className="text-xs text-muted-foreground break-all">{detailLead.website}</span>
                 )}
+                <div className="flex items-center gap-2">
+                  {detailLead.contact && <span className="text-foreground/80">{detailLead.contact}</span>}
+                  {detailLead.phone && (
+                    <span className="font-mono text-sm bg-muted px-2 py-0.5 rounded border border-muted-foreground/10 text-muted-foreground">
+                      {detailLead.phone}
+                    </span>
+                  )}
+                </div>
               </DialogDescription>
             )}
           </DialogHeader>

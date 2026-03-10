@@ -52,6 +52,7 @@ import { MePermissionsContext } from "@/components/app-root"
 interface Lead {
   id: string | number
   company: string
+  website?: string
   contact: string
   phone: string
   wechat: string
@@ -422,14 +423,25 @@ function LeadCard({
   const displayedTags = allTags.slice(0, 2)
   const remainingTagsCount = allTags.length - displayedTags.length
 
+  const companyLabel = (lead.company ?? "").trim()
+  const websiteLabel = (lead.website ?? "").trim()
+  const hasCompany = companyLabel.length > 0
+  const hasWebsite = websiteLabel.length > 0
+  const title = hasCompany ? companyLabel : hasWebsite ? websiteLabel : "未命名线索"
+
   return (
     <Card className="cursor-pointer hover:shadow-md transition-shadow border-muted-foreground/10 overflow-hidden" onClick={onClick}>
       <CardContent className="p-4 space-y-3 break-words">
 
         <div className="flex items-start justify-between gap-2">
           <div>
-            <p className="text-lg font-bold text-foreground leading-tight">{lead.company}</p>
-            <p className="text-sm text-muted-foreground font-medium mt-0.5">{lead.contact}</p>
+            <p className="text-lg font-bold text-foreground leading-tight">{title}</p>
+            {hasCompany && hasWebsite && (
+              <p className="text-xs text-muted-foreground mt-0.5 break-all">{websiteLabel}</p>
+            )}
+            {lead.contact && (
+              <p className="text-sm text-muted-foreground font-medium mt-0.5">{lead.contact}</p>
+            )}
           </div>
 
           <div className="flex flex-col items-end gap-1.5">
@@ -437,6 +449,7 @@ function LeadCard({
             {getRiskBadge(lead)}
           </div>
         </div>
+
 
         <div className="flex flex-wrap gap-2">
           {sourceLevel1Label || sourceLevel2Label ? (
@@ -568,6 +581,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
   const [dialogOpen, setDialogOpen] = useState(false)
   const [newLead, setNewLead] = useState({
     company: "",
+    website: "",
     contact: "",
     phone: "",
     wechat: "",
@@ -634,6 +648,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
   const [isEditing, setIsEditing] = useState(false)
   const [editLead, setEditLead] = useState({
     company: "",
+    website: "",
     contact: "",
     phone: "",
     wechat: "",
@@ -888,7 +903,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
           supabase
             .from("leads_secure_view")
             .select(
-              "id, team_id, owner_id, created_by, name, source, stage, status, close_result, close_reason, last_contact_at, created_at, updated_at, customer_name, customer_phone, customer_email, address, budget, internal_score, blacklist_reason, next_contact_at, wechat, customer_grade, source_level1, source_level2, tags, first_contact_at, locked_by, locked_until, protected_until, business_categories, business_types, responsibility_type, dev_method_key, referral_customer_name, referral_type_key, activity_name, source_department_key, source_locked_at",
+              "id, team_id, owner_id, created_by, name, website, source, stage, status, close_result, close_reason, last_contact_at, created_at, updated_at, customer_name, customer_phone, customer_email, address, budget, internal_score, blacklist_reason, next_contact_at, wechat, customer_grade, source_level1, source_level2, tags, first_contact_at, locked_by, locked_until, protected_until, business_categories, business_types, responsibility_type, dev_method_key, referral_customer_name, referral_type_key, activity_name, source_department_key, source_locked_at",
             )
 
             .in("status", ["open", "closed"]) 
@@ -957,6 +972,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
                 id: row.id,
                 company: row.name ?? "未命名线索",
+                website: (row as any).website ?? "",
                 contact: row.customer_name ?? "未填写联系人",
                 phone: row.customer_phone ?? "",
                 wechat: "",
@@ -1496,12 +1512,13 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
   const handleAddLead = async () => {
 
-    if (!newLead.company || (!newLead.phone && !newLead.wechat)) {
+    if (!newLead.website.trim() || (!newLead.phone.trim() && !(newLead.wechat ?? "").trim())) {
       toast.error("请填写必填字段", {
-        description: "公司名称，以及联系电话 / 微信至少填写一个",
+        description: "公司网址，以及联系电话 / 微信至少填写一个",
       })
       return
     }
+
 
 
     if (!newLead.responsibilityType) {
@@ -1593,7 +1610,8 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       const payload: Record<string, unknown> = {
         team_id: profile.teamId,
         owner_id: ownerId,
-        name: newLead.company,
+        name: newLead.company || newLead.website,
+        website: newLead.website.trim(),
         source: sourceLabel,
         stage: "L1",
         status: "open",
@@ -1661,6 +1679,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
         {
           id: createdId,
           company: newLead.company,
+          website: newLead.website.trim(),
           contact: newLead.contact || "新联系人",
           phone: trimmedPhone,
           wechat: trimmedWechat,
@@ -1697,6 +1716,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       ])
       setNewLead({
         company: "",
+        website: "",
         contact: "",
         phone: "",
         wechat: "",
@@ -1720,8 +1740,9 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
 
       setDialogOpen(false)
+      const leadTitleForToast = newLead.company || newLead.website
       toast.success("线索添加成功", {
-        description: `${newLead.company} 已添加到 L1 询盘阶段`,
+        description: `${leadTitleForToast || "新线索"} 已添加到 L1 询盘阶段`,
       })
     } catch (err) {
       console.error("Failed to create lead", err)
@@ -1807,6 +1828,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
     setEditLead({
       company: lead.company,
+      website: lead.website ?? "",
       contact: lead.contact,
       phone: lead.phone,
       wechat: lead.wechat,
@@ -2060,6 +2082,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
     setEditLead({
       company: selectedLead.company,
+      website: selectedLead.website ?? "",
       contact: selectedLead.contact,
       phone: selectedLead.phone,
       wechat: selectedLead.wechat,
@@ -2088,6 +2111,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
     setEditLead({
       company: selectedLead.company,
+      website: selectedLead.website ?? "",
       contact: selectedLead.contact,
       phone: selectedLead.phone,
       wechat: selectedLead.wechat,
@@ -2192,6 +2216,12 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     if (companyTrimmed !== selectedLead.company) {
       patch.name = companyTrimmed
     }
+
+    const websiteTrimmed = editLead.website.trim()
+    if ((selectedLead.website ?? "") !== websiteTrimmed) {
+      ;(patch as any).website = websiteTrimmed || null
+    }
+
 
     const contactTrimmed = editLead.contact.trim()
     if (contactTrimmed !== selectedLead.contact) {
@@ -2370,6 +2400,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
           ? {
               ...prev,
               company: editLead.company.trim(),
+              website: editLead.website.trim() || prev.website,
               contact: editLead.contact.trim() || prev.contact,
               phone: editLead.phone.trim(),
               wechat: editLead.wechat.trim() || prev.wechat,
@@ -2610,12 +2641,21 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
             </DialogHeader>
             <div className="space-y-4 py-4">
               <div className="space-y-2">
-                <Label htmlFor="company">公司名称 *</Label>
+                <Label htmlFor="company">公司名称（选填）</Label>
                 <Input
                   id="company"
                   value={newLead.company}
                   onChange={(e) => setNewLead({ ...newLead, company: e.target.value })}
                   placeholder="输入公司名称"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="website">公司网址 *</Label>
+                <Input
+                  id="website"
+                  value={newLead.website}
+                  onChange={(e) => setNewLead({ ...newLead, website: e.target.value })}
+                  placeholder="例如：https://example.com"
                 />
               </div>
               <div className="space-y-2">
@@ -3408,12 +3448,20 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                   </div>
                   <div className="min-w-0 space-y-1.5 flex-1">
                     {isEditing ? (
-                      <Input
-                        value={editLead.company}
-                        onChange={(e) => setEditLead({ ...editLead, company: e.target.value })}
-                        className="h-10 text-base font-bold"
-                        placeholder="公司名称"
-                      />
+                      <div className="space-y-1.5">
+                        <Input
+                          value={editLead.company}
+                          onChange={(e) => setEditLead({ ...editLead, company: e.target.value })}
+                          className="h-10 text-base font-bold"
+                          placeholder="公司名称（可选）"
+                        />
+                        <Input
+                          value={editLead.website}
+                          onChange={(e) => setEditLead({ ...editLead, website: e.target.value })}
+                          className="h-9 text-xs"
+                          placeholder="公司网址（可选，例如：https://example.com）"
+                        />
+                      </div>
                     ) : (
                       <SheetTitle className="text-left text-2xl font-bold truncate tracking-tight">{selectedLead.company}</SheetTitle>
                     )}
