@@ -48,6 +48,7 @@ import { fetchCurrentUserProfile } from "@/lib/auth/profile"
 interface PoolLead {
   id: string
   company: string
+  website: string
   contact: string
   phone: string
   source: string
@@ -59,6 +60,7 @@ interface PoolLead {
   returnedById: string | null
   importedById: string | null
 }
+
 
 interface SalesRep {
   id: string
@@ -132,8 +134,76 @@ const IMPORT_SECONDARY_LABEL_TO_KEY: Record<string, string> = {
 
 const IMPORT_FALLBACK_SECONDARY_KEY = "other_event" as const
 
+// 责任类型枚举到展示文案（与线索看板保持一致）
+const RESPONSIBILITY_TYPE_LABELS: Record<string, string> = {
+  company_resource: "公司分配资源",
+  sales_self: "销售自主开发",
+  customer_referral: "客户转介绍",
+}
+
+// 反向映射：二级来源 key → 中文文案（用于导出/展示）
+const IMPORT_SECONDARY_KEY_TO_LABEL: Record<string, string> = Object.keys(IMPORT_SECONDARY_LABEL_TO_KEY).reduce(
+  (acc, label) => {
+    const key = IMPORT_SECONDARY_LABEL_TO_KEY[label]
+    acc[key] = label
+    return acc
+  },
+  {} as Record<string, string>,
+)
+
+// 公海池来源展示统一格式：责任类型 / 渠道名（可带补充信息）
+function formatPublicPoolSourceLabel(row: {
+  source?: string | null
+  responsibility_type?: string | null
+  source_level1?: string | null
+  source_level2?: string | null
+  activity_name?: string | null
+  referral_customer_name?: string | null
+}): string {
+  const responsibilityKey = (row.responsibility_type || row.source_level1 || "") as string
+  const responsibilityLabel = responsibilityKey ? RESPONSIBILITY_TYPE_LABELS[responsibilityKey] ?? null : null
+
+  let channelLabel: string | null = null
+
+  // 公海导入场景：company_resource + 二级来源 key
+  if (responsibilityKey === "company_resource") {
+    const level2Key = row.source_level2 as string | null
+    if (level2Key && IMPORT_SECONDARY_KEY_TO_LABEL[level2Key]) {
+      channelLabel = IMPORT_SECONDARY_KEY_TO_LABEL[level2Key]
+    }
+  }
+
+  // 其它场景兜底用 secure view 中的 source 文案
+  if (!channelLabel && row.source) {
+    channelLabel = String(row.source)
+  }
+
+  const extras: string[] = []
+  if (row.activity_name) extras.push(String(row.activity_name))
+  if (row.referral_customer_name) extras.push(String(row.referral_customer_name))
+  const extraSuffix = extras.length > 0 ? `（${extras.join(" / ")}）` : ""
+
+  if (responsibilityLabel && channelLabel) {
+    return `${responsibilityLabel} / ${channelLabel}${extraSuffix}`
+  }
+  if (responsibilityLabel) {
+    return `${responsibilityLabel}${extraSuffix}`
+  }
+  if (channelLabel) {
+    return `${channelLabel}${extraSuffix}`
+  }
+
+  return "其他"
+}
+
+// 导出时复用同一套来源展示逻辑
+function getPublicPoolExportSourceLabel(row: any): string {
+  return formatPublicPoolSourceLabel(row)
+}
+
 
 type ImportStage = "idle" | "uploading" | "checking" | "complete"
+
 
 export function PublicPool() {
   const [leads, setLeads] = useState<PoolLead[]>([])
@@ -305,7 +375,8 @@ export function PublicPool() {
               website: (row as any).website ?? "",
               contact: (row.customer_name as string) ?? "未填写联系人",
               phone: (row.customer_phone as string) ?? "",
-              source: (row.source as string) ?? "其他",
+              source: formatPublicPoolSourceLabel(row as any),
+
               budget:
                 row.budget != null
                   ? `¥${Number(row.budget).toLocaleString("zh-CN")}`
@@ -538,9 +609,11 @@ export function PublicPool() {
   const filteredLeads = leads.filter(
     (lead) =>
       lead.company.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      lead.website.toLowerCase().includes(searchQuery.toLowerCase()) ||
       lead.contact.toLowerCase().includes(searchQuery.toLowerCase()) ||
       lead.phone.includes(searchQuery),
   )
+
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
@@ -807,8 +880,9 @@ export function PublicPool() {
 
       rows.forEach((line) => {
         const cols = line.split(",").map((c) => c.trim())
-        if (cols.length < 6) return
-        const phone = cols[2] ?? ""
+        if (cols.length < 7) return
+        const phone = cols[3] ?? ""
+
         const normalizedPhone = phone.replace(/[^0-9+]/g, "")
         if (normalizedPhone && seenPhones.has(normalizedPhone)) {
           duplicateCount += 1
@@ -919,10 +993,11 @@ export function PublicPool() {
                 const existingPhoneCache = new Map<string, boolean>()
 
                 for (const cols of rowsToUse) {
-                  if (cols.length < 6) continue
+                  if (cols.length < 7) continue
 
-                  const [company, contact, phone, wechat, sourceLabel, budgetStr] = cols.map((c) => c.trim())
+                  const [company, website, contact, phone, wechat, sourceLabel, budgetStr] = cols.map((c) => c.trim())
                   const budget = budgetStr ? Number(budgetStr) : null
+
 
                   // 数据库级去重：若该手机号已存在可见线索，则跳过本行
                   const phoneKey = phone.trim()
@@ -959,11 +1034,13 @@ export function PublicPool() {
                     team_id: profile.team_id,
                     owner_id: profile.id,
                     name: company,
+                    website: website || null,
                     source: rawSourceLabel || "公司分配资源",
                     stage: "L1",
                     status: "pool",
                     customer_name: contact,
                     customer_phone: phone,
+
                     responsibility_type: primarySource,
                     source_level1: primarySource,
                     source_level2: secondarySourceKey,
@@ -1178,20 +1255,25 @@ export function PublicPool() {
                       // 直接导出当前公海数据为 Excel（先导出为 CSV，后续可接第三方库生成 xlsx）
                       const { data, error: leadsError } = await supabase
                         .from("leads_secure_view")
-                        .select("name, customer_name, customer_phone, source, budget, stage, status")
+                        .select(
+                          "name, website, customer_name, customer_phone, source, budget, stage, status, responsibility_type, source_level1, source_level2, activity_name, referral_customer_name",
+                        )
                         .eq("status", "pool")
+
+
 
                       if (leadsError) {
                         console.error("Failed to load leads for export (xlsx)", leadsError)
                         toast.error("导出失败", { description: "加载线索数据失败，请稍后重试" })
                       } else {
                         const rows = data ?? []
-                        const header = ["公司名称", "联系人", "电话", "来源", "预算", "阶段", "状态"]
+                        const header = ["公司名称", "网址", "联系人", "电话", "来源", "预算", "阶段", "状态"]
                         const csvLines = [
                           header.join(","),
                           ...rows.map((row: any) =>
                             [
                               row.name ?? "",
+                              row.website ?? "",
                               row.customer_name ?? "",
                               row.customer_phone ?? "",
                               row.source ?? "",
@@ -1199,6 +1281,7 @@ export function PublicPool() {
                               row.stage ?? "",
                               row.status ?? "",
                             ]
+
                               .map((value) => {
                                 const v = String(value ?? "")
                                 if (v.includes(",") || v.includes("\"")) {
@@ -1272,27 +1355,31 @@ export function PublicPool() {
                       const { data, error: leadsError } = await supabase
                         .from("leads_secure_view")
                         .select(
-                          "name, customer_name, customer_phone, wechat, source, budget, stage, status, responsibility_type, source_level1, source_level2",
+                          "name, website, customer_name, customer_phone, wechat, source, budget, stage, status, responsibility_type, source_level1, source_level2",
                         )
                         .eq("status", "pool")
+
 
                       if (leadsError) {
                         console.error("Failed to load leads for export (csv)", leadsError)
                         toast.error("导出失败", { description: "加载线索数据失败，请稍后重试" })
                       } else {
                         const rows = data ?? []
-                        const header = ["公司名称", "联系人", "电话", "微信号", "二级来源(渠道)", "预算(元)"]
+                        const header = ["公司名称", "网址", "联系人", "电话", "微信号", "来源渠道", "预算(元)"]
+
                         const csvLines = [
                           header.join(","),
                           ...rows.map((row: any) =>
                             [
                               row.name ?? "",
+                              row.website ?? "",
                               row.customer_name ?? "",
                               row.customer_phone ?? "",
                               row.wechat ?? "",
                               getPublicPoolExportSourceLabel(row),
                               row.budget ?? "",
                             ]
+
                               .map((value) => {
                                 const v = String(value ?? "")
                                 if (v.includes(",") || v.includes("\"") || v.includes("\n")) {
@@ -1402,6 +1489,7 @@ export function PublicPool() {
                   />
                 </TableHead>
                 <TableHead className="w-[200px] min-w-[180px] font-bold text-foreground">公司名称</TableHead>
+                <TableHead className="w-[260px] min-w-[200px] font-bold text-foreground">网址</TableHead>
                 <TableHead className="min-w-[80px] font-bold text-foreground">联系人</TableHead>
                 <TableHead className="min-w-[120px] font-bold text-foreground">电话</TableHead>
                 <TableHead className="min-w-[80px] font-bold text-foreground">来源</TableHead>
@@ -1524,11 +1612,12 @@ export function PublicPool() {
               ))}
               {filteredLeads.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={11} className="h-24 text-center text-muted-foreground">
+                  <TableCell colSpan={12} className="h-24 text-center text-muted-foreground">
                     暂无符合条件的线索
                   </TableCell>
                 </TableRow>
               )}
+
             </TableBody>
           </Table>
         </CardContent>

@@ -356,13 +356,16 @@ function LeadCard({
   riskConfig,
   sourceLevel1Label,
   sourceLevel2Label,
+  ownerLabel,
 }: {
   lead: Lead
   onClick: () => void
   riskConfig: { warningHours: number; dangerHours: number }
   sourceLevel1Label: string | null
   sourceLevel2Label: string | null
+  ownerLabel: string | null
 }) {
+
   const getStatusBadge = () => {
     if (lead.status === "closed") {
       if (lead.closeResult === "won" || lead.closeResult === "成交") {
@@ -442,7 +445,9 @@ function LeadCard({
             {lead.contact && (
               <p className="text-sm text-muted-foreground font-medium mt-0.5">{lead.contact}</p>
             )}
+
           </div>
+
 
           <div className="flex flex-col items-end gap-1.5">
             {getStatusBadge()}
@@ -505,12 +510,19 @@ function LeadCard({
 
           </div>
         )}
-          <div className="flex items-center gap-1.5 text-sm text-muted-foreground pt-1 border-t border-muted/30">
-            <Calendar className="w-3.5 h-3.5" />
-            <span className="font-medium text-foreground/70">{lastContactLabel}</span>
-            <span className="text-muted-foreground/30">|</span>
-            <span>{lastContactDateLabel}</span>
+        <div className="flex items-center gap-1.5 text-sm text-muted-foreground pt-1 border-t border-muted/30">
+          <Calendar className="w-3.5 h-3.5" />
+          <span className="font-medium text-foreground/70">{lastContactLabel}</span>
+          <span className="text-muted-foreground/30">|</span>
+          <span>{lastContactDateLabel}</span>
+        </div>
+        {ownerLabel && (
+          <div className="pt-1 text-sm font-semibold text-foreground">
+            负责人：{ownerLabel}
           </div>
+        )}
+
+
 
 
 
@@ -975,8 +987,9 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                 website: (row as any).website ?? "",
                 contact: row.customer_name ?? "未填写联系人",
                 phone: row.customer_phone ?? "",
-                wechat: "",
+                wechat: (row.wechat as string | null) ?? "",
                 source: row.source ?? "其他",
+
                 sourceLevel1: (row.source_level1 as string | null) ?? null,
                 sourceLevel2: (row.source_level2 as string | null) ?? null,
                 businessCategories: Array.isArray(row.business_categories)
@@ -2143,12 +2156,16 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       return
     }
 
-    if (!editLead.company.trim() || !editLead.phone.trim()) {
+    const hasCompanyOrWebsite = editLead.company.trim() || editLead.website.trim()
+    const hasPhone = editLead.phone.trim()
+
+    if (!hasCompanyOrWebsite || !hasPhone) {
       toast.error("请填写必填字段", {
-        description: "公司名称和联系电话为必填项",
+        description: "公司名称与公司网址至少填写一个，且联系电话为必填项",
       })
       return
     }
+
 
     if (!editLead.sourceLevel1) {
       toast.error("请选择一级来源", {
@@ -2641,7 +2658,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
             </DialogHeader>
             <div className="space-y-4 py-4">
               <div className="space-y-2">
-                <Label htmlFor="company">公司名称（选填）</Label>
+                <Label htmlFor="company">公司名称（与公司网址二选一）</Label>
                 <Input
                   id="company"
                   value={newLead.company}
@@ -2650,7 +2667,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="website">公司网址 *</Label>
+                <Label htmlFor="website">公司网址（与公司名称二选一）</Label>
                 <Input
                   id="website"
                   value={newLead.website}
@@ -2658,6 +2675,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                   placeholder="例如：https://example.com"
                 />
               </div>
+
               <div className="space-y-2">
                 <Label htmlFor="contact">联系人</Label>
                 <Input
@@ -3385,17 +3403,23 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                 </Badge>
               </div>
               <div className="space-y-4 min-h-[200px] md:min-h-[400px] p-2 rounded-xl border border-muted/20">
-                {stageLeads.map((lead) => (
+                {stageLeads.map((lead) => {
+                  const ownerRep = lead.ownerId ? salesReps.find((rep) => rep.id === lead.ownerId) : undefined
+                  const ownerLabel = ownerRep ? ownerRep.name : null
 
-                  <LeadCard
-                    key={lead.id}
-                    lead={lead}
-                    onClick={() => handleLeadClick(lead)}
-                    riskConfig={riskConfigRef.current}
-                    sourceLevel1Label={resolveSourceLevel1Label(lead.sourceLevel1)}
-                    sourceLevel2Label={resolveSourceLevel2Label(lead.sourceLevel1, lead.sourceLevel2)}
-                  />
-                ))}
+                  return (
+                    <LeadCard
+                      key={lead.id}
+                      lead={lead}
+                      onClick={() => handleLeadClick(lead)}
+                      riskConfig={riskConfigRef.current}
+                      sourceLevel1Label={resolveSourceLevel1Label(lead.sourceLevel1)}
+                      sourceLevel2Label={resolveSourceLevel2Label(lead.sourceLevel1, lead.sourceLevel2)}
+                      ownerLabel={ownerLabel}
+                    />
+                  )
+                })}
+
 
               </div>
             </div>
@@ -3453,18 +3477,22 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                           value={editLead.company}
                           onChange={(e) => setEditLead({ ...editLead, company: e.target.value })}
                           className="h-10 text-base font-bold"
-                          placeholder="公司名称（可选）"
+                          placeholder="公司名称（与公司网址二选一）"
                         />
                         <Input
                           value={editLead.website}
                           onChange={(e) => setEditLead({ ...editLead, website: e.target.value })}
                           className="h-9 text-xs"
-                          placeholder="公司网址（可选，例如：https://example.com）"
+                          placeholder="公司网址（与公司名称二选一，例如：https://example.com）"
                         />
                       </div>
+
                     ) : (
-                      <SheetTitle className="text-left text-2xl font-bold truncate tracking-tight">{selectedLead.company}</SheetTitle>
+                      <SheetTitle className="text-left text-2xl font-bold truncate tracking-tight">
+                        {selectedLead.company || selectedLead.website || "未命名线索"}
+                      </SheetTitle>
                     )}
+
                     <div className="flex items-center gap-2">
                       <StatusBadge stage={selectedLead.stage} />
                       {selectedLead.grade && (
