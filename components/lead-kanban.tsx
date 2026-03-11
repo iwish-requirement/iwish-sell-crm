@@ -2534,6 +2534,11 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       }
     }
 
+    // 团队范围兜底：即便后端 RLS 放宽，这里也只展示当前团队的线索
+    if (leadScopeType === "team" && currentTeamId != null && lead.teamId != null && lead.teamId !== currentTeamId) {
+      return false
+    }
+
     if (stageFilter !== "all" && lead.stage !== stageFilter) {
       return false
     }
@@ -2587,6 +2592,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
     return true
   })
+
 
 
   const sortedLeads = [...filteredLeads].sort((a, b) => {
@@ -3279,7 +3285,11 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
               <SelectValue placeholder="负责人筛选" />
             </SelectTrigger>
             <SelectContent>
-              {showAllOwnerOption && <SelectItem value="all">全部负责人</SelectItem>}
+              {showAllOwnerOption && (
+                <SelectItem value="all">
+                  {leadScopeType === "team" ? "全部团队成员" : "全部负责人"}
+                </SelectItem>
+              )}
               {ownerOptions.map((rep) => (
                 <SelectItem key={rep.id} value={rep.id}>
                   {rep.name}
@@ -3287,6 +3297,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
               ))}
             </SelectContent>
           </Select>
+
 
           <Select value={stageFilter} onValueChange={setStageFilter}>
             <SelectTrigger className="w-[140px]">
