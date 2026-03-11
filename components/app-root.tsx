@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useEffect, useState } from "react"
+import React, { useEffect, useRef, useState } from "react"
 import { usePathname } from "next/navigation"
 import { Sidebar } from "@/components/sidebar"
 import { TopBar } from "@/components/top-bar"
@@ -14,9 +14,10 @@ import { DealCenter } from "@/components/deal-center"
 import { RenewalCenter } from "@/components/renewal-center"
 import { ProfileCenter } from "@/components/profile-center"
 
-
-
+import { toast } from "sonner"
 import { getBrowserSupabaseClient } from "@/lib/supabase/client"
+import { APP_VERSION } from "@/lib/app-version"
+
 
 
 export type AppView =
@@ -97,9 +98,11 @@ export function AppRoot() {
   const pathname = usePathname() ?? "/"
   const activeView = getViewFromPathname(pathname)
   const [mePermissions, setMePermissions] = useState<MePermissions | null>(null)
+  const hasShownVersionToastRef = useRef(false)
 
   useEffect(() => {
     let isMounted = true
+
 
     async function loadPermissions() {
       try {
@@ -171,6 +174,44 @@ export function AppRoot() {
       isMounted = false
     }
   }, [])
+
+  // 版本更新检测：用于提示“系统已发布新版本，请刷新页面”
+  useEffect(() => {
+    let cancelled = false
+
+    async function checkVersion() {
+      try {
+        const res = await fetch("/api/version", { cache: "no-store" })
+        if (!res.ok) return
+        const data = (await res.json()) as { version?: string }
+
+        if (!cancelled && !hasShownVersionToastRef.current && data.version && data.version !== APP_VERSION) {
+          hasShownVersionToastRef.current = true
+          toast.info("系统已发布新版本", {
+            description: "请刷新页面以获得最新体验。",
+            action: {
+              label: "立即刷新",
+              onClick: () => {
+                window.location.reload()
+              },
+            },
+          })
+        }
+      } catch (error) {
+        // 静默失败：版本检测只是体验优化，不影响正常使用
+        console.error("Failed to check app version", error)
+      }
+    }
+
+    void checkVersion()
+    const timer = window.setInterval(checkVersion, 5 * 60 * 1000)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [])
+
 
   return (
     <MePermissionsContext.Provider value={mePermissions}>

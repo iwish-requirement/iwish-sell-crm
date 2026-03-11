@@ -5,7 +5,25 @@
 
 ## 2026-03-11
 
+### app-version-refresh-banner: 应用版本检测与刷新提醒
+
+**变更点**
+- 新增 `lib/app-version.ts`：集中维护应用版本号常量 `APP_VERSION`，约定每次发版前更新，用作前端检测是否有新版本已部署的基准。
+- 新增接口 `app/api/version/route.ts`：返回当前部署版本 `{ version: APP_VERSION }`，并通过 `Cache-Control: no-store` 禁止中间层缓存，保证老 Tab 能及时感知到新版本发布。
+- 更新 `components/app-root.tsx`：在全局根组件中增加版本检测逻辑，启动时及每隔 5 分钟请求 `/api/version`，当返回版本号与本地 `APP_VERSION` 不一致且尚未提示过时，使用 `sonner` 弹出“系统已发布新版本，请刷新页面”的提示，附带“立即刷新”按钮调用 `window.location.reload()`。
+
+**变更原因（对应 PRD/原型）**
+- 当前部署模式下，新开的 Tab 会加载最新版本，但已经打开的页面默认不会自动刷新，业务上希望给一线用户一个明确的“有新版本，可以刷新”的信号，避免在版本迭代较频繁时出现“功能已经上线但用户还停留在旧代码”的错觉。
+
+**影响范围**
+- 前端体验：仅增加被动提示，不会强制刷新页面；老 Tab 会在新版本部署后下一次轮询时收到一次性提示，新开的 Tab 始终是最新版本，不受影响。
+- 运维流程：发版前需要顺手更新 `APP_VERSION` 常量，以便区分新旧版本；如不更新，仅不会弹出刷新提示，对功能无影响。
+
+**回滚方式**
+- 删除 `lib/app-version.ts` 和 `app/api/version/route.ts`，并恢复 `components/app-root.tsx` 中的版本检测相关 `useEffect` 与 `toast` 引用，即可恢复到当前的无提示行为。
+
 ### leads-team-scope-ui-guard: 团队范围线索可见性前端兜底与文案修正
+
 
 **变更点**
 - 更新 `components/lead-kanban.tsx`：
