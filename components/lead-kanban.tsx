@@ -251,8 +251,8 @@ const FALLBACK_COMPANY_RESOURCE_GROUPS: SourceChannel[] = [
 const responsibilityTypeOptions: ResponsibilityTypeOption[] = FALLBACK_RESPONSIBILITY_TYPES
 const devMethodOptions: DevMethodOption[] = FALLBACK_DEV_METHODS
 const referralTypeOptions: ReferralTypeOption[] = FALLBACK_REFERRAL_TYPES
-const sourceDepartmentOptions: SourceDepartmentOption[] = FALLBACK_SOURCE_DEPARTMENTS
 const companyResourceGroupOptions: SourceChannel[] = FALLBACK_COMPANY_RESOURCE_GROUPS
+
 
 // 线索列表由 Supabase 实时加载，这里不再保留历史 mock 数据，以免造成误解
 
@@ -431,6 +431,11 @@ function LeadCard({
   const hasCompany = companyLabel.length > 0
   const hasWebsite = websiteLabel.length > 0
   const title = hasCompany ? companyLabel : hasWebsite ? websiteLabel : "未命名线索"
+  const isWebsiteOnlyTitle = hasWebsite && (!hasCompany || companyLabel === websiteLabel)
+  const titleClassName = isWebsiteOnlyTitle
+    ? "text-lg font-bold text-foreground leading-tight break-all"
+    : "text-lg font-bold text-foreground leading-tight"
+
 
   return (
     <Card className="cursor-pointer hover:shadow-md transition-shadow border-muted-foreground/10 overflow-hidden" onClick={onClick}>
@@ -438,7 +443,7 @@ function LeadCard({
 
         <div className="flex items-start justify-between gap-2">
           <div>
-            <p className="text-lg font-bold text-foreground leading-tight">{title}</p>
+            <p className={titleClassName}>{title}</p>
             {hasCompany && hasWebsite && (
               <p className="text-xs text-muted-foreground mt-0.5 break-all">{websiteLabel}</p>
             )}
@@ -447,6 +452,7 @@ function LeadCard({
             )}
 
           </div>
+
 
 
           <div className="flex flex-col items-end gap-1.5">
@@ -704,6 +710,8 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
   const [businessTypes, setBusinessTypes] = useState<{ id: number; name: string; category_id: number; sort_order?: number }[]>([])
 
   const [sourceChannels, setSourceChannels] = useState<SourceChannel[]>([])
+  const [sourceDepartments, setSourceDepartments] = useState<SourceDepartmentOption[]>(FALLBACK_SOURCE_DEPARTMENTS)
+
 
   const gradeOptions: GradeDefinition[] = gradeDefinitions.length > 0 ? gradeDefinitions : FALLBACK_GRADES
 
@@ -1068,7 +1076,8 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       try {
         const supabase = getBrowserSupabaseClient()
 
-        const [gradeResult, sourceResult, categoryResult, typeResult] = await Promise.all([
+        const [gradeResult, sourceResult, categoryResult, typeResult, sourceDeptResult] = await Promise.all([
+
           supabase
             .from("settings")
             .select("value")
@@ -1089,7 +1098,13 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
             .select("id, name, category_id, sort_order, is_active")
             .eq("is_active", true)
             .order("sort_order", { ascending: true }),
+          supabase
+            .from("settings")
+            .select("value")
+            .eq("key", "leads.source_departments")
+            .maybeSingle(),
         ])
+
 
 
         if (!isMounted) {
@@ -1154,6 +1169,23 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
             })),
           )
         }
+
+        if (!sourceDeptResult.error && sourceDeptResult.data && (sourceDeptResult.data as any).value) {
+          const raw = (sourceDeptResult.data as any).value as any
+          if (Array.isArray(raw.departments)) {
+            const normalized: SourceDepartmentOption[] = raw.departments
+              .filter((d: any) => typeof d?.key === "string" && typeof d?.label === "string")
+              .map((d: any) => ({
+                key: d.key as string,
+                label: d.label as string,
+              }))
+
+            if (normalized.length > 0) {
+              setSourceDepartments(normalized)
+            }
+          }
+        }
+
       } catch (error) {
         console.error("Failed to load lead configs", error)
       }
@@ -2795,12 +2827,13 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                       <SelectValue placeholder="可选：用于内部复盘来源责任部门" />
                     </SelectTrigger>
                     <SelectContent>
-                      {sourceDepartmentOptions.map((item) => (
+                      {sourceDepartments.map((item) => (
                         <SelectItem key={item.key} value={item.key}>
                           {item.label}
                         </SelectItem>
                       ))}
                     </SelectContent>
+
                   </Select>
                 </div>
               </>
@@ -3895,12 +3928,13 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                                   <SelectValue placeholder="可选：用于内部复盘来源责任部门" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  {sourceDepartmentOptions.map((item) => (
+                                  {sourceDepartments.map((item) => (
                                     <SelectItem key={item.key} value={item.key}>
                                       {item.label}
                                     </SelectItem>
                                   ))}
                                 </SelectContent>
+
                               </Select>
                             </div>
                             <div className="space-y-1">

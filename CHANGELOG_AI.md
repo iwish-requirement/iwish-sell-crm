@@ -5,7 +5,24 @@
 
 ## 2026-03-11
 
+### leads-source-departments-configurable: 来源责任部门枚举可配置
+
+**变更点**
+- 更新 `components/lead-grades-and-sources-settings-card.tsx`：在“客户级别与来源配置”卡片中新增“来源责任部门”配置区块，支持新增/编辑/删除部门枚举，并通过 `settings.key = 'leads.source_departments'` 持久化。
+- 更新 `components/lead-kanban.tsx`：线索新增/编辑弹窗中的“来源责任部门”下拉改为优先从 `leads.source_departments` 读取枚举，未配置时回退到原有 fallback 列表，继续通过 RPC 字段 `source_department_key` 落库。
+
+**变更原因（对应 PRD/原型）**
+- PRD 要求“来源责任部门”作为可配置枚举由运营在 SystemSettings 中维护，而非写死在前端常量，以便后续按组织架构调整部门列表且不影响既有责任归因与数据校验逻辑。
+
+**影响范围**
+- UI：SystemSettings 设置页与线索看板新增/编辑弹窗的来源责任部门枚举由数据库配置驱动，界面结构保持不变。
+- DB/RPC：复用既有 `public.settings('leads.source_departments')` 与 `iwish.rpc_lead_create/update` 对 `source_department_key` 的校验，不新增表结构或新 RPC，仅改变前端枚举来源。
+
+**回滚方式**
+- 删除 `LeadGradesAndSourcesSettingsCard` 中“来源责任部门”区块与相关 Supabase 读写逻辑，并在 `lead-kanban` 中移除对 `leads.source_departments` 的读取，恢复为仅使用 `FALLBACK_SOURCE_DEPARTMENTS` 本地常量。
+
 ### app-version-refresh-banner: 应用版本检测与刷新提醒
+
 
 **变更点**
 - 新增 `lib/app-version.ts`：集中维护应用版本号常量 `APP_VERSION`，约定每次发版前更新，用作前端检测是否有新版本已部署的基准。

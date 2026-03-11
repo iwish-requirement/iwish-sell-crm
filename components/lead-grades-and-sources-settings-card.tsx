@@ -54,12 +54,18 @@ interface SourceChannelSetting {
   children: SourceChildSetting[]
 }
 
+interface SourceDepartmentSetting {
+  key: string
+  label: string
+}
+
 type GradeDraft = {
   index: number | null
   key: string
   label: string
   description: string
 }
+
 
 type ChannelDraft = {
   index: number | null
@@ -73,6 +79,14 @@ type ChildDraft = {
   key: string
   label: string
 }
+
+type DepartmentDraft = {
+  index: number | null
+  key: string
+  label: string
+}
+
+
 
 type PendingDelete =
   | {
@@ -95,10 +109,23 @@ type PendingDelete =
       title: string
       description: string
     }
+  | {
+      kind: "department"
+      index: number
+      title: string
+      description: string
+    }
 
 function normalizeKey(value: string) {
+
   return value.trim()
 }
+
+const DEFAULT_SOURCE_DEPARTMENTS: SourceDepartmentSetting[] = [
+  { key: "sz_sales", label: "深圳销售团队" },
+  { key: "sz_cs", label: "深圳客服团队" },
+  { key: "hz_sales", label: "杭州销售团队" },
+]
 
 const DEFAULT_COMPANY_RESOURCE_GROUPS: SourceChannelSetting[] = [
   {
@@ -146,6 +173,7 @@ export function LeadGradesAndSourcesSettingsCard() {
 
   const [grades, setGrades] = useState<GradeDefinitionSetting[]>([])
   const [channels, setChannels] = useState<SourceChannelSetting[]>([])
+  const [departments, setDepartments] = useState<SourceDepartmentSetting[]>([])
   const [selectedChannelKey, setSelectedChannelKey] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
@@ -160,8 +188,12 @@ export function LeadGradesAndSourcesSettingsCard() {
   const [childDialogOpen, setChildDialogOpen] = useState(false)
   const [childDraft, setChildDraft] = useState<ChildDraft | null>(null)
 
+  const [departmentDialogOpen, setDepartmentDialogOpen] = useState(false)
+  const [departmentDraft, setDepartmentDraft] = useState<DepartmentDraft | null>(null)
+
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null)
+
 
   const selectedChannelIndex = useMemo(() => {
     if (!selectedChannelKey) return null
@@ -183,16 +215,18 @@ export function LeadGradesAndSourcesSettingsCard() {
       setIsLoading(true)
       const supabase = getBrowserSupabaseClient()
 
-      const [gradeResult, sourceResult] = await Promise.all([
+      const [gradeResult, sourceResult, sourceDeptResult] = await Promise.all([
         supabase.from("settings").select("value").eq("key", "leads.grade_definitions").maybeSingle(),
         supabase.from("settings").select("value").eq("key", "leads.company_resource_source_groups").maybeSingle(),
+        supabase.from("settings").select("value").eq("key", "leads.source_departments").maybeSingle(),
       ])
-
 
       const gradeValue = (gradeResult.data?.value as any) ?? null
       const sourceValue = (sourceResult.data?.value as any) ?? null
+      const sourceDeptValue = (sourceDeptResult.data?.value as any) ?? null
 
       const nextGrades: GradeDefinitionSetting[] =
+
         gradeValue && Array.isArray(gradeValue.grades)
           ? gradeValue.grades
               .filter((g: any) => g && typeof g.key === "string" && typeof g.label === "string")
@@ -242,9 +276,20 @@ export function LeadGradesAndSourcesSettingsCard() {
                 }))
           : DEFAULT_COMPANY_RESOURCE_GROUPS
 
+      const nextDepartments: SourceDepartmentSetting[] =
+        sourceDeptValue && Array.isArray(sourceDeptValue.departments)
+          ? sourceDeptValue.departments
+              .filter((d: any) => d && typeof d.key === "string" && typeof d.label === "string")
+              .map((d: any) => ({
+                key: String(d.key),
+                label: String(d.label),
+              }))
+          : DEFAULT_SOURCE_DEPARTMENTS
 
       setGrades(nextGrades)
       setChannels(nextChannels)
+      setDepartments(nextDepartments)
+
 
       setSelectedChannelKey((prev) => {
         if (prev && nextChannels.some((c) => c.key === prev)) return prev
@@ -277,6 +322,12 @@ export function LeadGradesAndSourcesSettingsCard() {
     setGradeDraft({ index: null, key: "", label: "", description: "" })
     setGradeDialogOpen(true)
   }
+
+  const openCreateDepartment = () => {
+    setDepartmentDraft({ index: null, key: "", label: "" })
+    setDepartmentDialogOpen(true)
+  }
+
 
   const openEditGrade = (index: number) => {
     const row = grades[index]
@@ -334,7 +385,55 @@ export function LeadGradesAndSourcesSettingsCard() {
     setDeleteDialogOpen(true)
   }
 
+  const openEditDepartment = (index: number) => {
+    const row = departments[index]
+    if (!row) return
+    setDepartmentDraft({ index, key: row.key, label: row.label })
+    setDepartmentDialogOpen(true)
+  }
+
+  const saveDepartmentDraft = () => {
+    if (!departmentDraft) return
+
+    const key = normalizeKey(departmentDraft.key)
+    const label = departmentDraft.label.trim()
+
+    if (!key || !label) {
+      toast.error("请填写部门 Key 与名称")
+      return
+    }
+
+    setDepartments((prev) => {
+      const next = [...prev]
+      const item: SourceDepartmentSetting = { key, label }
+
+      if (departmentDraft.index == null) {
+        next.push(item)
+      } else {
+        next[departmentDraft.index] = item
+      }
+      return next
+    })
+
+    setDepartmentDialogOpen(false)
+    setDepartmentDraft(null)
+  }
+
+  const requestDeleteDepartment = (index: number) => {
+    const row = departments[index]
+    if (!row) return
+
+    setPendingDelete({
+      kind: "department",
+      index,
+      title: "删除来源责任部门",
+      description: `确认删除来源责任部门「${row.label}」吗？此操作仅影响本地草稿，点击“保存配置”后才会生效。`,
+    })
+    setDeleteDialogOpen(true)
+  }
+
   const openCreateChannel = () => {
+
     setChannelDraft({ index: null, key: "", label: "" })
     setChannelDialogOpen(true)
   }
@@ -490,6 +589,11 @@ export function LeadGradesAndSourcesSettingsCard() {
       toast.success("已删除（未保存）", { description: "点击右上角“保存配置”后才会生效" })
     }
 
+    if (pendingDelete.kind === "department") {
+      setDepartments((prev) => prev.filter((_, i) => i !== pendingDelete.index))
+      toast.success("已删除（未保存）", { description: "点击右上角“保存配置”后才会生效" })
+    }
+
     setDeleteDialogOpen(false)
     setPendingDelete(null)
   }
@@ -518,7 +622,15 @@ export function LeadGradesAndSourcesSettingsCard() {
       }))
       .filter((c) => c.key && c.label)
 
+    const trimmedDepartments = departments
+      .map((d) => ({
+        key: normalizeKey(d.key),
+        label: d.label.trim(),
+      }))
+      .filter((d) => d.key && d.label)
+
     try {
+
       setIsSaving(true)
       const supabase = getBrowserSupabaseClient()
 
@@ -538,10 +650,16 @@ export function LeadGradesAndSourcesSettingsCard() {
                 groups: trimmedChannels,
               },
             },
-
+            {
+              key: "leads.source_departments",
+              value: {
+                departments: trimmedDepartments,
+              },
+            },
           ],
           { onConflict: "key" },
         )
+
 
       if (error) {
         console.error("Failed to save grade and source settings", error)
@@ -774,9 +892,76 @@ export function LeadGradesAndSourcesSettingsCard() {
           </div>
         </div>
 
+        {/* 来源责任部门 */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-medium">来源责任部门</h3>
+              <p className="text-xs text-muted-foreground">
+                用于“公司分配资源”线索的归因分析，标记由哪个部门负责该来源。
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className="text-xs">
+                {departments.length} 个
+              </Badge>
+              <Button size="sm" onClick={openCreateDepartment} disabled={isLoading || isSaving}>
+                <Plus className="mr-2 h-4 w-4" /> 新增部门
+              </Button>
+            </div>
+          </div>
+
+          <div className="rounded-md border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-[160px]">Key</TableHead>
+                  <TableHead>名称</TableHead>
+                  <TableHead className="w-[72px] text-right">操作</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {departments.map((row, idx) => (
+                  <TableRow key={`${row.key}-${idx}`}>
+                    <TableCell className="font-mono text-sm">{row.key}</TableCell>
+                    <TableCell className="font-medium">{row.label}</TableCell>
+                    <TableCell className="text-right">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon-sm" aria-label="操作">
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => openEditDepartment(idx)}>
+                            <Pencil className="h-4 w-4" /> 编辑
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem variant="destructive" onClick={() => requestDeleteDepartment(idx)}>
+                            <Trash2 className="h-4 w-4" /> 删除
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
+                ))}
+
+                {departments.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={3} className="h-20 text-center text-muted-foreground">
+                      暂无来源责任部门，请先新增一个
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+
         <Separator />
 
         {/* 次：客户级别 */}
+
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
@@ -970,7 +1155,49 @@ export function LeadGradesAndSourcesSettingsCard() {
           </DialogContent>
         </Dialog>
 
+        <Dialog open={departmentDialogOpen} onOpenChange={setDepartmentDialogOpen}>
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>{departmentDraft?.index == null ? "新增来源责任部门" : "编辑来源责任部门"}</DialogTitle>
+              <DialogDescription>
+                用于标记“公司分配资源”线索由哪个部门/团队负责，建议 Key 使用英文/短横线风格。
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>Key *</Label>
+                  <Input
+                    value={departmentDraft?.key ?? ""}
+                    onChange={(e) => setDepartmentDraft((prev) => (prev ? { ...prev, key: e.target.value } : prev))}
+                    placeholder="例如：sz_sales"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>名称 *</Label>
+                  <Input
+                    value={departmentDraft?.label ?? ""}
+                    onChange={(e) => setDepartmentDraft((prev) => (prev ? { ...prev, label: e.target.value } : prev))}
+                    placeholder="例如：深圳销售团队"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setDepartmentDialogOpen(false)} disabled={isSaving}>
+                取消
+              </Button>
+              <Button onClick={saveDepartmentDraft} disabled={isSaving}>
+                保存
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         <AlertDialog
+
           open={deleteDialogOpen}
           onOpenChange={(open) => {
             setDeleteDialogOpen(open)
