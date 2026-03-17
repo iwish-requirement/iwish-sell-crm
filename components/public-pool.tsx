@@ -920,8 +920,14 @@ export function PublicPool() {
       rawRows = dataRows
 
       // 先尝试调用后端 AI 接口，根据表头和示例行推断字段映射
+      // 为避免外部 LLM 服务网络抖动导致前端长时间卡在“正在上传 0%”，这里增加超时兜底
       if (headerRow && dataRows.length > 0) {
         try {
+          const controller = new AbortController()
+          const timeoutId = setTimeout(() => {
+            controller.abort()
+          }, 10000)
+
           const aiRes = await fetch("/api/ai/import-mapping", {
             method: "POST",
             headers: {
@@ -931,7 +937,10 @@ export function PublicPool() {
               headers: headerRow,
               sampleRows: dataRows.slice(0, 50),
             }),
+            signal: controller.signal,
           })
+
+          clearTimeout(timeoutId)
 
           if (aiRes.ok) {
             const aiJson = (await aiRes.json().catch(() => null)) as any
@@ -963,12 +972,36 @@ export function PublicPool() {
                 pick(row, mapping.sourceLabel),
                 pick(row, mapping.budget),
               ])
+
+              toast.success("AI 已自动识别字段", {
+                description: "已根据表头和示例数据自动匹配导入字段，可在预览中确认。",
+              })
+            } else {
+              toast.message?.("AI 字段匹配结果为空，按模板顺序导入", {
+                description: "未能从返回结果中解析到有效映射，将按模板列顺序解析。",
+              })
             }
+          } else {
+            toast.warning?.("AI 字段自动识别暂不可用", {
+              description: "调用 AI 服务失败，将按模板列顺序解析。",
+            })
           }
         } catch (aiErr) {
-          console.error("AI import mapping failed, fallback to raw column order", aiErr)
+          if ((aiErr as any)?.name === "AbortError") {
+            console.warn("AI import mapping timeout, fallback to raw column order")
+            toast.warning?.("AI 字段自动识别超时", {
+              description: "AI 服务响应超时，本次导入将按模板列顺序解析。",
+            })
+          } else {
+            console.error("AI import mapping failed, fallback to raw column order", aiErr)
+            toast.warning?.("AI 字段自动识别失败", {
+              description: "调用 AI 服务时出错，本次导入将按模板列顺序解析。",
+            })
+          }
         }
       }
+
+
 
       const parsed: string[][] = []
 
