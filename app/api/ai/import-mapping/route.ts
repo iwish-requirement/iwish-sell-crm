@@ -2,18 +2,24 @@ import { NextRequest, NextResponse } from "next/server"
 
 export const runtime = "edge"
 
-const DEFAULT_KIE_API_URL = "https://api.kie.ai/codex/v1/responses"
-
+const DEFAULT_KIE_API_URL = "https://api.kie.ai/v1/market/chat/gpt-5-4/completions"
+const DEFAULT_KIE_TASK_DETAIL_URL = "https://api.kie.ai/v1/market/common/get-task-detail"
 
 function getKieApiUrl(): string {
   const raw = (process.env.KIE_API_URL ?? DEFAULT_KIE_API_URL).trim()
   return raw || DEFAULT_KIE_API_URL
 }
 
+function getKieTaskDetailUrl(): string {
+  const raw = (process.env.KIE_TASK_DETAIL_URL ?? DEFAULT_KIE_TASK_DETAIL_URL).trim()
+  return raw || DEFAULT_KIE_TASK_DETAIL_URL
+}
+
 function getKieApiKey(): string | null {
   const raw = (process.env.KIE_API_KEY ?? "").trim()
   return raw.length > 0 ? raw : null
 }
+
 
 
 function stripJsonFence(text: string): string {
@@ -86,7 +92,6 @@ export async function POST(req: NextRequest) {
     }
 
     const llmRes = await fetch(getKieApiUrl(), {
-
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -104,13 +109,88 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const llmJson: any = await llmRes.json().catch(() => null)
-    const content = llmJson?.choices?.[0]?.message?.content
-    if (typeof content !== "string") {
+    const firstJson: any = await llmRes.json().catch(() => null)
+    let content: string | null = null
+
+    // 形式 A：异步任务模式（返回 task_id，需要轮询获取结果）
+    const taskId = firstJson?.data?.task_id as string | undefined
+    if (taskId) {
+      const detailBase = getKieTaskDetailUrl()
+      let resultPayload: any = null
+
+      for (let attempt = 0; attempt < 6; attempt++) {
+        const detailRes = await fetch(`${detailBase}?task_id=${encodeURIComponent(taskId)}`, {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+          },
+        })
+
+        if (!detailRes.ok) {
+          const text = await detailRes.text().catch(() => "")
+          console.error("KIE task detail failed", detailRes.status, text)
+          return NextResponse.json(
+            {
+              ok: false,
+              error: "llm_task_detail_error",
+              status: detailRes.status,
+              detail: text.slice(0, 1000),
+            },
+            { status: 502 },
+          )
+        }
+
+        const detailJson: any = await detailRes.json().catch(() => null)
+        const status = detailJson?.data?.status as string | undefined
+
+        if (status === "succeeded") {
+          resultPayload = detailJson?.data?.result ?? null
+          break
+        }
+
+        if (status === "failed" || status === "canceled" || status === "cancelled") {
+          console.error("KIE task failed", detailJson)
+          return NextResponse.json(
+            {
+              ok: false,
+              error: "llm_task_failed",
+              detail: JSON.stringify(detailJson).slice(0, 1000),
+            },
+            { status: 502 },
+          )
+        }
+
+        // 简单轮询等待：每 800ms 查询一次，最多约 5 秒
+        await new Promise((resolve) => setTimeout(resolve, 800))
+      }
+
+      if (!resultPayload) {
+        return NextResponse.json(
+          { ok: false, error: "llm_task_timeout", detail: "KIE task did not complete in time" },
+          { status: 504 },
+        )
+      }
+
+      const msgContent =
+        resultPayload?.choices?.[0]?.message?.content ?? resultPayload?.choices?.[0]?.text ?? null
+      if (typeof msgContent === "string") {
+        content = msgContent
+      }
+    } else {
+      // 形式 B：同步模式，直接返回 choices
+      const directContent =
+        firstJson?.choices?.[0]?.message?.content ?? firstJson?.choices?.[0]?.text ?? null
+      if (typeof directContent === "string") {
+        content = directContent
+      }
+    }
+
+    if (!content) {
       return NextResponse.json({ ok: false, error: "invalid_llm_response" }, { status: 502 })
     }
 
     let parsed: any
+
     try {
       const jsonText = stripJsonFence(content)
       parsed = JSON.parse(jsonText)
