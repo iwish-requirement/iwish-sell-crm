@@ -3,7 +3,44 @@
 > 本文件用于记录 AI 助手在本仓库内做出的重要结构/逻辑变更，方便你审计、回顾与回滚。
 > 按时间倒序追加；同一天多次修改可在同一日期下追加小节。
 
+## 2026-03-17
+
+### analytics-product-type-distribution: 报表新增按产品/业务类型统计导入线索
+
+**变更点**
+- 更新 `components/analytics-dashboard.tsx`：从 `leads_secure_view` 额外选择 `business_types` 字段，在本地按业务类型聚合当前筛选范围内的线索数量，新增“客户产品/业务类型分布”表格卡片，并支持导出产品类型分布 CSV 报表；该统计自动包含通过公海导入创建的线索，因为它们在导入时已经写入业务类型。
+- 扩展报表导出逻辑 `handleDownloadCSV`：新增 `product-type` 分支，按“产品/业务类型 + 线索数”输出，文件名为 `product-type-distribution.csv`。
+
+**变更原因（对应 PRD/设想）**
+- 你提出希望“分析导入进来的客户主要做什么产品类型”，本次改动复用既有的业务类型建模（`business_types`/`leads_business_types`），在不增加新的表/RPC 的前提下，在数据分析页提供按产品/业务类型聚合的轻量统计视图，帮助你快速看出当前线索池中客户产品方向的分布。
+
+**影响范围**
+- UI/前端：仅在数据分析页新增一个统计卡片和导出入口，不影响既有漏斗、来源、团队排行榜等卡片布局；当当前筛选范围内没有任何业务类型数据时，该卡片显示友好的空状态提示。
+- DB/RPC：继续通过 `leads_secure_view` 读取数据，只在前端做聚合统计，没有新增或修改任何 Supabase 迁移、RLS 或 RPC。
+
+**回滚方式**
+- 如需回滚，可删除 `analytics-dashboard` 中对 `business_types` 的选择与 `productTypeData` 相关状态/聚合逻辑，并移除“客户产品/业务类型分布”卡片和导出分支，恢复为仅按来源/阶段/团队维度分析线索。
+
+### public-pool-ai-import-mapping: 公海导入接入 KIE GPT-5-4 AI 字段映射
+
+
+**变更点**
+- 新增 `app/api/ai/import-mapping/route.ts`：封装对 KIE Chat Completions (`model: gpt-5-4`) 的调用，接收上传表头和示例行，返回标准导入模板所需的列映射（公司名称/网址/联系人/电话/微信号/来源渠道/预算），供前端统一应用到整份导入数据。
+- 更新 `components/public-pool.tsx`：在本地解析 CSV/Excel 后优先调用上述 AI 接口获取字段映射，并基于映射结果构造标准化行，然后复用现有“基础信息三组必填 + 去重 + 预览 + 导入”流程；当 AI 不可用或返回异常时自动退回到原有模板格式解析逻辑。
+- 安装 `xlsx` 依赖并扩展导入支持 `.xlsx/.xls`，在本地解析阶段统一输出二维字符串数组，方便与 AI 字段映射结果衔接。
+
+**变更原因（对应 PRD/设想）**
+- 你提出“活动导出的线索数据结构参差不齐，希望公海导入只做承接，让 AI 负责把各种乱表结构自动对齐到线索看板需要的字段”，本次改动在不改变现有 Supabase RLS/RPC/审计链路前提下，引入一层可选的 AI 字段映射预处理，降低导入前手工清洗成本。
+
+**影响范围**
+- UI/前端：公海导入弹窗在上传 CSV/Excel 后会多一次 AI 字段识别请求，但整体导入流程、预览界面和权限校验行为保持不变；AI 失败时用户仍可通过标准模板正常导入。
+- 后端/API：新增一个仅在服务端调用 KIE LLM 的 API Route，不改动数据库结构、RLS 策略或现有 RPC；API Key 通过环境变量 `KIE_API_KEY` 提供，由运维/开发在 `.env.local` 等配置中注入。
+
+**回滚方式**
+- 删除 `app/api/ai/import-mapping/route.ts` 文件，并在 `components/public-pool.tsx` 中移除对该接口的调用逻辑，恢复为仅按固定模板列顺序解析导入文件；同时可卸载 `xlsx` 依赖或保留用于 Excel→CSV 解析。
+
 ## 2026-03-11
+
 
 ### leads-source-departments-configurable: 来源责任部门枚举可配置
 
