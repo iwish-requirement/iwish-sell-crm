@@ -68,7 +68,13 @@ type SourceRoiItem = {
   revenuePerLead: number
 }
 
-type TeamLeaderboardRow = {
+type ProductTypeItem = {
+  id: number
+  name: string
+  leads: number
+}
+
+ type TeamLeaderboardRow = {
   id: string
   name: string
   avatar?: string | null
@@ -80,6 +86,7 @@ type TeamLeaderboardRow = {
   avgDealValue: number
   trend: "up" | "down"
 }
+
 
 type TeamOption = {
   id: string
@@ -106,7 +113,9 @@ export function AnalyticsDashboard() {
   const [sourceConversionData, setSourceConversionData] = useState<SourceConversionItem[]>([])
   const [sourceRoiData, setSourceRoiData] = useState<SourceRoiItem[]>([])
   const [teamData, setTeamData] = useState<TeamLeaderboardRow[]>([])
+  const [productTypeData, setProductTypeData] = useState<ProductTypeItem[]>([])
   const [poolLeadsCount, setPoolLeadsCount] = useState<number | null>(null)
+
   const [currentProfile, setCurrentProfile] = useState<UserProfile | null>(null)
   const [contractExpiringSoon, setContractExpiringSoon] = useState(0)
   const [contractExpiredRecently, setContractExpiredRecently] = useState(0)
@@ -213,8 +222,9 @@ export function AnalyticsDashboard() {
         let query = supabase
           .from("leads_secure_view")
           .select(
-            "id, team_id, owner_id, created_by, source, stage, status, close_result, budget, created_at",
+            "id, team_id, owner_id, created_by, source, stage, status, close_result, budget, created_at, business_types",
           )
+
 
         if (dateRange?.from) {
           query = query.gte("created_at", dateRange.from.toISOString())
@@ -368,11 +378,13 @@ export function AnalyticsDashboard() {
         setSourceConversionData([])
         setSourceRoiData([])
         setTeamData([])
+        setProductTypeData([])
         setIsLoading(false)
         return
       }
 
       const contracts = (contractRows ?? []) as any[]
+
       const leadById = new Map<string, LeadSecureRow>()
       for (const lead of filteredLeads) {
         const id = lead.id
@@ -451,12 +463,31 @@ export function AnalyticsDashboard() {
         setFunnelData([])
         setSourceVolumeData([])
         setSourceConversionData([])
+        setSourceRoiData([])
         setTeamData([])
+        setProductTypeData([])
         setIsLoading(false)
         return
       }
 
+      const productTypeMap = new Map<number, { id: number; name: string; leads: number }>()
+      for (const lead of filteredLeads) {
+        const types = (lead.business_types ?? []) as { id: number; name: string; category_id: number }[]
+        if (!Array.isArray(types) || types.length === 0) continue
+
+        const seenTypeIds = new Set<number>()
+        for (const t of types) {
+          if (typeof t.id !== "number") continue
+          if (seenTypeIds.has(t.id)) continue
+          seenTypeIds.add(t.id)
+          const current = productTypeMap.get(t.id) ?? { id: t.id, name: t.name ?? `类型 #${t.id}`, leads: 0 }
+          current.leads += 1
+          productTypeMap.set(t.id, current)
+        }
+      }
+
       const stageOrder = ["L1", "L2", "L3", "L4", "Won"]
+
       const defaultStageLabelMap: Record<string, { stage: string; fullName: string }> = {
         L1: { stage: "L1 询盘", fullName: "L1 初步意向" },
         L2: { stage: "L2 意向", fullName: "L2 明确需求" },
@@ -781,14 +812,19 @@ export function AnalyticsDashboard() {
 
       nextTeamData.sort((a, b) => b.value - a.value || b.won - a.won || b.leads - a.leads)
 
+      const nextProductTypeData: ProductTypeItem[] = Array.from(productTypeMap.values()).sort(
+        (a, b) => b.leads - a.leads,
+      )
 
       setFunnelData(nextFunnelData)
       setSourceVolumeData(nextSourceVolume)
       setSourceConversionData(nextSourceConversion)
       setSourceRoiData(nextSourceRoi)
       setTeamData(nextTeamData)
+      setProductTypeData(nextProductTypeData)
 
       setIsLoading(false)
+
     }
 
     void fetchAnalytics()
@@ -826,13 +862,6 @@ export function AnalyticsDashboard() {
   }, [leadScopeType, currentProfile, selectedTeam])
 
   const handleDownloadCSV = async (dataType: string) => {
-    if (!canViewReports) {
-      toast.error("没有导出权限", {
-        description: "当前账号未开通报表导出权限，如需调整报表权限，请联系系统管理员。",
-      })
-      return
-    }
-
     try {
       const supabase = getBrowserSupabaseClient()
       const filters: Record<string, any> = {
@@ -853,7 +882,8 @@ export function AnalyticsDashboard() {
         const { mapRpcError } = await import("@/lib/rpc-error-mapper")
         const friendly = mapRpcError(error, {
           title: "导出失败",
-          description: "提交导出请求时出错，请稍后重试",
+          description:
+            "提交导出请求时出错，请稍后重试。如果提示无导出权限，请联系管理员在系统设置中调整权限。",
         })
         toast.error(friendly.title, { description: friendly.description })
         return
@@ -862,13 +892,14 @@ export function AnalyticsDashboard() {
       const { mapRpcError } = await import("@/lib/rpc-error-mapper")
       const friendly = mapRpcError(err as any, {
         title: "导出失败",
-        description: "导出过程中发生异常，请稍后重试",
+        description: "导出过程中发生异常，请稍后重试或联系管理员。",
       })
       toast.error(friendly.title, { description: friendly.description })
       return
     }
 
     const rows: string[][] = []
+
 
     if (dataType === "funnel") {
       rows.push(["阶段", "线索数"])
@@ -903,7 +934,13 @@ export function AnalyticsDashboard() {
           rep.value.toFixed(0),
         ])
       })
+    } else if (dataType === "product-type") {
+      rows.push(["产品/业务类型", "线索数"])
+      productTypeData.forEach((item) => {
+        rows.push([item.name, String(item.leads)])
+      })
     } else if (dataType === "source-roi") {
+
       rows.push([
         "来源渠道",
         "线索数",
@@ -955,8 +992,10 @@ export function AnalyticsDashboard() {
       "source-volume": "lead-source-volume.csv",
       "source-conversion": "lead-source-conversion.csv",
       "team-leaderboard": "team-leaderboard.csv",
+      "product-type": "product-type-distribution.csv",
       "source-roi": "lead-source-roi.csv",
     }
+
     link.download = fileNameMap[dataType] ?? "analytics-export.csv"
     document.body.appendChild(link)
     link.click()
@@ -1442,7 +1481,57 @@ export function AnalyticsDashboard() {
         </CardContent>
       </Card>
 
+      {/* Product Type Distribution */}
+      <Card className="border-muted-foreground/10 shadow-sm">
+        <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 gap-2 border-b border-muted/30">
+          <div>
+            <CardTitle className="text-lg font-bold tracking-tight">客户产品/业务类型分布</CardTitle>
+            <CardDescription className="text-sm font-medium">按线索关联的业务类型统计客户主要做的产品方向</CardDescription>
+          </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="font-semibold h-8">
+                <Download className="h-3.5 w-3.5 mr-1.5" />
+                导出
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => handleDownloadCSV("product-type")} className="font-medium">
+                下载 CSV
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </CardHeader>
+        <CardContent className="overflow-x-auto pt-0">
+          <Table>
+            <TableHeader className="bg-muted/30">
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="font-bold text-foreground py-3">产品/业务类型</TableHead>
+                <TableHead className="text-right font-bold text-foreground">线索数</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {productTypeData.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={2} className="text-center text-sm text-muted-foreground py-6">
+                    当前筛选条件下暂无可统计的产品类型数据
+                  </TableCell>
+                </TableRow>
+              ) : (
+                productTypeData.map((item) => (
+                  <TableRow key={item.id} className="hover:bg-muted/20 transition-colors">
+                    <TableCell className="font-medium text-sm">{item.name}</TableCell>
+                    <TableCell className="text-right font-semibold text-sm">{item.leads}</TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
       {/* Chart 3: Team Activity Leaderboard */}
+
       <Card className="border-muted-foreground/10 shadow-sm">
         <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 gap-2 border-b border-muted/30">
           <div>

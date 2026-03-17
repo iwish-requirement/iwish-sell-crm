@@ -51,6 +51,7 @@ interface PoolLead {
   website: string
   contact: string
   phone: string
+  wechat: string
   source: string
   budget: string
   lastStage: string
@@ -60,6 +61,7 @@ interface PoolLead {
   returnedById: string | null
   importedById: string | null
 }
+
 
 
 interface SalesRep {
@@ -263,6 +265,11 @@ export function PublicPool() {
   const [duplicatesFound, setDuplicatesFound] = useState(0)
   const [parsedImportRows, setParsedImportRows] = useState<string[][] | null>(null)
   const [isSubmittingImport, setIsSubmittingImport] = useState(false)
+  const importPreviewRows = useMemo(
+    () => (parsedImportRows ? parsedImportRows.slice(0, 50) : []),
+    [parsedImportRows],
+  )
+
 
   const [importJobs, setImportJobs] = useState<LeadImportJob[]>([])
   const [exportJobs, setExportJobs] = useState<LeadExportJob[]>([])
@@ -287,8 +294,9 @@ export function PublicPool() {
         const { data, error } = await supabase
           .from("leads_secure_view")
           .select(
-            "id, name, website, stage, status, source, customer_name, customer_phone, budget, updated_at, created_by, team_id, owner_id",
+            "id, name, website, stage, status, source, customer_name, customer_phone, wechat, budget, updated_at, created_by, team_id, owner_id",
           )
+
           .eq("status", "pool")
           .order("updated_at", { ascending: false })
 
@@ -375,7 +383,9 @@ export function PublicPool() {
               website: (row as any).website ?? "",
               contact: (row.customer_name as string) ?? "未填写联系人",
               phone: (row.customer_phone as string) ?? "",
+              wechat: ((row as any).wechat as string | null) ?? "",
               source: formatPublicPoolSourceLabel(row as any),
+
 
               budget:
                 row.budget != null
@@ -849,41 +859,137 @@ export function PublicPool() {
 
     try {
       const ext = file.name.toLowerCase().split(".").pop()
-      if (ext !== "csv") {
+      if (ext !== "csv" && ext !== "xlsx" && ext !== "xls") {
         toast.error("导入失败", {
-          description: "当前版本仅支持 CSV 模板导入，请使用下载的 CSV 模板",
+          description: "当前版本仅支持 CSV 或 Excel 模板导入，请使用下载的模板文件",
         })
         setImportStage("idle")
         setImportProgress(0)
         return
       }
 
-      const text = await file.text()
-      const lines = text
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter((line) => line.length > 0)
+      let headerRow: string[] | null = null
+      let dataRows: string[][] = []
+      let rawRows: string[][] = []
 
-      if (lines.length <= 1) {
-        toast.error("导入失败", {
-          description: "导入文件为空或只有表头，请检查模板内容",
-        })
-        setImportStage("idle")
-        setImportProgress(0)
-        return
+      if (ext === "csv") {
+        const text = await file.text()
+        const lines = text
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0)
+
+        if (lines.length <= 1) {
+          toast.error("导入失败", {
+            description: "导入文件为空或只有表头，请检查模板内容",
+          })
+          setImportStage("idle")
+          setImportProgress(0)
+          return
+        }
+
+        const headerLine = lines[0] ?? ""
+        headerRow = headerLine.split(",").map((c) => c.trim())
+
+        dataRows = lines.slice(1).map((line) => line.split(",").map((c) => c.trim()))
+      } else {
+        const XLSX = await import("xlsx")
+        const arrayBuffer = await file.arrayBuffer()
+        const workbook = XLSX.read(arrayBuffer, { type: "array" })
+        const sheetName = workbook.SheetNames[0]
+        const worksheet = workbook.Sheets[sheetName]
+        const sheetData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 }) as any[][]
+
+        const rows = (sheetData ?? [])
+          .map((row) => (row ?? []).map((cell) => (cell == null ? "" : String(cell).trim())))
+          .filter((row) => row.some((cell: string) => cell.length > 0))
+
+        if (rows.length <= 1) {
+          toast.error("导入失败", {
+            description: "导入文件为空或只有表头，请检查模板内容",
+          })
+          setImportStage("idle")
+          setImportProgress(0)
+          return
+        }
+
+        headerRow = (rows[0] ?? []).map((cell) => (cell == null ? "" : String(cell).trim()))
+        dataRows = rows.slice(1)
       }
 
-      const rows = lines.slice(1)
+      rawRows = dataRows
+
+      // 先尝试调用后端 AI 接口，根据表头和示例行推断字段映射
+      if (headerRow && dataRows.length > 0) {
+        try {
+          const aiRes = await fetch("/api/ai/import-mapping", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              headers: headerRow,
+              sampleRows: dataRows.slice(0, 50),
+            }),
+          })
+
+          if (aiRes.ok) {
+            const aiJson = (await aiRes.json().catch(() => null)) as any
+            const mapping = aiJson?.columnMapping as
+              | {
+                  company: number | null
+                  website: number | null
+                  contact: number | null
+                  phone: number | null
+                  wechat: number | null
+                  sourceLabel: number | null
+                  budget: number | null
+                }
+              | undefined
+
+            if (mapping && typeof mapping === "object") {
+              const pick = (row: string[], idx: number | null | undefined) => {
+                if (idx == null || idx < 0 || idx >= row.length) return ""
+                const value = row[idx]
+                return value == null ? "" : String(value).trim()
+              }
+
+              rawRows = dataRows.map((row) => [
+                pick(row, mapping.company),
+                pick(row, mapping.website),
+                pick(row, mapping.contact),
+                pick(row, mapping.phone),
+                pick(row, mapping.wechat),
+                pick(row, mapping.sourceLabel),
+                pick(row, mapping.budget),
+              ])
+            }
+          }
+        } catch (aiErr) {
+          console.error("AI import mapping failed, fallback to raw column order", aiErr)
+        }
+      }
+
       const parsed: string[][] = []
+
       const seenPhones = new Set<string>()
       let duplicateCount = 0
+      let invalidBasicInfoCount = 0
 
-      rows.forEach((line) => {
-        const cols = line.split(",").map((c) => c.trim())
+      rawRows.forEach((cols) => {
         if (cols.length < 7) return
-        const phone = cols[3] ?? ""
 
-        const normalizedPhone = phone.replace(/[^0-9+]/g, "")
+        const [company, website, , phoneRaw, wechatRaw, sourceLabel] = cols
+        const hasIdentity = Boolean((company || website)?.trim())
+        const hasContact = Boolean((phoneRaw || wechatRaw)?.trim())
+        const hasSource = Boolean(sourceLabel?.trim())
+
+        if (!hasIdentity || !hasContact || !hasSource) {
+          invalidBasicInfoCount += 1
+          return
+        }
+
+        const normalizedPhone = (phoneRaw ?? "").replace(/[^0-9+]/g, "")
         if (normalizedPhone && seenPhones.has(normalizedPhone)) {
           duplicateCount += 1
           return
@@ -891,11 +997,19 @@ export function PublicPool() {
         if (normalizedPhone) {
           seenPhones.add(normalizedPhone)
         }
-        parsed.push(cols)
+        parsed.push(cols.map((c) => c.trim()))
       })
 
       setParsedImportRows(parsed)
       setDuplicatesFound(duplicateCount)
+
+      if (invalidBasicInfoCount > 0) {
+        toast.warning("部分记录缺少基础信息，已自动跳过", {
+          description: `共有 ${invalidBasicInfoCount} 条记录未填写公司/网址、电话/微信或来源中的至少一项，已从导入中剔除。`,
+        })
+      }
+
+
 
       // 简单的进度动画：快速拉到 100%
       let progress = 0
@@ -932,11 +1046,36 @@ export function PublicPool() {
   const handleConfirmImport = async () => {
     const supabase = getBrowserSupabaseClient()
 
-    if (!canImportLeads) {
-      toast.error("没有导入线索的权限", {
-        description: "当前账号未开通线索导入权限，如需调整权限，请联系系统管理员。",
-      })
-      return
+    // 为了避免依赖首次加载时缓存下来的权限快照，这里在提交前
+    // 通过 rpc_me_permissions 实时读取当前账号的导入权限。
+    try {
+      const { data: mePerms, error: permsError } = await supabase.rpc("rpc_me_permissions")
+      if (!permsError) {
+        const latestCanImportLeads = Boolean((mePerms as any)?.canImportLeads)
+        if (!latestCanImportLeads) {
+          toast.error("没有导入线索的权限", {
+            description: "当前账号未开通线索导入权限，如需调整权限，请联系系统管理员。",
+          })
+          return
+        }
+      } else {
+        console.error("Failed to refresh current user permissions before import", permsError)
+        // 如果实时刷新失败且之前的权限快照也认为无权导入，则仍然阻止导入
+        if (!canImportLeads) {
+          toast.error("没有导入线索的权限", {
+            description: "当前账号未开通线索导入权限，如需调整权限，请联系系统管理员。",
+          })
+          return
+        }
+      }
+    } catch (permErr) {
+      console.error("Unexpected error while refreshing permissions before import", permErr)
+      if (!canImportLeads) {
+        toast.error("没有导入线索的权限", {
+          description: "当前账号未开通线索导入权限，如需调整权限，请联系系统管理员。",
+        })
+        return
+      }
     }
 
     if (importStage === "complete" && uploadedFile && !isSubmittingImport && parsedImportRows) {
@@ -958,150 +1097,143 @@ export function PublicPool() {
           })
           toast.error(friendly.title, { description: friendly.description })
         } else {
-          // 2) 解析 CSV 模板并通过 RPC 将线索真正落库到公海池
+          // 2) 使用预解析结果将线索真正落库到公海池
           try {
-            const ext = uploadedFile.name.toLowerCase().split(".").pop()
-            if (ext !== "csv") {
+            const rowsToUse = parsedImportRows
+            if (!rowsToUse || rowsToUse.length === 0) {
               toast.error("导入失败", {
-                description: "当前版本仅支持 CSV 模板导入，请使用下载的 CSV 模板",
+                description: "未找到可导入的数据，请重新上传文件后再试",
               })
-            } else {
-              const text = await uploadedFile.text()
-              const lines = text
-                .split(/\r?\n/)
-                .map((line) => line.trim())
-                .filter((line) => line.length > 0)
+              return
+            }
 
-              if (lines.length <= 1) {
-                toast.error("导入失败", {
-                  description: "导入文件为空或只有表头，请检查模板内容",
-                })
+            const profile = await fetchCurrentUserProfile(supabase)
+            if (!profile || profile.teamId == null) {
+              throw new Error("无法获取当前用户的团队信息")
+            }
+
+            let importedCount = 0
+            let failedCount = 0
+            let dbDuplicateCount = 0
+
+            const existingPhoneCache = new Map<string, boolean>()
+
+            for (const cols of rowsToUse) {
+              if (cols.length < 7) continue
+
+              const [company, website, contact, phone, wechat, sourceLabel, budgetStr] = cols.map((c) => c.trim())
+
+              const hasIdentity = Boolean((company || website)?.trim())
+              const hasContact = Boolean((phone || wechat)?.trim())
+              const hasSource = Boolean(sourceLabel?.trim())
+
+              if (!hasIdentity || !hasContact || !hasSource) {
+                failedCount += 1
+                continue
+              }
+
+              const budget = budgetStr ? Number(budgetStr) : null
+
+              // 数据库级去重：若该手机号已存在可见线索，则跳过本行
+              const phoneKey = phone.trim()
+              if (phoneKey) {
+                let exists = existingPhoneCache.get(phoneKey)
+                if (exists === undefined) {
+                  const { data: existing, error: existingError } = await supabase
+                    .from("leads_secure_view")
+                    .select("id, customer_phone")
+                    .eq("customer_phone", phoneKey)
+                    .limit(1)
+                    .maybeSingle()
+
+                  exists = !existingError && !!existing
+                  existingPhoneCache.set(phoneKey, exists)
+                }
+
+                if (exists) {
+                  dbDuplicateCount += 1
+                  continue
+                }
+              }
+
+              const rawSourceLabel = sourceLabel || ""
+              const primarySource = IMPORT_PRIMARY_SOURCE_FOR_POOL
+              let secondarySourceKey = IMPORT_SECONDARY_LABEL_TO_KEY[rawSourceLabel] ?? ""
+
+              if (!secondarySourceKey) {
+                // 对于模板中未识别的来源标签，统一归入“其他活动”
+                secondarySourceKey = IMPORT_FALLBACK_SECONDARY_KEY
+              }
+
+              const payload: any = {
+                team_id: profile.team_id,
+                owner_id: profile.id,
+                name: company || website || "未命名线索",
+                website: website || null,
+                source: rawSourceLabel || "公司分配资源",
+                stage: "L1",
+                status: "pool",
+                customer_name: contact || "未填写联系人",
+                customer_phone: phone || null,
+                wechat: wechat || null,
+
+                responsibility_type: primarySource,
+                source_level1: primarySource,
+                source_level2: secondarySourceKey,
+              }
+
+              if (budget !== null && !Number.isNaN(budget)) {
+                payload.budget = budget
+              }
+
+              if (defaultBusinessTypeId) {
+                payload.business_type_ids = [defaultBusinessTypeId]
+                payload.business_category_ids = defaultBusinessCategoryIds
               } else {
-                // 如果已经提前解析过，就直接使用缓存的 parsedImportRows；否则兜底重新解析一遍
-                const rowsToUse = parsedImportRows ?? lines.slice(1).map((line) => line.split(",").map((c) => c.trim()))
-
-                const profile = await fetchCurrentUserProfile(supabase)
-                if (!profile || profile.teamId == null) {
-                  throw new Error("无法获取当前用户的团队信息")
-                }
-
-
-                let importedCount = 0
-                let failedCount = 0
-                let dbDuplicateCount = 0
-
-                const existingPhoneCache = new Map<string, boolean>()
-
-                for (const cols of rowsToUse) {
-                  if (cols.length < 7) continue
-
-                  const [company, website, contact, phone, wechat, sourceLabel, budgetStr] = cols.map((c) => c.trim())
-                  const budget = budgetStr ? Number(budgetStr) : null
-
-
-                  // 数据库级去重：若该手机号已存在可见线索，则跳过本行
-                  const phoneKey = phone.trim()
-                  if (phoneKey) {
-                    let exists = existingPhoneCache.get(phoneKey)
-                    if (exists === undefined) {
-                      const { data: existing, error: existingError } = await supabase
-                        .from("leads_secure_view")
-                        .select("id, customer_phone")
-                        .eq("customer_phone", phoneKey)
-                        .limit(1)
-                        .maybeSingle()
-
-                      exists = !existingError && !!existing
-                      existingPhoneCache.set(phoneKey, exists)
-                    }
-
-                    if (exists) {
-                      dbDuplicateCount += 1
-                      continue
-                    }
-                  }
-
-                  const rawSourceLabel = sourceLabel || ""
-                  const primarySource = IMPORT_PRIMARY_SOURCE_FOR_POOL
-                  let secondarySourceKey = IMPORT_SECONDARY_LABEL_TO_KEY[rawSourceLabel] ?? ""
-
-                  if (!secondarySourceKey) {
-                    // 对于模板中未识别的来源标签，统一归入“其他活动”
-                    secondarySourceKey = IMPORT_FALLBACK_SECONDARY_KEY
-                  }
-
-                  const payload: any = {
-                    team_id: profile.team_id,
-                    owner_id: profile.id,
-                    name: company,
-                    website: website || null,
-                    source: rawSourceLabel || "公司分配资源",
-                    stage: "L1",
-                    status: "pool",
-                    customer_name: contact,
-                    customer_phone: phone,
-
-                    responsibility_type: primarySource,
-                    source_level1: primarySource,
-                    source_level2: secondarySourceKey,
-                  }
-
-
-                  if (budget !== null && !Number.isNaN(budget)) {
-                    payload.budget = budget
-                  }
-
-                  if (defaultBusinessTypeId) {
-                    payload.business_type_ids = [defaultBusinessTypeId]
-                    payload.business_category_ids = defaultBusinessCategoryIds
-                  } else {
-                    toast.error("缺少业务类型配置", {
-                      description: "请在系统设置中新增至少一个业务子类型后再导入",
-                    })
-                    failedCount += 1
-                    continue
-                  }
-
-                  const { error: createError } = await supabase.rpc("rpc_lead_create", {
-                    payload,
-                  })
-
-
-                  if (createError) {
-                    console.error("Failed to create lead from import", createError)
-                    failedCount += 1
-                  } else {
-                    importedCount += 1
-                  }
-                }
-
-                const totalDuplicates = duplicatesFound + dbDuplicateCount
-                const totalCount = importedCount + failedCount + totalDuplicates
-
-                // 导入完成后，回写导入任务统计
-                if (jobId) {
-                  try {
-                    await supabase.rpc("rpc_leads_import_mark_complete", {
-                      p_job_id: jobId,
-                      p_status: "completed",
-                      p_total_count: totalCount,
-                      p_success_count: importedCount,
-                      p_duplicate_count: totalDuplicates,
-                      p_error_message: null,
-                    })
-                  } catch (markErr) {
-                    console.error("Failed to mark import job complete", markErr)
-                  }
-                }
-
-                toast.success("导入任务已创建", {
-                  description: `已成功导入 ${importedCount} 条线索，${failedCount} 条导入失败，${totalDuplicates} 条重复已跳过`,
+                toast.error("缺少业务类型配置", {
+                  description: "请在系统设置中新增至少一个业务子类型后再导入",
                 })
+                failedCount += 1
+                continue
+              }
 
-                // 刷新公海列表和任务列表
-                retryLoad()
+              const { error: createError } = await supabase.rpc("rpc_lead_create", {
+                payload,
+              })
+
+              if (createError) {
+                console.error("Failed to create lead from import", createError)
+                failedCount += 1
+              } else {
+                importedCount += 1
               }
             }
+
+            const totalDuplicates = duplicatesFound + dbDuplicateCount
+            const totalCount = importedCount + failedCount + totalDuplicates
+
+            // 导入完成后，回写导入任务统计
+            if (jobId) {
+              try {
+                await supabase.rpc("rpc_leads_import_mark_complete", {
+                  p_job_id: jobId,
+                  p_status: "completed",
+                  p_total_count: totalCount,
+                  p_success_count: importedCount,
+                  p_duplicate_count: totalDuplicates,
+                  p_error_message: null,
+                })
+              } catch (markErr) {
+                console.error("Failed to mark import job complete", markErr)
+              }
+            }
+
+            toast.success("导入任务已创建", {
+              description: `已成功导入 ${importedCount} 条线索，${failedCount} 条导入失败，${totalDuplicates} 条重复已跳过`,
+            })
+
+            // 刷新公海列表和任务列表
+            retryLoad()
           } catch (importErr) {
             console.error("Failed to import leads into pool", importErr)
             toast.error("导入失败", {
@@ -1109,6 +1241,7 @@ export function PublicPool() {
             })
           }
         }
+
       } catch (err) {
         console.error("Failed to request leads import job", err)
         toast.error("导入任务创建失败", {
@@ -1122,6 +1255,7 @@ export function PublicPool() {
     setImportDialogOpen(false)
     setTimeout(resetImport, 300)
   }
+
 
   const getDaysInPoolBadge = (days: number) => {
     if (days >= 14) {
@@ -1492,7 +1626,9 @@ export function PublicPool() {
                 <TableHead className="w-[260px] min-w-[200px] font-bold text-foreground">网址</TableHead>
                 <TableHead className="min-w-[80px] font-bold text-foreground">联系人</TableHead>
                 <TableHead className="min-w-[120px] font-bold text-foreground">电话</TableHead>
+                <TableHead className="min-w-[110px] font-bold text-foreground">微信号</TableHead>
                 <TableHead className="min-w-[80px] font-bold text-foreground">来源</TableHead>
+
                 <TableHead className="min-w-[80px] font-bold text-foreground">预算</TableHead>
                 <TableHead className="min-w-[100px] font-bold text-foreground">最后阶段</TableHead>
                 <TableHead className="min-w-[120px] font-bold text-foreground">退回原因</TableHead>
@@ -1522,7 +1658,11 @@ export function PublicPool() {
                   </TableCell>
                   <TableCell className="text-sm font-medium">{lead.contact}</TableCell>
                   <TableCell className="font-mono text-sm font-medium text-foreground/80">{lead.phone}</TableCell>
+                  <TableCell className="font-mono text-xs text-foreground/80">
+                    {lead.wechat || <span className="text-muted-foreground">-</span>}
+                  </TableCell>
                   <TableCell>
+
                     <Badge variant="outline" className="text-xs font-medium border-muted-foreground/20">{lead.source}</Badge>
                   </TableCell>
                   <TableCell className="text-sm font-bold text-primary">{lead.budget}</TableCell>
@@ -1591,13 +1731,7 @@ export function PublicPool() {
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           onClick={() => {
-                            if (!canDeleteLeads) {
-                              toast.error("没有删除线索的权限", {
-                                description: "请联系管理员在系统设置 → 角色权限中开启“删除线索”权限",
-                              })
-                              return
-                            }
-
+                            // 这里只负责打开删除确认弹窗，真正的权限校验交给后端 RPC
                             setDeleteTargetLead(lead)
                             setDeleteDialogOpen(true)
                           }}
@@ -1605,6 +1739,7 @@ export function PublicPool() {
                         >
                           <Trash2 className="w-4 h-4 mr-2" /> 删除线索
                         </DropdownMenuItem>
+
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </TableCell>
@@ -2006,8 +2141,65 @@ export function PublicPool() {
                         <span className="text-sm font-medium">检测到 {duplicatesFound} 条重复手机号，已自动跳过</span>
                       </div>
                     )}
+                    {parsedImportRows && parsedImportRows.length > 0 && (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-semibold text-muted-foreground">
+                            导入预览（前 {importPreviewRows.length} 条 / 共 {parsedImportRows.length} 条）
+                          </span>
+                          <span className="text-[11px] text-muted-foreground">
+                            实际导入会按整个文件执行，预览仅展示部分数据
+                          </span>
+                        </div>
+                        <div className="border rounded-md bg-background max-h-64 overflow-auto">
+                          <Table>
+                            <TableHeader className="bg-muted/40 sticky top-0 z-10">
+                              <TableRow>
+                                <TableHead className="text-xs font-semibold text-foreground/80">公司名称</TableHead>
+                                <TableHead className="text-xs font-semibold text-foreground/80">网址</TableHead>
+                                <TableHead className="text-xs font-semibold text-foreground/80">联系人</TableHead>
+                                <TableHead className="text-xs font-semibold text-foreground/80">电话</TableHead>
+                                <TableHead className="text-xs font-semibold text-foreground/80">微信号</TableHead>
+                                <TableHead className="text-xs font-semibold text-foreground/80">来源渠道</TableHead>
+                                <TableHead className="text-xs font-semibold text-foreground/80 text-right">
+                                  预算(元)
+                                </TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {importPreviewRows.map((cols, index) => (
+                                <TableRow key={index}>
+                                  <TableCell className="text-xs font-medium">
+                                    {cols[0] || "未填写公司名称"}
+                                  </TableCell>
+                                  <TableCell className="text-[11px] text-muted-foreground break-all max-w-[120px]">
+                                    {cols[1] || "-"}
+                                  </TableCell>
+                                  <TableCell className="text-xs">
+                                    {cols[2] || "-"}
+                                  </TableCell>
+                                  <TableCell className="text-xs font-mono">
+                                    {cols[3] || "-"}
+                                  </TableCell>
+                                  <TableCell className="text-xs">
+                                    {cols[4] || "-"}
+                                  </TableCell>
+                                  <TableCell className="text-xs">
+                                    {cols[5] || "-"}
+                                  </TableCell>
+                                  <TableCell className="text-xs text-right">
+                                    {cols[6] || "-"}
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
+
               </div>
             )}
           </div>
