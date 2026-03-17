@@ -2,12 +2,19 @@ import { NextRequest, NextResponse } from "next/server"
 
 export const runtime = "edge"
 
-const KIE_API_URL = "https://api.kie.ai/v1/chat/completions"
+const DEFAULT_KIE_API_URL = "https://api.kie.ai/codex/v1/responses"
+
+
+function getKieApiUrl(): string {
+  const raw = (process.env.KIE_API_URL ?? DEFAULT_KIE_API_URL).trim()
+  return raw || DEFAULT_KIE_API_URL
+}
 
 function getKieApiKey(): string | null {
   const raw = (process.env.KIE_API_KEY ?? "").trim()
   return raw.length > 0 ? raw : null
 }
+
 
 function stripJsonFence(text: string): string {
   let t = text.trim()
@@ -78,7 +85,8 @@ export async function POST(req: NextRequest) {
       stream: false,
     }
 
-    const llmRes = await fetch(KIE_API_URL, {
+    const llmRes = await fetch(getKieApiUrl(), {
+
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
