@@ -252,7 +252,10 @@ export function PublicPool() {
   const [isAssigning, setIsAssigning] = useState(false)
   const [loadSalesRepsError, setLoadSalesRepsError] = useState<string | null>(null)
 
+  const [importSourceRows, setImportSourceRows] = useState<string[][] | null>(null)
+
   const [detailDialogOpen, setDetailDialogOpen] = useState(false)
+
   const [detailLead, setDetailLead] = useState<PoolLead | null>(null)
   const [interactions, setInteractions] = useState<PoolLeadInteraction[]>([])
   const [isLoadingInteractions, setIsLoadingInteractions] = useState(false)
@@ -499,8 +502,10 @@ export function PublicPool() {
             .map((row: any) => ({
               id: row.id as string,
               name: (row.full_name as string) ?? "未命名成员",
+              avatar: "",
               activeLeads: activeCounts[row.id as string] ?? 0,
             })) ?? []
+
 
         setSalesReps(normalized)
       } catch (err) {
@@ -1047,6 +1052,10 @@ export function PublicPool() {
 
       const previewRows = dataRows.slice(0, 50).map((row) => buildPreviewRow(row))
 
+      // 保存完整的数据行，供后续“确认导入”时构造批量导入 payload 使用
+      setImportSourceRows(dataRows)
+
+
       // 5）启动慢速进度条（上传/预检查阶段：5% -> 90%）
       slowProgressTimer = setInterval(() => {
         progress = Math.min(progress + 3, 90)
@@ -1136,7 +1145,9 @@ export function PublicPool() {
     setInvalidBasicInfoCount(0)
     setImportJobId(null)
     setImportAiMapping(null)
+    setImportSourceRows(null)
   }
+
 
 
 
@@ -1179,22 +1190,18 @@ export function PublicPool() {
       }
     }
 
-    if (importStage === "complete" && uploadedFile && !isSubmittingImport && importJobId) {
+    if (importStage === "complete" && !isSubmittingImport && importJobId) {
+      if (!importSourceRows || importSourceRows.length === 0) {
+        toast.error("导入失败", {
+          description: "找不到待导入的数据行，请重新选择文件进行预检查",
+        })
+        return
+      }
+
       try {
         setIsSubmittingImport(true)
 
-        const file = uploadedFile
-        const ext = file.name.toLowerCase().split(".").pop() ?? ""
-
-        if (!["csv", "xlsx", "xls"].includes(ext)) {
-          toast.error("导入失败", {
-            description: "当前版本仅支持 CSV 或 Excel 模板导入，请使用下载的模板文件",
-          })
-          return
-        }
-
         const currentProfile = await fetchCurrentUserProfile(supabase)
-
         if (!currentProfile || currentProfile.teamId == null) {
           toast.error("无法导入线索", {
             description: "当前账号未加入任何团队，无法导入公海线索",
@@ -1202,66 +1209,20 @@ export function PublicPool() {
           return
         }
 
-        let rows: string[][] = []
-
-        if (ext === "csv") {
-          const text = await file.text()
-          const lines = text
-            .split(/\r?\n/)
-            .map((line) => line.trim())
-            .filter((line) => line.length > 0)
-
-          if (lines.length <= 1) {
-            toast.error("导入失败", {
-              description: "导入文件为空或只有表头，请检查模板内容",
-            })
-            return
-          }
-
-          rows = lines.slice(1).map((line) => line.split(",").map((c) => c.trim()))
-        } else {
-          const XLSX = await import("xlsx")
-          const arrayBuffer = await file.arrayBuffer()
-          const workbook = XLSX.read(arrayBuffer, { type: "array" })
-          const sheetName = workbook.SheetNames[0]
-          const worksheet = workbook.Sheets[sheetName]
-          const sheetData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 }) as any[][]
-
-          const parsedRows = (sheetData ?? [])
-            .slice(1)
-            .map((row) => (row ?? []).map((cell) => (cell == null ? "" : String(cell).trim())))
-            .filter((row) => row.some((cell: string) => cell.length > 0))
-
-          if (parsedRows.length === 0) {
-            toast.error("导入失败", {
-              description: "导入文件为空或只有表头，请检查模板内容",
-            })
-            return
-          }
-
-          rows = parsedRows
-        }
-
-        let importedCount = 0
-        let failedCount = 0
-        let dbDuplicateCount = 0
-
-        const existingPhoneCache = new Map<string, boolean>()
         const aiMapping = importAiMapping
+        const payloads: any[] = []
 
         let rowIndex = 0
-        for (const row of rows) {
+        for (const row of importSourceRows) {
           rowIndex += 1
 
           // 每处理一定数量的行让出一次事件循环，避免浏览器长时间阻塞
-          if (rowIndex % 50 === 0) {
+          if (rowIndex % 200 === 0) {
+            // eslint-disable-next-line no-await-in-loop
             await new Promise((resolve) => setTimeout(resolve, 0))
           }
 
-          if (row.length < 1) {
-            failedCount += 1
-            continue
-          }
+          if (!row || row.length === 0) continue
 
           let company: string
           let website: string
@@ -1290,7 +1251,6 @@ export function PublicPool() {
             sourceLabel = pick("sourceLabel")
             budgetStr = pick("budget")
           } else {
-            // 回退到模板列顺序
             const safeCols = [...row]
             while (safeCols.length < 7) safeCols.push("")
             const normalize = (value: unknown): string => (value == null ? "" : String(value).trim())
@@ -1308,29 +1268,7 @@ export function PublicPool() {
           const hasSource = Boolean(sourceLabel.trim())
 
           if (!hasIdentity || !hasContact || !hasSource) {
-            failedCount += 1
             continue
-          }
-
-          const normalizedPhone = phone.replace(/[^0-9+]/g, "")
-          if (normalizedPhone) {
-            let exists = existingPhoneCache.get(normalizedPhone)
-            if (exists === undefined) {
-              const { data: existing, error: existingError } = await supabase
-                .from("leads_secure_view")
-                .select("id, customer_phone")
-                .eq("customer_phone", normalizedPhone)
-                .limit(1)
-                .maybeSingle()
-
-              exists = !existingError && !!existing
-              existingPhoneCache.set(normalizedPhone, exists)
-            }
-
-            if (exists) {
-              dbDuplicateCount += 1
-              continue
-            }
           }
 
           const budget = budgetStr ? Number(budgetStr.replace(/[^0-9.]/g, "")) : null
@@ -1361,43 +1299,51 @@ export function PublicPool() {
             payload.budget = budget
           }
 
-          const { error: createError } = await supabase.rpc("rpc_lead_create", {
-            payload,
-          })
-
-          if (createError) {
-            console.error("rpc_lead_create failed in browser import-run", createError)
-            failedCount += 1
-          } else {
-            importedCount += 1
-          }
+          payloads.push(payload)
         }
 
-        const totalDuplicates = dbDuplicateCount
-        const totalCount = importedCount + failedCount + totalDuplicates
-
-        try {
-          await supabase.rpc("rpc_leads_import_mark_complete", {
-            p_job_id: importJobId,
-            p_status: "completed",
-            p_total_count: totalCount,
-            p_success_count: importedCount,
-            p_duplicate_count: totalDuplicates,
-            p_error_message: null,
+        if (payloads.length === 0) {
+          toast.error("导入失败", {
+            description: "所有行都缺少基础信息，无法导入，请检查模板内容",
           })
-        } catch (markErr) {
-          console.error("rpc_leads_import_mark_complete failed in browser import-run", markErr)
+          return
         }
+
+        const { data, error } = await supabase.rpc("rpc_leads_import_public_pool", {
+          p_job_id: importJobId,
+          p_rows: payloads,
+        })
+
+        if (error) {
+          console.error("rpc_leads_import_public_pool failed", error)
+          toast.error("导入失败", {
+            description: "批量导入时出错，请稍后重试或联系管理员",
+          })
+          return
+        }
+
+        const result = (data as any) ?? {}
+        if (!result.ok) {
+          toast.error("导入失败", {
+            description: result.detail || "批量导入返回结果异常，请稍后重试",
+          })
+          return
+        }
+
+        const importedCount = Number(result.importedCount ?? result.successCount ?? 0)
+        const failedCount = Number(result.failedCount ?? 0)
+        const duplicateCount = Number(result.duplicateCount ?? 0)
+        const totalCount = Number(result.totalCount ?? payloads.length)
 
         toast.success("导入任务已完成", {
-          description: `已成功导入 ${importedCount} 条线索，${failedCount} 条导入失败，${totalDuplicates} 条重复已跳过`,
+          description: `本次共尝试导入 ${totalCount} 条线索，已成功导入 ${importedCount} 条，${failedCount} 条导入失败，${duplicateCount} 条重复已跳过`,
         })
 
         retryLoad()
       } catch (err) {
-        console.error("Failed to run import job in browser", err)
+        console.error("Failed to run batch import via rpc_leads_import_public_pool", err)
         toast.error("导入失败", {
-          description: "执行导入任务时出错，请稍后重试",
+          description: "执行批量导入时出错，请稍后重试",
         })
       } finally {
         setIsSubmittingImport(false)
@@ -1407,6 +1353,7 @@ export function PublicPool() {
     setImportDialogOpen(false)
     setTimeout(resetImport, 300)
   }
+
 
 
 
