@@ -1183,47 +1183,219 @@ export function PublicPool() {
       try {
         setIsSubmittingImport(true)
 
-        const formData = new FormData()
-        formData.append("jobId", importJobId)
-        formData.append("file", uploadedFile)
-        if (importAiMapping) {
-          formData.append("aiMapping", JSON.stringify(importAiMapping))
-        }
+        const file = uploadedFile
+        const ext = file.name.toLowerCase().split(".").pop() ?? ""
 
-        const res = await fetch("/api/public-pool/import-run", {
-
-          method: "POST",
-          body: formData,
-        })
-
-        if (!res.ok) {
-          const errJson = (await res.json().catch(() => null)) as any
-          console.error("import-run failed", errJson)
+        if (!["csv", "xlsx", "xls"].includes(ext)) {
           toast.error("导入失败", {
-            description: errJson?.detail || "执行导入任务时出错，请稍后重试",
+            description: "当前版本仅支持 CSV 或 Excel 模板导入，请使用下载的模板文件",
           })
           return
         }
 
-        const json = (await res.json().catch(() => null)) as any
-        if (!json?.ok) {
-          toast.error("导入失败", {
-            description: json?.detail || "执行导入任务返回结果异常，请稍后重试",
+        const currentProfile = await fetchCurrentUserProfile(supabase)
+
+        if (!currentProfile || currentProfile.teamId == null) {
+          toast.error("无法导入线索", {
+            description: "当前账号未加入任何团队，无法导入公海线索",
           })
           return
         }
 
-        const importedCount = Number(json.importedCount ?? 0)
-        const failedCount = Number(json.failedCount ?? 0)
-        const duplicateCount = Number(json.duplicateCount ?? 0)
+        let rows: string[][] = []
+
+        if (ext === "csv") {
+          const text = await file.text()
+          const lines = text
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter((line) => line.length > 0)
+
+          if (lines.length <= 1) {
+            toast.error("导入失败", {
+              description: "导入文件为空或只有表头，请检查模板内容",
+            })
+            return
+          }
+
+          rows = lines.slice(1).map((line) => line.split(",").map((c) => c.trim()))
+        } else {
+          const XLSX = await import("xlsx")
+          const arrayBuffer = await file.arrayBuffer()
+          const workbook = XLSX.read(arrayBuffer, { type: "array" })
+          const sheetName = workbook.SheetNames[0]
+          const worksheet = workbook.Sheets[sheetName]
+          const sheetData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 }) as any[][]
+
+          const parsedRows = (sheetData ?? [])
+            .slice(1)
+            .map((row) => (row ?? []).map((cell) => (cell == null ? "" : String(cell).trim())))
+            .filter((row) => row.some((cell: string) => cell.length > 0))
+
+          if (parsedRows.length === 0) {
+            toast.error("导入失败", {
+              description: "导入文件为空或只有表头，请检查模板内容",
+            })
+            return
+          }
+
+          rows = parsedRows
+        }
+
+        let importedCount = 0
+        let failedCount = 0
+        let dbDuplicateCount = 0
+
+        const existingPhoneCache = new Map<string, boolean>()
+        const aiMapping = importAiMapping
+
+        let rowIndex = 0
+        for (const row of rows) {
+          rowIndex += 1
+
+          // 每处理一定数量的行让出一次事件循环，避免浏览器长时间阻塞
+          if (rowIndex % 50 === 0) {
+            await new Promise((resolve) => setTimeout(resolve, 0))
+          }
+
+          if (row.length < 1) {
+            failedCount += 1
+            continue
+          }
+
+          let company: string
+          let website: string
+          let contact: string
+          let phone: string
+          let wechat: string
+          let sourceLabel: string
+          let budgetStr: string
+
+          if (aiMapping && typeof aiMapping === "object" && (aiMapping as any).columnMapping) {
+            const cm = (aiMapping as any).columnMapping as any
+            const pick = (key: keyof typeof cm): string => {
+              const idxRaw = cm[key]
+              if (typeof idxRaw !== "number" || !Number.isFinite(idxRaw)) return ""
+              const idx = Math.floor(idxRaw)
+              if (idx < 0 || idx >= row.length) return ""
+              const value = row[idx]
+              return value == null ? "" : String(value).trim()
+            }
+
+            company = pick("company")
+            website = pick("website")
+            contact = pick("contact")
+            phone = pick("phone")
+            wechat = pick("wechat")
+            sourceLabel = pick("sourceLabel")
+            budgetStr = pick("budget")
+          } else {
+            // 回退到模板列顺序
+            const safeCols = [...row]
+            while (safeCols.length < 7) safeCols.push("")
+            const normalize = (value: unknown): string => (value == null ? "" : String(value).trim())
+            company = normalize(safeCols[0])
+            website = normalize(safeCols[1])
+            contact = normalize(safeCols[2])
+            phone = normalize(safeCols[3])
+            wechat = normalize(safeCols[4])
+            sourceLabel = normalize(safeCols[5])
+            budgetStr = normalize(safeCols[6])
+          }
+
+          const hasIdentity = Boolean((company || website).trim())
+          const hasContact = Boolean((phone || wechat).trim())
+          const hasSource = Boolean(sourceLabel.trim())
+
+          if (!hasIdentity || !hasContact || !hasSource) {
+            failedCount += 1
+            continue
+          }
+
+          const normalizedPhone = phone.replace(/[^0-9+]/g, "")
+          if (normalizedPhone) {
+            let exists = existingPhoneCache.get(normalizedPhone)
+            if (exists === undefined) {
+              const { data: existing, error: existingError } = await supabase
+                .from("leads_secure_view")
+                .select("id, customer_phone")
+                .eq("customer_phone", normalizedPhone)
+                .limit(1)
+                .maybeSingle()
+
+              exists = !existingError && !!existing
+              existingPhoneCache.set(normalizedPhone, exists)
+            }
+
+            if (exists) {
+              dbDuplicateCount += 1
+              continue
+            }
+          }
+
+          const budget = budgetStr ? Number(budgetStr.replace(/[^0-9.]/g, "")) : null
+
+          const primarySource = IMPORT_PRIMARY_SOURCE_FOR_POOL
+          let secondarySourceKey = IMPORT_SECONDARY_LABEL_TO_KEY[sourceLabel] ?? ""
+          if (!secondarySourceKey) {
+            secondarySourceKey = IMPORT_FALLBACK_SECONDARY_KEY
+          }
+
+          const payload: any = {
+            team_id: currentProfile.teamId,
+            owner_id: currentProfile.id,
+            name: company || website || "未命名线索",
+            website: website || null,
+            source: sourceLabel || "公司分配资源",
+            stage: "L1",
+            status: "pool",
+            customer_name: contact || "未填写联系人",
+            customer_phone: phone || null,
+            wechat: wechat || null,
+            responsibility_type: primarySource,
+            source_level1: primarySource,
+            source_level2: secondarySourceKey,
+          }
+
+          if (budget !== null && !Number.isNaN(budget)) {
+            payload.budget = budget
+          }
+
+          const { error: createError } = await supabase.rpc("rpc_lead_create", {
+            payload,
+          })
+
+          if (createError) {
+            console.error("rpc_lead_create failed in browser import-run", createError)
+            failedCount += 1
+          } else {
+            importedCount += 1
+          }
+        }
+
+        const totalDuplicates = dbDuplicateCount
+        const totalCount = importedCount + failedCount + totalDuplicates
+
+        try {
+          await supabase.rpc("rpc_leads_import_mark_complete", {
+            p_job_id: importJobId,
+            p_status: "completed",
+            p_total_count: totalCount,
+            p_success_count: importedCount,
+            p_duplicate_count: totalDuplicates,
+            p_error_message: null,
+          })
+        } catch (markErr) {
+          console.error("rpc_leads_import_mark_complete failed in browser import-run", markErr)
+        }
 
         toast.success("导入任务已完成", {
-          description: `已成功导入 ${importedCount} 条线索，${failedCount} 条导入失败，${duplicateCount} 条重复已跳过`,
+          description: `已成功导入 ${importedCount} 条线索，${failedCount} 条导入失败，${totalDuplicates} 条重复已跳过`,
         })
 
         retryLoad()
       } catch (err) {
-        console.error("Failed to run import job", err)
+        console.error("Failed to run import job in browser", err)
         toast.error("导入失败", {
           description: "执行导入任务时出错，请稍后重试",
         })
@@ -1235,6 +1407,7 @@ export function PublicPool() {
     setImportDialogOpen(false)
     setTimeout(resetImport, 300)
   }
+
 
 
 
