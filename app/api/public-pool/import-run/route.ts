@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 
 import { createRouteHandlerClient } from "@/lib/supabase/server"
 
-export const runtime = "nodejs"
+export const runtime = "edge"
 
 function normalizeCell(value: unknown): string {
   if (value == null) return ""
