@@ -865,6 +865,7 @@ export function PublicPool() {
     setEstimatedTotalCount(null)
     setInvalidBasicInfoCount(0)
     setImportJobId(null)
+    setImportAiMapping(null)
 
     // 通过本地定时器模拟一个「缓慢但持续前进」的进度条，避免长时间停在 5%
     let slowProgressTimer: ReturnType<typeof setInterval> | null = null
@@ -881,18 +882,187 @@ export function PublicPool() {
         return
       }
 
-      const formData = new FormData()
-      formData.append("file", file)
+      // 1）在浏览器端解析文件，提取表头与数据行（只做一次）
+      let headerRow: string[] = []
+      let dataRows: string[][] = []
 
-      // 预检查阶段：缓慢将进度从 5% 拉到最多 90%，真实耗时由后端决定
+      if (ext === "csv") {
+        const text = await file.text()
+        const lines = text
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0)
+
+        if (lines.length <= 1) {
+          toast.error("导入失败", {
+            description: "导入文件为空或只有表头，请检查模板内容",
+          })
+          setImportStage("idle")
+          setImportProgress(0)
+          return
+        }
+
+        headerRow = (lines[0] ?? "")
+          .split(",")
+          .map((c) => c.trim())
+
+        dataRows = lines.slice(1).map((line) => line.split(",").map((c) => c.trim()))
+      } else {
+        const XLSX = await import("xlsx")
+        const arrayBuffer = await file.arrayBuffer()
+        const workbook = XLSX.read(arrayBuffer, { type: "array" })
+        const sheetName = workbook.SheetNames[0]
+        const worksheet = workbook.Sheets[sheetName]
+        const sheetData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 }) as any[][]
+
+        const rows = (sheetData ?? [])
+          .map((row) => (row ?? []).map((cell) => (cell == null ? "" : String(cell).trim())))
+          .filter((row) => row.some((cell: string) => cell.length > 0))
+
+        if (rows.length <= 1) {
+          toast.error("导入失败", {
+            description: "导入文件为空或只有表头，请检查模板内容",
+          })
+          setImportStage("idle")
+          setImportProgress(0)
+          return
+        }
+
+        headerRow = (rows[0] ?? []).map((cell) => (cell == null ? "" : String(cell).trim()))
+        dataRows = rows.slice(1)
+      }
+
+      const totalCount = dataRows.length
+      const sampleForStats = dataRows.slice(0, 300)
+
+      // 2）调用 AI 接口，根据表头和样本行推断列映射
+      let aiMapping: any | null = null
+      try {
+        if (headerRow.length > 0 && dataRows.length > 0) {
+          const aiRes = await fetch("/api/ai/import-mapping", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              headers: headerRow,
+              sampleRows: sampleForStats,
+            }),
+          })
+
+          if (aiRes.ok) {
+            const aiJson = (await aiRes.json().catch(() => null)) as any
+            if (aiJson?.ok && aiJson?.columnMapping) {
+              aiMapping = {
+                columnMapping: aiJson.columnMapping,
+              }
+            }
+          } else {
+            const text = await aiRes.text().catch(() => "")
+            console.error("/api/ai/import-mapping returned non-200 from client", aiRes.status, text)
+          }
+        }
+      } catch (aiErr) {
+        console.error("Failed to call /api/ai/import-mapping from client", aiErr)
+      }
+
+      // 3）基于样本行做粗略统计（缺基础信息 / 可能重复手机号）
+      let estimatedDuplicateCount = 0
+      let invalidBasicInfoCount = 0
+      const seenPhones = new Set<string>()
+
+      const pickFromRow = (row: string[], cm: any | null, key: string, fallbackIndex: number): string => {
+        if (cm && typeof cm === "object") {
+          const idxRaw = cm[key]
+          if (typeof idxRaw === "number" && Number.isFinite(idxRaw)) {
+            const idx = Math.floor(idxRaw)
+            if (idx >= 0 && idx < row.length) {
+              return (row[idx] ?? "").trim()
+            }
+          }
+        }
+        const cols = [...row]
+        while (cols.length <= fallbackIndex) cols.push("")
+        return (cols[fallbackIndex] ?? "").trim()
+      }
+
+      for (const row of sampleForStats) {
+        if (row.length === 0) continue
+
+        const cm = aiMapping?.columnMapping ?? null
+        const company = pickFromRow(row, cm, "company", 0)
+        const website = pickFromRow(row, cm, "website", 1)
+        const contact = pickFromRow(row, cm, "contact", 2)
+        const phoneRaw = pickFromRow(row, cm, "phone", 3)
+        const wechatRaw = pickFromRow(row, cm, "wechat", 4)
+        const sourceLabel = pickFromRow(row, cm, "sourceLabel", 5)
+
+        const hasIdentity = Boolean((company || website).trim())
+        const hasContact = Boolean((phoneRaw || wechatRaw).trim())
+        const hasSource = Boolean(sourceLabel.trim())
+
+        if (!hasIdentity || !hasContact || !hasSource) {
+          invalidBasicInfoCount += 1
+          continue
+        }
+
+        const normalizedPhone = phoneRaw.replace(/[^0-9+]/g, "")
+        if (normalizedPhone) {
+          if (seenPhones.has(normalizedPhone)) {
+            estimatedDuplicateCount += 1
+            continue
+          }
+          seenPhones.add(normalizedPhone)
+        }
+      }
+
+      // 4）构造预览行（前 50 条），按标准字段顺序输出
+      const buildPreviewRow = (row: string[]): string[] => {
+        const cols = [...row]
+        const cm = aiMapping?.columnMapping ?? null
+        const pick = (key: string, fallbackIndex: number): string => {
+          if (cm && typeof cm === "object") {
+            const idxRaw = cm[key]
+            if (typeof idxRaw === "number" && Number.isFinite(idxRaw)) {
+              const idx = Math.floor(idxRaw)
+              if (idx >= 0 && idx < cols.length) {
+                return (cols[idx] ?? "").trim()
+              }
+            }
+          }
+          while (cols.length <= fallbackIndex) cols.push("")
+          return (cols[fallbackIndex] ?? "").trim()
+        }
+
+        return [
+          pick("company", 0),
+          pick("website", 1),
+          pick("contact", 2),
+          pick("phone", 3),
+          pick("wechat", 4),
+          pick("sourceLabel", 5),
+          pick("budget", 6),
+        ]
+      }
+
+      const previewRows = dataRows.slice(0, 50).map((row) => buildPreviewRow(row))
+
+      // 5）启动慢速进度条（上传/预检查阶段：5% -> 90%）
       slowProgressTimer = setInterval(() => {
         progress = Math.min(progress + 3, 90)
         setImportProgress(progress)
       }, 200)
 
+      // 6）调用轻量级的服务端预检查接口，只负责创建导入任务
       const res = await fetch("/api/public-pool/import-preview", {
         method: "POST",
-        body: formData,
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          fileName: file.name,
+          fileSize: file.size ?? null,
+        }),
       })
 
       if (!res.ok) {
@@ -917,25 +1087,15 @@ export function PublicPool() {
       }
 
       setImportJobId(json.jobId as string)
-      setEstimatedTotalCount(typeof json.totalCount === "number" ? json.totalCount : null)
-      setDuplicatesFound(typeof json.estimatedDuplicateCount === "number" ? json.estimatedDuplicateCount : 0)
-      setInvalidBasicInfoCount(
-        typeof json.invalidBasicInfoCount === "number" ? json.invalidBasicInfoCount : 0,
-      )
-
-      const previewRows = Array.isArray(json.previewRows)
-        ? (json.previewRows as any[]).map((row) =>
-            (row ?? []).map((cell: any) => (cell == null ? "" : String(cell))),
-          )
-        : []
-
+      setEstimatedTotalCount(totalCount)
+      setDuplicatesFound(estimatedDuplicateCount)
+      setInvalidBasicInfoCount(invalidBasicInfoCount)
       setParsedImportRows(previewRows)
-      if (json.aiMapping) {
-        setImportAiMapping(json.aiMapping)
+      if (aiMapping) {
+        setImportAiMapping(aiMapping)
       }
 
       // 预检查成功后，清掉慢速进度条，快速补全到 100%
-
       if (slowProgressTimer) {
         clearInterval(slowProgressTimer)
         slowProgressTimer = null
@@ -952,7 +1112,7 @@ export function PublicPool() {
         setImportProgress(finalProgress)
       }, 80)
     } catch (err) {
-      console.error("Failed to run import preview", err)
+      console.error("Failed to run import preview on client", err)
       toast.error("导入失败", { description: "预检查导入文件时出错，请稍后重试" })
       setImportStage("idle")
       setImportProgress(0)
@@ -962,6 +1122,7 @@ export function PublicPool() {
       }
     }
   }
+
 
 
 
