@@ -10,7 +10,7 @@ import {
   type ImportFieldValueMap,
 } from "@/lib/public-pool-import-mapping"
 
-export const runtime = "nodejs"
+export const runtime = "edge"
 
 const DEFAULT_KIE_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 const DEFAULT_KIE_MODEL = "openai/gpt-5.4"
