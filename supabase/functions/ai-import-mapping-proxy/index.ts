@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 
-const DEFAULT_KIE_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+const DEFAULT_KIE_API_URL = "https://cloud.siliconflow.cn/inference/v1/chat/completions"
 
 function getKieApiUrl(): string {
   const raw = (Deno.env.get("SILICONFLOW_API_URL") ?? Deno.env.get("KIE_API_URL") ?? DEFAULT_KIE_API_URL).trim()
@@ -8,7 +8,7 @@ function getKieApiUrl(): string {
 }
 
 function getKieApiKey(): string | null {
-  const raw = (Deno.env.get("OPENROUTER_API_KEY") ?? Deno.env.get("SILICONFLOW_API_KEY") ?? Deno.env.get("KIE_API_KEY") ?? "").trim()
+  const raw = (Deno.env.get("SILICONFLOW_API_KEY") ?? Deno.env.get("KIE_API_KEY") ?? Deno.env.get("OPENROUTER_API_KEY") ?? "").trim()
   return raw.length > 0 ? raw : null
 }
 
@@ -36,6 +36,7 @@ serve(async (req) => {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
+        "X-API-Key": apiKey,
         "Content-Type": "application/json",
       },
       body: upstreamBody,

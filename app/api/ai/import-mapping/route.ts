@@ -12,8 +12,8 @@ import {
 
 export const runtime = "edge"
 
-const DEFAULT_KIE_API_URL = "https://openrouter.ai/api/v1/chat/completions"
-const DEFAULT_KIE_MODEL = "openai/gpt-5.4"
+const DEFAULT_KIE_API_URL = "https://cloud.siliconflow.cn/inference/v1/chat/completions"
+const DEFAULT_KIE_MODEL = (process.env.SILICONFLOW_MODEL ?? "qwen3.5-chat").trim()
 
 const DEFAULT_AI_PROXY_PATH = "/ai-import-mapping-proxy"
 
@@ -240,7 +240,7 @@ async function requestKieResponses(
   const rawText = await llmRes.text().catch(() => "")
 
   if (!llmRes.ok) {
-    console.error("OpenRouter chat completion call failed", {
+    console.error("AI chat completion call failed", {
       status: llmRes.status,
       contentType: llmRes.headers.get("content-type"),
       bodyPreview: rawText.slice(0, 1000),
@@ -267,7 +267,7 @@ async function getLlmJsonContent(messages: Array<{ role: "system" | "user"; cont
   try {
     parsed = JSON.parse(rawText)
   } catch (err) {
-    console.error("SiliconFlow response is not valid JSON", {
+    console.error("AI provider response is not valid JSON", {
       bodyPreview: rawText.slice(0, 1000),
     })
     throw err
