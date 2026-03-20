@@ -14,7 +14,7 @@
   - 在请求头中同时携带 `Authorization: Bearer <SILICONFLOW_API_KEY>` 与 `X-API-Key`，对齐硅基流动推荐用法，保持与 OpenAI 兼容的 JSON 请求/响应协议。
 - 更新 `/api/ai/import-mapping` 路由实现（`app/api/ai/import-mapping/route.ts`）：
   - 将默认直连上游地址从 OpenRouter Chat Completions 切换为硅基流动 Chat Completions，同样支持通过 `SILICONFLOW_API_URL` 覆盖，但在存在 Supabase URL 时仍优先走 Edge Function 代理。
-  - 将默认模型常量改为可配置形式：`DEFAULT_KIE_MODEL = (process.env.SILICONFLOW_MODEL ?? "qwen3.5-chat").trim()`，方便在部署环境中按硅基流动控制台实际提供的 DeepSeek/Qwen 模型 ID 进行切换，而不用改代码。
+  - 将默认模型常量改为可配置形式：`DEFAULT_KIE_MODEL = (process.env.SILICONFLOW_MODEL ?? "Pro/deepseek-ai/DeepSeek-V3.2").trim()`，默认使用 DeepSeek V3.2 模型，仍可在部署环境中按硅基流动控制台实际提供的其他模型 ID 进行切换，而不用改代码。
   - 清理与特定厂商绑定的日志文案（如 `OpenRouter chat completion call failed`/`SiliconFlow response is not valid JSON`），统一改为中性描述 `AI chat completion call failed`/`AI provider response is not valid JSON`，避免后续更换上游时误导排查。
 
 **变更原因（对应 PRD/原型）**
