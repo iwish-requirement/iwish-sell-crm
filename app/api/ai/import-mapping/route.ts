@@ -15,15 +15,19 @@ export const runtime = "edge"
 const DEFAULT_KIE_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 const DEFAULT_KIE_MODEL = "openai/gpt-5.4"
 
+const DEFAULT_AI_PROXY_PATH = "/ai-import-mapping-proxy"
+
 function getKieApiUrl(): string {
+  const supabaseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "").trim()
+  if (supabaseUrl) {
+    const base = supabaseUrl.replace(/\/+$/, "").replace(".supabase.co", ".functions.supabase.co")
+    return `${base}${DEFAULT_AI_PROXY_PATH}`
+  }
+
   const raw = (process.env.SILICONFLOW_API_URL ?? process.env.KIE_API_URL ?? DEFAULT_KIE_API_URL).trim()
   return raw || DEFAULT_KIE_API_URL
 }
 
-function getKieApiKey(): string | null {
-  const raw = (process.env.OPENROUTER_API_KEY ?? process.env.SILICONFLOW_API_KEY ?? process.env.KIE_API_KEY ?? "").trim()
-  return raw.length > 0 ? raw : null
-}
 
 
 
@@ -208,12 +212,10 @@ function extractKieTextContent(payload: Record<string, any>): string | null {
 
 async function requestKieResponses(
   messages: Array<{ role: "system" | "user"; content: string }>,
-  apiKey: string,
 ) {
   const llmRes = await fetch(getKieApiUrl(), {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
@@ -224,6 +226,7 @@ async function requestKieResponses(
     }),
     cache: "no-store",
   })
+
 
   const rawText = await llmRes.text().catch(() => "")
 
@@ -243,8 +246,9 @@ async function requestKieResponses(
 
 
 
-async function getLlmJsonContent(messages: Array<{ role: "system" | "user"; content: string }>, apiKey: string) {
-  const { rawText } = await requestKieResponses(messages, apiKey)
+async function getLlmJsonContent(messages: Array<{ role: "system" | "user"; content: string }>) {
+  const { rawText } = await requestKieResponses(messages)
+
 
   if (!rawText.trim()) {
     throw new Error("empty_llm_response:OpenRouter returned 200 with empty body")
@@ -275,16 +279,8 @@ async function getLlmJsonContent(messages: Array<{ role: "system" | "user"; cont
 
 export async function POST(req: NextRequest) {
   try {
-    const apiKey = getKieApiKey()
-    if (!apiKey) {
-      return NextResponse.json(
-        { ok: false, error: "missing_api_key", detail: "OPENROUTER_API_KEY (或 SILICONFLOW_API_KEY/KIE_API_KEY) is not configured on the server" },
-        { status: 500 },
-      )
-
-    }
-
     const body = (await req.json().catch(() => null)) as any
+
     const headers = (body?.headers ?? []) as unknown
     const sampleRows = (body?.sampleRows ?? []) as unknown
     const previewRows = (body?.previewRows ?? body?.sampleRows ?? []) as unknown
@@ -316,16 +312,14 @@ export async function POST(req: NextRequest) {
       previewRows: limitedPreview,
     }
 
-    const parsed = await getLlmJsonContent(
-      [
-        { role: "system", content: systemPrompt },
-        {
-          role: "user",
-          content: "请根据下面的表结构和样本数据返回 JSON：\n" + JSON.stringify(userPayload, null, 2),
-        },
-      ],
-      apiKey,
-    )
+    const parsed = await getLlmJsonContent([
+      { role: "system", content: systemPrompt },
+      {
+        role: "user",
+        content: "请根据下面的表结构和样本数据返回 JSON：\n" + JSON.stringify(userPayload, null, 2),
+      },
+    ])
+
 
     const columnMapping = sanitizeImportColumnMapping(
       (typeof parsed.columnMapping === "object" && parsed.columnMapping ? parsed.columnMapping : {}) as ImportColumnMapping,

@@ -3,7 +3,26 @@
 > 本文件用于记录 AI 助手在本仓库内做出的重要结构/逻辑变更，方便你审计、回顾与回滚。
 > 按时间倒序追加；同一天多次修改可在同一日期下追加小节。
 
+## 2026-03-20
+
+### public-pool-ai-import-via-supabase-edge-function: 公海导入 AI 调用集中到 Supabase Edge Function
+
+**变更点**
+- 新增 Supabase Edge Function `ai-import-mapping-proxy`（`supabase/functions/ai-import-mapping-proxy/index.ts`），负责在 Supabase 侧以 OpenRouter Chat Completions 协议代理调用第三方大模型，并在函数日志中输出上游状态码与错误信息。
+- 更新 `app/api/ai/import-mapping/route.ts`：不再直接从 Cloudflare Edge 访问 OpenRouter，而是将原本构造的 `model + messages + response_format` 请求转发到 `https://<project>.functions.supabase.co/ai-import-mapping-proxy`，由 Supabase 统一出网；原有字段置信度/标准化预览等处理逻辑保持不变。
+
+**变更原因（对应 PRD/原型）**
+- 你反馈在 Cloudflare 免费版环境下 AI 导入经常出现 502 且缺乏可用日志，导致定位是“网络问题 / Key 问题 / 上游模型问题”非常困难；本次将 AI 调用集中到 Supabase Edge Functions，利用 Supabase 的函数日志能力提升可观测性，并把 Cloudflare 仅作为 UI + 轻量代理。
+
+**影响范围**
+- AI 接口：`/api/ai/import-mapping` 在接口协议和返回结构上对前端保持兼容（仍然返回 `ok/columnMapping/normalizedRows/fieldConfidence/overallConfidence/warnings/summary`），但内部 LLM 调用链路变为 `Cloudflare → Supabase Edge Function → OpenRouter`。
+- 运维：需要在 Supabase 项目环境中配置 `OPENROUTER_API_KEY`（或 `SILICONFLOW_API_KEY/KIE_API_KEY`）供 Edge Function 使用，Cloudflare 侧不再强依赖这些 Key；AI 调用相关错误可直接在 Supabase 函数日志中查看。
+
+**回滚方式**
+- 将 `app/api/ai/import-mapping/route.ts` 中的 `getKieApiUrl/requestKieResponses` 恢复为直接指向 OpenRouter（或 SiliconFlow/KIE）的实现，并在 Cloudflare 环境重建相应的 API Key 配置；可选择保留或删除 `supabase/functions/ai-import-mapping-proxy` 函数文件。
+
 ## 2026-03-19
+
 
 ### public-pool-siliconflow-gml5-migration: 公海导入 AI 从 KIE responses 切换为 SiliconFlow GML-5 Chat Completions
 
