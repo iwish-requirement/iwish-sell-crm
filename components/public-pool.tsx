@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useCallback, useEffect, useMemo } from "react"
+import React, { useState, useCallback, useEffect, useMemo, useRef } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -43,6 +43,17 @@ import { mapRpcError, type RpcErrorFriendly } from "@/lib/rpc-error-mapper"
 import { RpcErrorBanner } from "@/components/rpc-error-banner"
 import { MePermissionsContext } from "@/components/app-root"
 import { fetchCurrentUserProfile } from "@/lib/auth/profile"
+import {
+  buildImportPreviewValues,
+  pickImportCell,
+  resolveImportColumnMapping,
+  type ImportAiMapping,
+  type ImportAiNormalizedRow,
+  type ImportFieldConfidenceMap,
+} from "@/lib/public-pool-import-mapping"
+
+
+
 
 
 interface PoolLead {
@@ -135,8 +146,135 @@ const IMPORT_SECONDARY_LABEL_TO_KEY: Record<string, string> = {
 }
 
 const IMPORT_FALLBACK_SECONDARY_KEY = "other_event" as const
+const IMPORT_BATCH_SIZE = 200
+const IMPORT_AI_LOW_CONFIDENCE_THRESHOLD = 0.65
+
+const IMPORT_FIELD_LABELS = {
+  company: "公司名称",
+  website: "网址",
+  contact: "联系人",
+  phone: "电话",
+  wechat: "微信号",
+  sourceLabel: "来源渠道",
+  budget: "预算",
+} satisfies Record<string, string>
+
+type ImportWorkerAction = "parse-file" | "build-payloads" | "reset-cache"
+
+type ImportWorkerParseResult = {
+  headerRow: string[]
+  sampleRows: string[][]
+  previewSourceRows: string[][]
+  totalCount: number
+}
+
+type ImportWorkerBuildPayloadsResult = {
+  payloads: Record<string, unknown>[]
+  invalidBasicInfoCount: number
+  totalCount: number
+}
+
+type ImportPreviewRow = {
+  rowIndex: number
+  values: string[]
+  confidence: number | null
+  issues: string[]
+  aiEnhanced: boolean
+}
+
+type ImportAiInsight = {
+  summary: string | null
+  warnings: string[]
+  overallConfidence: number | null
+  fieldConfidence: ImportFieldConfidenceMap
+  aiEnhancedCount: number
+  reviewNeededCount: number
+}
+
+type ImportAiAnalysisResponse = {
+  ok?: boolean
+  error?: string
+  detail?: string
+  columnMapping?: Record<string, number | null>
+  normalizedRows?: ImportAiNormalizedRow[]
+  fieldConfidence?: ImportFieldConfidenceMap
+  overallConfidence?: number | null
+  summary?: string | null
+  warnings?: string[]
+}
+
+
+
+function buildImportPreviewRow(row: string[], aiMapping: ImportAiMapping): string[] {
+  const columnMapping = aiMapping?.columnMapping ?? null
+
+  return [
+    pickImportCell(row, columnMapping, "company", 0),
+    pickImportCell(row, columnMapping, "website", 1),
+    pickImportCell(row, columnMapping, "contact", 2),
+    pickImportCell(row, columnMapping, "phone", 3),
+    pickImportCell(row, columnMapping, "wechat", 4),
+    pickImportCell(row, columnMapping, "sourceLabel", 5),
+    pickImportCell(row, columnMapping, "budget", 6),
+  ]
+}
+
+
+function summarizeImportSample(sampleRows: string[][], aiMapping: ImportAiMapping) {
+  const columnMapping = aiMapping?.columnMapping ?? null
+  const seenPhones = new Set<string>()
+  let duplicatesFound = 0
+  let invalidBasicInfoCount = 0
+
+  for (const row of sampleRows) {
+    if (!row || row.length === 0) continue
+
+    const company = pickImportCell(row, columnMapping, "company", 0)
+    const website = pickImportCell(row, columnMapping, "website", 1)
+    const phoneRaw = pickImportCell(row, columnMapping, "phone", 3)
+    const wechatRaw = pickImportCell(row, columnMapping, "wechat", 4)
+    const sourceLabel = pickImportCell(row, columnMapping, "sourceLabel", 5)
+
+    const hasIdentity = Boolean((company || website).trim())
+    const hasContact = Boolean((phoneRaw || wechatRaw).trim())
+    const hasSource = Boolean(sourceLabel.trim())
+
+    if (!hasIdentity || !hasContact || !hasSource) {
+      invalidBasicInfoCount += 1
+      continue
+    }
+
+    const normalizedPhone = phoneRaw.replace(/[^0-9+]/g, "")
+    if (normalizedPhone) {
+      if (seenPhones.has(normalizedPhone)) {
+        duplicatesFound += 1
+        continue
+      }
+      seenPhones.add(normalizedPhone)
+    }
+  }
+
+  return {
+    duplicatesFound,
+    invalidBasicInfoCount,
+  }
+}
+
+function formatImportConfidence(confidence: number | null | undefined) {
+  if (typeof confidence !== "number" || !Number.isFinite(confidence)) {
+    return "待判断"
+  }
+
+  return `${Math.round(confidence * 100)}%`
+}
+
+function isImportConfidenceLow(confidence: number | null | undefined) {
+  return typeof confidence === "number" && Number.isFinite(confidence) && confidence < IMPORT_AI_LOW_CONFIDENCE_THRESHOLD
+}
 
 // 责任类型枚举到展示文案（与线索看板保持一致）
+
+
 const RESPONSIBILITY_TYPE_LABELS: Record<string, string> = {
   company_resource: "公司分配资源",
   sales_self: "销售自主开发",
@@ -252,9 +390,13 @@ export function PublicPool() {
   const [isAssigning, setIsAssigning] = useState(false)
   const [loadSalesRepsError, setLoadSalesRepsError] = useState<string | null>(null)
 
-  const [importSourceRows, setImportSourceRows] = useState<string[][] | null>(null)
+  const importWorkerRef = useRef<Worker | null>(null)
+  const importWorkerResolversRef = useRef(
+    new Map<string, { resolve: (value: any) => void; reject: (reason?: unknown) => void }>(),
+  )
 
   const [detailDialogOpen, setDetailDialogOpen] = useState(false)
+
 
   const [detailLead, setDetailLead] = useState<PoolLead | null>(null)
   const [interactions, setInteractions] = useState<PoolLeadInteraction[]>([])
@@ -266,12 +408,15 @@ export function PublicPool() {
   const [importStage, setImportStage] = useState<ImportStage>("idle")
   const [importProgress, setImportProgress] = useState(0)
   const [duplicatesFound, setDuplicatesFound] = useState(0)
-  const [parsedImportRows, setParsedImportRows] = useState<string[][] | null>(null)
+  const [parsedImportRows, setParsedImportRows] = useState<ImportPreviewRow[] | null>(null)
   const [estimatedTotalCount, setEstimatedTotalCount] = useState<number | null>(null)
   const [invalidBasicInfoCount, setInvalidBasicInfoCount] = useState(0)
   const [importJobId, setImportJobId] = useState<string | null>(null)
-  const [importAiMapping, setImportAiMapping] = useState<any | null>(null)
+  const [importAiMapping, setImportAiMapping] = useState<ImportAiMapping>(null)
+  const [importAiInsight, setImportAiInsight] = useState<ImportAiInsight | null>(null)
+  const [importAiError, setImportAiError] = useState<string | null>(null)
   const [isSubmittingImport, setIsSubmittingImport] = useState(false)
+
 
   const importPreviewRows = useMemo(
     () => (parsedImportRows ? parsedImportRows.slice(0, 50) : []),
@@ -279,12 +424,72 @@ export function PublicPool() {
   )
 
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return
+    }
+
+    const worker = new Worker(new URL("../lib/workers/public-pool-import.worker.ts", import.meta.url))
+    importWorkerRef.current = worker
+
+    worker.onmessage = (event: MessageEvent<any>) => {
+      const requestId = event.data?.requestId as string | undefined
+      if (!requestId) return
+
+      const resolver = importWorkerResolversRef.current.get(requestId)
+      if (!resolver) return
+
+      importWorkerResolversRef.current.delete(requestId)
+
+      if (event.data?.ok) {
+        resolver.resolve(event.data.result)
+        return
+      }
+
+      resolver.reject(new Error(event.data?.error || "导入处理失败"))
+    }
+
+    worker.onerror = (event) => {
+      console.error("Public pool import worker crashed", event)
+      const workerError = new Error("导入处理器异常退出，请重新选择文件后再试")
+      for (const resolver of importWorkerResolversRef.current.values()) {
+        resolver.reject(workerError)
+      }
+      importWorkerResolversRef.current.clear()
+    }
+
+    return () => {
+      worker.terminate()
+      importWorkerRef.current = null
+      for (const resolver of importWorkerResolversRef.current.values()) {
+        resolver.reject(new Error("导入处理器已关闭，请重新选择文件后重试"))
+      }
+      importWorkerResolversRef.current.clear()
+    }
+  }, [])
 
   const [importJobs, setImportJobs] = useState<LeadImportJob[]>([])
+
+
   const [exportJobs, setExportJobs] = useState<LeadExportJob[]>([])
   const [isLoadingJobs, setIsLoadingJobs] = useState(false)
 
+  const callImportWorker = useCallback((action: ImportWorkerAction, payload?: Record<string, unknown>) => {
+    const worker = importWorkerRef.current
+    if (!worker) {
+      return Promise.reject(new Error("导入处理器尚未初始化，请刷新页面后重试"))
+    }
+
+    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+
+    return new Promise<any>((resolve, reject) => {
+      importWorkerResolversRef.current.set(requestId, { resolve, reject })
+      worker.postMessage({ requestId, action, payload })
+    })
+  }, [])
+
   const [isLoading, setIsLoading] = useState(true)
+
   const [loadError, setLoadError] = useState<RpcErrorFriendly | null>(null)
   const [reloadToken, setReloadToken] = useState(0)
   const [deletingLeadId, setDeletingLeadId] = useState<string | null>(null)
@@ -293,7 +498,22 @@ export function PublicPool() {
   const retryLoad = useCallback(() => setReloadToken((t) => t + 1), [])
 
   useEffect(() => {
+    if (!isSubmittingImport || !importJobId) {
+      return
+    }
+
+    const timer = window.setInterval(() => {
+      retryLoad()
+    }, 3000)
+
+    return () => {
+      window.clearInterval(timer)
+    }
+  }, [importJobId, isSubmittingImport, retryLoad])
+
+  useEffect(() => {
     let isMounted = true
+
 
     async function loadPoolLeads() {
       setIsLoading(true)
@@ -872,7 +1092,6 @@ export function PublicPool() {
     setImportJobId(null)
     setImportAiMapping(null)
 
-    // 通过本地定时器模拟一个「缓慢但持续前进」的进度条，避免长时间停在 5%
     let slowProgressTimer: ReturnType<typeof setInterval> | null = null
     let progress = 5
 
@@ -887,224 +1106,173 @@ export function PublicPool() {
         return
       }
 
-      // 1）在浏览器端解析文件，提取表头与数据行（只做一次）
-      let headerRow: string[] = []
-      let dataRows: string[][] = []
-
-      if (ext === "csv") {
-        const text = await file.text()
-        const lines = text
-          .split(/\r?\n/)
-          .map((line) => line.trim())
-          .filter((line) => line.length > 0)
-
-        if (lines.length <= 1) {
-          toast.error("导入失败", {
-            description: "导入文件为空或只有表头，请检查模板内容",
-          })
-          setImportStage("idle")
-          setImportProgress(0)
-          return
-        }
-
-        headerRow = (lines[0] ?? "")
-          .split(",")
-          .map((c) => c.trim())
-
-        dataRows = lines.slice(1).map((line) => line.split(",").map((c) => c.trim()))
-      } else {
-        const XLSX = await import("xlsx")
-        const arrayBuffer = await file.arrayBuffer()
-        const workbook = XLSX.read(arrayBuffer, { type: "array" })
-        const sheetName = workbook.SheetNames[0]
-        const worksheet = workbook.Sheets[sheetName]
-        const sheetData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 }) as any[][]
-
-        const rows = (sheetData ?? [])
-          .map((row) => (row ?? []).map((cell) => (cell == null ? "" : String(cell).trim())))
-          .filter((row) => row.some((cell: string) => cell.length > 0))
-
-        if (rows.length <= 1) {
-          toast.error("导入失败", {
-            description: "导入文件为空或只有表头，请检查模板内容",
-          })
-          setImportStage("idle")
-          setImportProgress(0)
-          return
-        }
-
-        headerRow = (rows[0] ?? []).map((cell) => (cell == null ? "" : String(cell).trim()))
-        dataRows = rows.slice(1)
-      }
-
-      const totalCount = dataRows.length
-      const sampleForStats = dataRows.slice(0, 300)
-
-      // 2）调用 AI 接口，根据表头和样本行推断列映射
-      let aiMapping: any | null = null
-      try {
-        if (headerRow.length > 0 && dataRows.length > 0) {
-          const aiRes = await fetch("/api/ai/import-mapping", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              headers: headerRow,
-              sampleRows: sampleForStats,
-            }),
-          })
-
-          if (aiRes.ok) {
-            const aiJson = (await aiRes.json().catch(() => null)) as any
-            if (aiJson?.ok && aiJson?.columnMapping) {
-              aiMapping = {
-                columnMapping: aiJson.columnMapping,
-              }
-            }
-          } else {
-            const text = await aiRes.text().catch(() => "")
-            console.error("/api/ai/import-mapping returned non-200 from client", aiRes.status, text)
-          }
-        }
-      } catch (aiErr) {
-        console.error("Failed to call /api/ai/import-mapping from client", aiErr)
-      }
-
-      // 3）基于样本行做粗略统计（缺基础信息 / 可能重复手机号）
-      let estimatedDuplicateCount = 0
-      let invalidBasicInfoCount = 0
-      const seenPhones = new Set<string>()
-
-      const pickFromRow = (row: string[], cm: any | null, key: string, fallbackIndex: number): string => {
-        if (cm && typeof cm === "object") {
-          const idxRaw = cm[key]
-          if (typeof idxRaw === "number" && Number.isFinite(idxRaw)) {
-            const idx = Math.floor(idxRaw)
-            if (idx >= 0 && idx < row.length) {
-              return (row[idx] ?? "").trim()
-            }
-          }
-        }
-        const cols = [...row]
-        while (cols.length <= fallbackIndex) cols.push("")
-        return (cols[fallbackIndex] ?? "").trim()
-      }
-
-      for (const row of sampleForStats) {
-        if (row.length === 0) continue
-
-        const cm = aiMapping?.columnMapping ?? null
-        const company = pickFromRow(row, cm, "company", 0)
-        const website = pickFromRow(row, cm, "website", 1)
-        const contact = pickFromRow(row, cm, "contact", 2)
-        const phoneRaw = pickFromRow(row, cm, "phone", 3)
-        const wechatRaw = pickFromRow(row, cm, "wechat", 4)
-        const sourceLabel = pickFromRow(row, cm, "sourceLabel", 5)
-
-        const hasIdentity = Boolean((company || website).trim())
-        const hasContact = Boolean((phoneRaw || wechatRaw).trim())
-        const hasSource = Boolean(sourceLabel.trim())
-
-        if (!hasIdentity || !hasContact || !hasSource) {
-          invalidBasicInfoCount += 1
-          continue
-        }
-
-        const normalizedPhone = phoneRaw.replace(/[^0-9+]/g, "")
-        if (normalizedPhone) {
-          if (seenPhones.has(normalizedPhone)) {
-            estimatedDuplicateCount += 1
-            continue
-          }
-          seenPhones.add(normalizedPhone)
-        }
-      }
-
-      // 4）构造预览行（前 50 条），按标准字段顺序输出
-      const buildPreviewRow = (row: string[]): string[] => {
-        const cols = [...row]
-        const cm = aiMapping?.columnMapping ?? null
-        const pick = (key: string, fallbackIndex: number): string => {
-          if (cm && typeof cm === "object") {
-            const idxRaw = cm[key]
-            if (typeof idxRaw === "number" && Number.isFinite(idxRaw)) {
-              const idx = Math.floor(idxRaw)
-              if (idx >= 0 && idx < cols.length) {
-                return (cols[idx] ?? "").trim()
-              }
-            }
-          }
-          while (cols.length <= fallbackIndex) cols.push("")
-          return (cols[fallbackIndex] ?? "").trim()
-        }
-
-        return [
-          pick("company", 0),
-          pick("website", 1),
-          pick("contact", 2),
-          pick("phone", 3),
-          pick("wechat", 4),
-          pick("sourceLabel", 5),
-          pick("budget", 6),
-        ]
-      }
-
-      const previewRows = dataRows.slice(0, 50).map((row) => buildPreviewRow(row))
-
-      // 保存完整的数据行，供后续“确认导入”时构造批量导入 payload 使用
-      setImportSourceRows(dataRows)
-
-
-      // 5）启动慢速进度条（上传/预检查阶段：5% -> 90%）
       slowProgressTimer = setInterval(() => {
         progress = Math.min(progress + 3, 90)
         setImportProgress(progress)
       }, 200)
 
-      // 6）调用轻量级的服务端预检查接口，只负责创建导入任务
-      const res = await fetch("/api/public-pool/import-preview", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          fileName: file.name,
-          fileSize: file.size ?? null,
-        }),
-      })
+      setImportStage("checking")
 
-      if (!res.ok) {
-        const errJson = (await res.json().catch(() => null)) as any
+      const [parsedResult, previewResponse] = await Promise.all([
+        callImportWorker("parse-file", { file }) as Promise<ImportWorkerParseResult>,
+        fetch("/api/public-pool/import-preview", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            fileName: file.name,
+            fileSize: file.size ?? null,
+          }),
+        }),
+      ])
+
+      if (!previewResponse.ok) {
+        const errJson = (await previewResponse.json().catch(() => null)) as any
         console.error("import-preview failed", errJson)
         toast.error("导入预检查失败", {
           description: errJson?.detail || "预检查导入文件时出错，请稍后重试",
         })
         setImportStage("idle")
         setImportProgress(0)
+        void callImportWorker("reset-cache").catch(() => undefined)
         return
       }
 
-      const json = (await res.json().catch(() => null)) as any
-      if (!json?.ok || !json?.jobId) {
+      const previewJson = (await previewResponse.json().catch(() => null)) as any
+      if (!previewJson?.ok || !previewJson?.jobId) {
         toast.error("导入预检查失败", {
-          description: json?.detail || "导入预检查返回结果异常，请稍后重试",
+          description: previewJson?.detail || "导入预检查返回结果异常，请稍后重试",
         })
         setImportStage("idle")
         setImportProgress(0)
+        void callImportWorker("reset-cache").catch(() => undefined)
         return
       }
 
-      setImportJobId(json.jobId as string)
-      setEstimatedTotalCount(totalCount)
-      setDuplicatesFound(estimatedDuplicateCount)
-      setInvalidBasicInfoCount(invalidBasicInfoCount)
-      setParsedImportRows(previewRows)
-      if (aiMapping) {
-        setImportAiMapping(aiMapping)
+      const headerRow = parsedResult?.headerRow ?? []
+      const sampleRows = parsedResult?.sampleRows ?? []
+      const previewSourceRows = parsedResult?.previewSourceRows ?? []
+      const totalCount = Number(parsedResult?.totalCount ?? 0)
+
+      let aiAnalysis: ImportAiAnalysisResponse | null = null
+      let aiFailureReason: string | null = null
+      try {
+        if (headerRow.length > 0 && sampleRows.length > 0) {
+          const controller = new AbortController()
+          const timeoutId = window.setTimeout(() => {
+            controller.abort()
+          }, 40000)
+
+
+          try {
+            const aiRes = await fetch("/api/ai/import-mapping", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                headers: headerRow,
+                sampleRows,
+                previewRows: previewSourceRows.slice(0, 20),
+              }),
+              signal: controller.signal,
+            })
+
+            if (aiRes.ok) {
+              const aiJson = (await aiRes.json().catch(() => null)) as ImportAiAnalysisResponse | null
+              if (aiJson?.ok !== false) {
+                aiAnalysis = aiJson
+              } else {
+                aiFailureReason = aiJson?.detail || aiJson?.error || "AI 返回结果异常"
+              }
+            } else {
+              const aiJson = (await aiRes.json().catch(() => null)) as { error?: string; detail?: string; status?: number } | null
+              aiFailureReason = aiJson?.detail || aiJson?.error || `AI 服务调用失败（${aiRes.status}）`
+              console.error("/api/ai/import-mapping returned non-200 from client", aiRes.status, aiJson)
+            }
+          } finally {
+            window.clearTimeout(timeoutId)
+          }
+        }
+      } catch (aiErr) {
+        const anyErr = aiErr as any
+        if (anyErr && typeof anyErr === "object" && anyErr.name === "AbortError") {
+          aiFailureReason = "AI 服务调用超时，请稍后重试"
+        } else {
+          aiFailureReason = aiErr instanceof Error ? aiErr.message : "AI 服务调用失败"
+        }
+        console.error("Failed to call /api/ai/import-mapping from client", aiErr)
       }
 
-      // 预检查成功后，清掉慢速进度条，快速补全到 100%
+
+
+      const resolvedColumnMapping = resolveImportColumnMapping(
+        headerRow,
+        sampleRows,
+        aiAnalysis?.columnMapping ?? null,
+        { preferAi: true },
+      )
+      const finalImportMapping: ImportAiMapping = {
+        columnMapping: resolvedColumnMapping,
+        fieldConfidence: aiAnalysis?.fieldConfidence ?? null,
+        overallConfidence: aiAnalysis?.overallConfidence ?? null,
+        summary: aiAnalysis?.summary ?? null,
+        warnings: aiAnalysis?.warnings ?? [],
+      }
+
+      const sampleSummary = summarizeImportSample(sampleRows, finalImportMapping)
+      const aiPreviewRows = Array.isArray(aiAnalysis?.normalizedRows) ? aiAnalysis.normalizedRows : []
+      const aiPreviewByIndex = new Map(aiPreviewRows.map((row) => [row.rowIndex, row]))
+      const previewRows: ImportPreviewRow[] = previewSourceRows.map((row, index) => {
+        const aiRow = aiPreviewByIndex.get(index)
+        if (aiRow) {
+          return {
+            rowIndex: index,
+            values: buildImportPreviewValues(aiRow.normalized),
+            confidence: aiRow.confidence,
+            issues: aiRow.issues,
+            aiEnhanced: true,
+          }
+        }
+
+        return {
+          rowIndex: index,
+          values: buildImportPreviewRow(row, finalImportMapping),
+          confidence: null,
+          issues: [],
+          aiEnhanced: false,
+        }
+      })
+
+      const reviewNeededCount = aiPreviewRows.filter(
+        (row) => row.issues.length > 0 || isImportConfidenceLow(row.confidence),
+      ).length
+
+      setImportJobId(previewJson.jobId as string)
+      setEstimatedTotalCount(totalCount)
+      setDuplicatesFound(sampleSummary.duplicatesFound)
+      setInvalidBasicInfoCount(sampleSummary.invalidBasicInfoCount)
+      setParsedImportRows(previewRows)
+      setImportAiMapping(finalImportMapping)
+      setImportAiError(aiFailureReason)
+      setImportAiInsight(
+
+        aiAnalysis
+          ? {
+              summary: aiAnalysis.summary?.trim() || null,
+              warnings: aiAnalysis.warnings ?? [],
+              overallConfidence: aiAnalysis.overallConfidence ?? null,
+              fieldConfidence: aiAnalysis.fieldConfidence ?? {},
+              aiEnhancedCount: aiPreviewRows.length,
+              reviewNeededCount,
+            }
+          : null,
+      )
+
+
+
+
       if (slowProgressTimer) {
         clearInterval(slowProgressTimer)
         slowProgressTimer = null
@@ -1125,12 +1293,14 @@ export function PublicPool() {
       toast.error("导入失败", { description: "预检查导入文件时出错，请稍后重试" })
       setImportStage("idle")
       setImportProgress(0)
+      void callImportWorker("reset-cache").catch(() => undefined)
     } finally {
       if (slowProgressTimer) {
         clearInterval(slowProgressTimer)
       }
     }
   }
+
 
 
 
@@ -1145,8 +1315,13 @@ export function PublicPool() {
     setInvalidBasicInfoCount(0)
     setImportJobId(null)
     setImportAiMapping(null)
-    setImportSourceRows(null)
+    setImportAiInsight(null)
+    setImportAiError(null)
+    void callImportWorker("reset-cache").catch(() => undefined)
   }
+
+
+
 
 
 
@@ -1159,8 +1334,6 @@ export function PublicPool() {
   const handleConfirmImport = async () => {
     const supabase = getBrowserSupabaseClient()
 
-    // 为了避免依赖首次加载时缓存下来的权限快照，这里在提交前
-    // 通过 rpc_me_permissions 实时读取当前账号的导入权限。
     try {
       const { data: mePerms, error: permsError } = await supabase.rpc("rpc_me_permissions")
       if (!permsError) {
@@ -1190,169 +1363,138 @@ export function PublicPool() {
       }
     }
 
-    if (importStage === "complete" && !isSubmittingImport && importJobId) {
-      if (!importSourceRows || importSourceRows.length === 0) {
-        toast.error("导入失败", {
-          description: "找不到待导入的数据行，请重新选择文件进行预检查",
+    if (importStage !== "complete" || isSubmittingImport || !importJobId) {
+      return
+    }
+
+    try {
+      setIsSubmittingImport(true)
+
+      const currentProfile = await fetchCurrentUserProfile(supabase)
+      if (!currentProfile || currentProfile.teamId == null) {
+        toast.error("无法导入线索", {
+          description: "当前账号未加入任何团队，无法导入公海线索",
         })
         return
       }
 
-      try {
-        setIsSubmittingImport(true)
+      setImportDialogOpen(false)
+      toast.info("导入任务已开始", {
+        description: "系统正在后台准备并分批导入，你可以继续使用当前页面。",
+      })
 
-        const currentProfile = await fetchCurrentUserProfile(supabase)
-        if (!currentProfile || currentProfile.teamId == null) {
-          toast.error("无法导入线索", {
-            description: "当前账号未加入任何团队，无法导入公海线索",
-          })
-          return
-        }
+      const buildResult = (await callImportWorker("build-payloads", {
+        aiMapping: importAiMapping?.columnMapping ? importAiMapping : null,
+        teamId: currentProfile.teamId,
+        ownerId: currentProfile.id,
+      })) as ImportWorkerBuildPayloadsResult
 
-        const aiMapping = importAiMapping
-        const payloads: any[] = []
+      const payloads = Array.isArray(buildResult?.payloads) ? buildResult.payloads : []
+      const invalidCount = Number(buildResult?.invalidBasicInfoCount ?? 0)
+      const totalCount = Number(buildResult?.totalCount ?? estimatedTotalCount ?? payloads.length + invalidCount)
 
-        let rowIndex = 0
-        for (const row of importSourceRows) {
-          rowIndex += 1
+      if (payloads.length === 0) {
+        await supabase.rpc("rpc_leads_import_mark_complete", {
+          p_job_id: importJobId,
+          p_status: "failed",
+          p_total_count: totalCount,
+          p_success_count: 0,
+          p_duplicate_count: 0,
+          p_error_message: "没有符合导入条件的数据行",
+        })
 
-          // 每处理一定数量的行让出一次事件循环，避免浏览器长时间阻塞
-          if (rowIndex % 200 === 0) {
-            // eslint-disable-next-line no-await-in-loop
-            await new Promise((resolve) => setTimeout(resolve, 0))
-          }
+        toast.error("导入失败", {
+          description: "所有行都缺少基础信息，无法导入，请检查模板内容",
+        })
+        resetImport()
+        return
+      }
 
-          if (!row || row.length === 0) continue
+      await supabase.rpc("rpc_leads_import_mark_complete", {
+        p_job_id: importJobId,
+        p_status: "processing",
+        p_total_count: totalCount,
+        p_success_count: 0,
+        p_duplicate_count: 0,
+        p_error_message: null,
+      })
 
-          let company: string
-          let website: string
-          let contact: string
-          let phone: string
-          let wechat: string
-          let sourceLabel: string
-          let budgetStr: string
+      retryLoad()
 
-          if (aiMapping && typeof aiMapping === "object" && (aiMapping as any).columnMapping) {
-            const cm = (aiMapping as any).columnMapping as any
-            const pick = (key: keyof typeof cm): string => {
-              const idxRaw = cm[key]
-              if (typeof idxRaw !== "number" || !Number.isFinite(idxRaw)) return ""
-              const idx = Math.floor(idxRaw)
-              if (idx < 0 || idx >= row.length) return ""
-              const value = row[idx]
-              return value == null ? "" : String(value).trim()
-            }
+      let importedCount = 0
+      let failedCount = invalidCount
+      let duplicateCount = 0
 
-            company = pick("company")
-            website = pick("website")
-            contact = pick("contact")
-            phone = pick("phone")
-            wechat = pick("wechat")
-            sourceLabel = pick("sourceLabel")
-            budgetStr = pick("budget")
-          } else {
-            const safeCols = [...row]
-            while (safeCols.length < 7) safeCols.push("")
-            const normalize = (value: unknown): string => (value == null ? "" : String(value).trim())
-            company = normalize(safeCols[0])
-            website = normalize(safeCols[1])
-            contact = normalize(safeCols[2])
-            phone = normalize(safeCols[3])
-            wechat = normalize(safeCols[4])
-            sourceLabel = normalize(safeCols[5])
-            budgetStr = normalize(safeCols[6])
-          }
-
-          const hasIdentity = Boolean((company || website).trim())
-          const hasContact = Boolean((phone || wechat).trim())
-          const hasSource = Boolean(sourceLabel.trim())
-
-          if (!hasIdentity || !hasContact || !hasSource) {
-            continue
-          }
-
-          const budget = budgetStr ? Number(budgetStr.replace(/[^0-9.]/g, "")) : null
-
-          const primarySource = IMPORT_PRIMARY_SOURCE_FOR_POOL
-          let secondarySourceKey = IMPORT_SECONDARY_LABEL_TO_KEY[sourceLabel] ?? ""
-          if (!secondarySourceKey) {
-            secondarySourceKey = IMPORT_FALLBACK_SECONDARY_KEY
-          }
-
-          const payload: any = {
-            team_id: currentProfile.teamId,
-            owner_id: currentProfile.id,
-            name: company || website || "未命名线索",
-            website: website || null,
-            source: sourceLabel || "公司分配资源",
-            stage: "L1",
-            status: "pool",
-            customer_name: contact || "未填写联系人",
-            customer_phone: phone || null,
-            wechat: wechat || null,
-            responsibility_type: primarySource,
-            source_level1: primarySource,
-            source_level2: secondarySourceKey,
-          }
-
-          if (budget !== null && !Number.isNaN(budget)) {
-            payload.budget = budget
-          }
-
-          payloads.push(payload)
-        }
-
-        if (payloads.length === 0) {
-          toast.error("导入失败", {
-            description: "所有行都缺少基础信息，无法导入，请检查模板内容",
-          })
-          return
-        }
-
+      for (let start = 0; start < payloads.length; start += IMPORT_BATCH_SIZE) {
+        const batch = payloads.slice(start, start + IMPORT_BATCH_SIZE)
         const { data, error } = await supabase.rpc("rpc_leads_import_public_pool", {
           p_job_id: importJobId,
-          p_rows: payloads,
+          p_rows: batch,
+          p_mark_complete: false,
         })
 
         if (error) {
-          console.error("rpc_leads_import_public_pool failed", error)
-          toast.error("导入失败", {
-            description: "批量导入时出错，请稍后重试或联系管理员",
-          })
-          return
+          throw error
         }
 
         const result = (data as any) ?? {}
-        if (!result.ok) {
-          toast.error("导入失败", {
-            description: result.detail || "批量导入返回结果异常，请稍后重试",
+        importedCount += Number(result.importedCount ?? result.successCount ?? 0)
+        failedCount += Number(result.failedCount ?? 0)
+        duplicateCount += Number(result.duplicateCount ?? 0)
+
+        const processedCount = Math.min(start + batch.length + invalidCount, totalCount)
+        if (processedCount < totalCount) {
+          await supabase.rpc("rpc_leads_import_mark_complete", {
+            p_job_id: importJobId,
+            p_status: "processing",
+            p_total_count: totalCount,
+            p_success_count: importedCount,
+            p_duplicate_count: duplicateCount,
+            p_error_message: null,
           })
-          return
         }
-
-        const importedCount = Number(result.importedCount ?? result.successCount ?? 0)
-        const failedCount = Number(result.failedCount ?? 0)
-        const duplicateCount = Number(result.duplicateCount ?? 0)
-        const totalCount = Number(result.totalCount ?? payloads.length)
-
-        toast.success("导入任务已完成", {
-          description: `本次共尝试导入 ${totalCount} 条线索，已成功导入 ${importedCount} 条，${failedCount} 条导入失败，${duplicateCount} 条重复已跳过`,
-        })
-
-        retryLoad()
-      } catch (err) {
-        console.error("Failed to run batch import via rpc_leads_import_public_pool", err)
-        toast.error("导入失败", {
-          description: "执行批量导入时出错，请稍后重试",
-        })
-      } finally {
-        setIsSubmittingImport(false)
       }
-    }
 
-    setImportDialogOpen(false)
-    setTimeout(resetImport, 300)
+      await supabase.rpc("rpc_leads_import_mark_complete", {
+        p_job_id: importJobId,
+        p_status: "completed",
+        p_total_count: totalCount,
+        p_success_count: importedCount,
+        p_duplicate_count: duplicateCount,
+        p_error_message: null,
+      })
+
+      toast.success("导入任务已完成", {
+        description: `本次共尝试导入 ${totalCount} 条线索，已成功导入 ${importedCount} 条，${failedCount} 条导入失败，${duplicateCount} 条重复已跳过`,
+      })
+
+      retryLoad()
+      resetImport()
+    } catch (err) {
+      console.error("Failed to run batch import via rpc_leads_import_public_pool", err)
+      try {
+        await supabase.rpc("rpc_leads_import_mark_complete", {
+          p_job_id: importJobId,
+          p_status: "failed",
+          p_total_count: estimatedTotalCount ?? null,
+          p_success_count: null,
+          p_duplicate_count: null,
+          p_error_message: err instanceof Error ? err.message : "执行批量导入时出错",
+        })
+      } catch (markError) {
+        console.error("Failed to mark import job as failed", markError)
+      }
+
+      toast.error("导入失败", {
+        description: "执行批量导入时出错，请稍后重试",
+      })
+      resetImport()
+      retryLoad()
+    } finally {
+      setIsSubmittingImport(false)
+    }
   }
+
 
 
 
@@ -1453,11 +1595,13 @@ export function PublicPool() {
           <Button
             variant="outline"
             onClick={() => setImportDialogOpen(true)}
+            disabled={isSubmittingImport}
             className="font-semibold w-full sm:w-auto justify-center"
           >
             <Upload className="w-4 h-4 mr-2" />
-            导入线索
+            {isSubmittingImport ? "导入处理中..." : "导入线索"}
           </Button>
+
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -1677,6 +1821,14 @@ export function PublicPool() {
           retryLabel="重试加载"
         />
       )}
+
+      {isSubmittingImport && importJobId && (
+        <div className="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+          <Clock className="h-4 w-4" />
+          <span>导入任务正在后台执行，页面可继续操作，任务列表会自动刷新。</span>
+        </div>
+      )}
+
 
       {/* Filters */}
       <Card>
@@ -2146,7 +2298,7 @@ export function PublicPool() {
           }
         }}
       >
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="w-[calc(100vw-1.5rem)] sm:max-w-3xl max-h-[90vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>导入线索</DialogTitle>
             <DialogDescription>上传 Excel 或 CSV 文件批量导入线索数据</DialogDescription>
@@ -2218,10 +2370,17 @@ export function PublicPool() {
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-muted-foreground">
-                      {importStage === "uploading" && "正在上传并预检查文件..."}
-                      {importStage === "checking" && "正在检查冲突..."}
-                      {importStage === "complete" && "预检查完成，导入过程将在后台执行"}
+                      {importStage === "uploading" && "正在上传文件并准备 AI 分析..."}
+                      {importStage === "checking" && "AI 正在理解表格结构并检查冲突..."}
+                      {importStage === "complete" &&
+                        (importAiInsight
+                          ? "AI 预检查完成，导入过程将在后台执行"
+                          : importAiError
+                            ? "AI 调用失败，当前展示规则兜底预览"
+                            : "预检查完成，当前展示规则兜底预览")}
+
                     </span>
+
                     <span className="font-medium">{importProgress}%</span>
                   </div>
 
@@ -2237,7 +2396,66 @@ export function PublicPool() {
                         已预检查 {estimatedTotalCount ?? parsedImportRows?.length ?? 0} 条线索数据
                       </span>
                     </div>
+                    {importAiInsight && (
+                      <div className="space-y-3 rounded-lg border border-blue-200 bg-blue-50 p-3 text-blue-950">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                          <div>
+                            <p className="text-sm font-semibold">AI 主导识别已完成</p>
+                            <p className="text-xs text-blue-900/80">
+                              {importAiInsight.summary || "系统已结合表头、样本内容和业务语义完成智能识别。"}
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2 text-xs">
+                            <Badge variant="secondary" className="bg-white/80 text-blue-900 border border-blue-200">
+                              整体置信度 {formatImportConfidence(importAiInsight.overallConfidence)}
+                            </Badge>
+                            <Badge variant="secondary" className="bg-white/80 text-blue-900 border border-blue-200">
+                              AI 深度识别 {importAiInsight.aiEnhancedCount} 行
+                            </Badge>
+                            {importAiInsight.reviewNeededCount > 0 && (
+                              <Badge variant="secondary" className="bg-amber-100 text-amber-900 border border-amber-200">
+                                {importAiInsight.reviewNeededCount} 行建议重点关注
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                          {Object.entries(IMPORT_FIELD_LABELS).map(([field, label]) => (
+                            <div key={field} className="rounded-md bg-white/70 px-2 py-1.5 border border-blue-100">
+                              <div className="text-[11px] text-blue-900/70">{label}</div>
+                              <div className="text-xs font-semibold text-blue-950">
+                                {formatImportConfidence(importAiInsight.fieldConfidence[field as keyof typeof IMPORT_FIELD_LABELS])}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        {importAiInsight.warnings.length > 0 && (
+                          <div className="flex flex-wrap gap-2">
+                            {importAiInsight.warnings.map((warning, index) => (
+                              <span
+                                key={`${warning}-${index}`}
+                                className="inline-flex items-center rounded-full border border-blue-200 bg-white/80 px-2.5 py-1 text-[11px] text-blue-900"
+                              >
+                                {warning}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {!importAiInsight && importAiError && (
+                      <div className="flex items-start gap-2 p-3 bg-amber-50 text-amber-900 rounded-lg border border-amber-200">
+                        <AlertTriangle className="w-5 h-5 mt-0.5" />
+                        <div className="text-sm">
+                          <div className="font-medium">本次预览未成功调用 AI</div>
+                          <div className="text-amber-800/90 break-all">
+                            当前展示的是规则兜底结果，原因：{importAiError}
+                          </div>
+                        </div>
+                      </div>
+                    )}
                     {duplicatesFound > 0 && (
+
                       <div className="flex items-center gap-2 p-3 bg-amber-50 text-amber-800 rounded-lg">
                         <AlertTriangle className="w-5 h-5" />
                         <span className="text-sm font-medium">基于样本检测到约 {duplicatesFound} 条重复手机号，实际以导入结果为准</span>
@@ -2250,17 +2468,17 @@ export function PublicPool() {
                       </div>
                     )}
                     {parsedImportRows && parsedImportRows.length > 0 && (
-
                       <div className="space-y-2">
                         <div className="flex items-center justify-between">
                           <span className="text-xs font-semibold text-muted-foreground">
-                            导入预览（前 {importPreviewRows.length} 条 / 共 {parsedImportRows.length} 条）
+                            {importAiInsight ? "AI 导入预览" : "导入预览（规则兜底）"}（前 {importPreviewRows.length} 条 / 共 {estimatedTotalCount ?? parsedImportRows.length} 条）
                           </span>
                           <span className="text-[11px] text-muted-foreground">
-                            实际导入会按整个文件执行，预览仅展示部分数据
+                            {importAiInsight ? "AI 深度处理前 20 条，其余行按识别规则自动补全预览" : "AI 未成功返回时，预览按规则映射和兜底逻辑生成"}
                           </span>
+
                         </div>
-                        <div className="border rounded-md bg-background max-h-64 overflow-auto">
+                        <div className="border rounded-md bg-background max-h-72 overflow-auto overflow-x-auto">
                           <Table>
                             <TableHeader className="bg-muted/40 sticky top-0 z-10">
                               <TableRow>
@@ -2270,35 +2488,54 @@ export function PublicPool() {
                                 <TableHead className="text-xs font-semibold text-foreground/80">电话</TableHead>
                                 <TableHead className="text-xs font-semibold text-foreground/80">微信号</TableHead>
                                 <TableHead className="text-xs font-semibold text-foreground/80">来源渠道</TableHead>
-                                <TableHead className="text-xs font-semibold text-foreground/80 text-right">
-                                  预算(元)
-                                </TableHead>
+                                <TableHead className="text-xs font-semibold text-foreground/80 text-right">预算(元)</TableHead>
                               </TableRow>
                             </TableHeader>
                             <TableBody>
-                              {importPreviewRows.map((cols, index) => (
-                                <TableRow key={index}>
-                                  <TableCell className="text-xs font-medium">
-                                    {cols[0] || "未填写公司名称"}
+                              {importPreviewRows.map((row) => (
+                                <TableRow
+                                  key={row.rowIndex}
+                                  className={cn(
+                                    row.aiEnhanced && "bg-blue-50/35",
+                                    (row.issues.length > 0 || isImportConfidenceLow(row.confidence)) && "bg-amber-50/45",
+                                  )}
+                                >
+                                  <TableCell className="text-xs font-medium align-top">
+                                    <div>{row.values[0] || "未填写公司名称"}</div>
+                                    <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                                      {row.aiEnhanced && (
+                                        <Badge variant="outline" className="h-5 px-1.5 text-[10px] border-blue-200 text-blue-700">
+                                          AI
+                                        </Badge>
+                                      )}
+                                      {row.confidence != null && (
+                                        <Badge
+                                          variant="outline"
+                                          className={cn(
+                                            "h-5 px-1.5 text-[10px]",
+                                            isImportConfidenceLow(row.confidence)
+                                              ? "border-amber-200 text-amber-700"
+                                              : "border-emerald-200 text-emerald-700",
+                                          )}
+                                        >
+                                          置信度 {formatImportConfidence(row.confidence)}
+                                        </Badge>
+                                      )}
+                                    </div>
+                                    {row.issues.length > 0 && (
+                                      <div className="mt-1 text-[10px] leading-4 text-amber-700">
+                                        {row.issues.slice(0, 2).join("；")}
+                                      </div>
+                                    )}
                                   </TableCell>
-                                  <TableCell className="text-[11px] text-muted-foreground break-all max-w-[120px]">
-                                    {cols[1] || "-"}
+                                  <TableCell className="text-[11px] text-muted-foreground break-all max-w-[120px] align-top">
+                                    {row.values[1] || "-"}
                                   </TableCell>
-                                  <TableCell className="text-xs">
-                                    {cols[2] || "-"}
-                                  </TableCell>
-                                  <TableCell className="text-xs font-mono">
-                                    {cols[3] || "-"}
-                                  </TableCell>
-                                  <TableCell className="text-xs">
-                                    {cols[4] || "-"}
-                                  </TableCell>
-                                  <TableCell className="text-xs">
-                                    {cols[5] || "-"}
-                                  </TableCell>
-                                  <TableCell className="text-xs text-right">
-                                    {cols[6] || "-"}
-                                  </TableCell>
+                                  <TableCell className="text-xs align-top">{row.values[2] || "-"}</TableCell>
+                                  <TableCell className="text-xs font-mono align-top">{row.values[3] || "-"}</TableCell>
+                                  <TableCell className="text-xs align-top">{row.values[4] || "-"}</TableCell>
+                                  <TableCell className="text-xs align-top">{row.values[5] || "-"}</TableCell>
+                                  <TableCell className="text-xs text-right align-top">{row.values[6] || "-"}</TableCell>
                                 </TableRow>
                               ))}
                             </TableBody>
@@ -2308,6 +2545,7 @@ export function PublicPool() {
                     )}
                   </div>
                 )}
+
 
               </div>
             )}
@@ -2321,7 +2559,8 @@ export function PublicPool() {
               disabled={importStage !== "complete" || isSubmittingImport}
               onClick={handleConfirmImport}
             >
-              {isSubmittingImport ? "导入中..." : importStage === "complete" ? "确认导入" : "开始导入"}
+              {isSubmittingImport ? "后台导入中..." : importStage === "complete" ? "开始后台导入" : "开始导入"}
+
             </Button>
           </DialogFooter>
         </DialogContent>

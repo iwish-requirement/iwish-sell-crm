@@ -3,7 +3,117 @@
 > 本文件用于记录 AI 助手在本仓库内做出的重要结构/逻辑变更，方便你审计、回顾与回滚。
 > 按时间倒序追加；同一天多次修改可在同一日期下追加小节。
 
+## 2026-03-19
+
+### public-pool-siliconflow-gml5-migration: 公海导入 AI 从 KIE responses 切换为 SiliconFlow GML-5 Chat Completions
+
+**变更点**
+- 更新 `app/api/ai/import-mapping/route.ts`：不再调用 KIE `responses` 接口，改为直连 SiliconFlow Chat Completions（`https://api.siliconflow.cn/v1/chat/completions`），使用 `model: "Pro/zai-org/GLM-5"` 并按 OpenAI 兼容的 `messages`/`choices[0].message.content` 协议解析返回 JSON。
+- 简化 LLM 响应解析逻辑：移除对 SSE/`output`/`output_text.delta` 的专用解析，改为直接解析标准 JSON 响应并从首条 `choice` 的 `message.content` 中抽取严格 JSON，再复用原有的字段置信度/预览标准化处理逻辑。
+- 环境变量调整：新增优先使用 `SILICONFLOW_API_KEY`/`SILICONFLOW_API_URL`，保留对 `KIE_API_KEY`/`KIE_API_URL` 的向后兼容读取；当服务端未配置任一可用 key 时，`/api/ai/import-mapping` 会返回 `missing_api_key` 错误并在前端明确提示。
+
+**变更原因（对应 PRD/原型）**
+- 你在实际联调中发现 KIE `responses` 接口在当前账号/环境下经常返回 `HTTP 200 + 空 body`，即使请求体与官方文档对齐且已兼容 SSE，也无法稳定拿到内容；为保证导入 AI 能在生产环境里长期可用，本次改为接入硅基流动的 GML-5 模型，并继续复用现有的“AI 主导列映射 + 行级标准化 + 风险提示”能力。
+
+**影响范围**
+- AI 接口：`/api/ai/import-mapping` 现在完全依赖 SiliconFlow 提供的 Chat Completions 能力，不再对 KIE `responses` 进行任何调用；成功时的返回结构和前端使用方式保持不变（`columnMapping/normalizedRows/fieldConfidence/overallConfidence/warnings/summary`）。
+- 环境配置：运维需要在部署环境中配置 `SILICONFLOW_API_KEY`（推荐）或沿用 `KIE_API_KEY`，否则导入弹窗会明确提示“AI 服务未配置”并退回到规则兜底预览逻辑。
+
+**回滚方式**
+- 将 `app/api/ai/import-mapping/route.ts` 中的 LLM 调用恢复为原来的 KIE `responses` 实现（包括 `DEFAULT_KIE_API_URL`/`DEFAULT_KIE_MODEL`、SSE 解析与错误映射），并在 `.env` 中重新配置 `KIE_API_KEY`/`KIE_API_URL` 作为唯一来源；如无需保留 SiliconFlow，可同时删除对 `SILICONFLOW_API_KEY`/`SILICONFLOW_API_URL` 的读取逻辑。
+
+### public-pool-kie-sse-node-runtime-fix: 修复 KIE responses 接口在服务端的 SSE/空响应兼容问题
+
+
+**变更点**
+- 更新 `app/api/ai/import-mapping/route.ts`：将 KIE 导入识别接口从 `edge` 改为 `nodejs` 运行时，并把请求策略改为优先走 `stream: true + text/event-stream`，兼容 KIE `responses` 接口的 SSE 返回。
+- 为 KIE 响应新增双通道解析：优先解析 SSE 事件流（含 `response.output_text.delta` / `response.completed`），同时兼容直接返回 JSON 的情况，避免再因空响应或流式格式导致 `empty_llm_response`。
+
+**变更原因（对应 PRD/原型）**
+- 你在官方文档 Playground 中已验证同一 API Key 可正常返回，说明账号本身可用；进一步排查发现项目服务端把 KIE 当普通 JSON 接口读取，而官方 `responses` 文档实际以 `text/event-stream` 为主，导致本地/部署环境里 AI 调用经常拿到空 body，最终退回规则兜底预览。
+
+**影响范围**
+- AI 接口：`/api/ai/import-mapping` 现在会优先按 KIE 官方 `responses` 协议消费输出，正常情况下应恢复 AI 行级标准化与列映射返回。
+- 导入预览：当 KIE 成功返回时，公海导入弹窗将重新显示真实 AI 识别结果，而不是长期停留在规则兜底预览。
+
+**回滚方式**
+- 将 `app/api/ai/import-mapping/route.ts` 恢复为 `edge` 运行时，并删除 SSE 解析/双模式请求逻辑，退回到单次 `stream: false` + 直接 `JSON.parse` 的旧实现。
+
+### public-pool-kie-endpoint-fix-and-ai-fallback-warning: 修复 KIE 接口路径并显式提示 AI 是否生效
+
+
+**变更点**
+- 修复 `app/api/ai/import-mapping/route.ts` 中 KIE GPT-5.4 调用地址与模型名：改为 KIE Common API 的正确异步入口与任务详情轮询逻辑，兼容 `task_id/status/result` 顶层返回结构。
+- 更新 `components/public-pool.tsx`：新增 AI 调用失败状态提示；当 AI 未成功返回时，不再继续用“AI 预检查完成”误导用户，而是明确展示当前为规则兜底预览。
+
+**变更原因（对应 PRD/原型）**
+- 你反馈导入预览明显错位，且 KIE 平台没有任何调用记录；排查后确认前端确实发起了 `/api/ai/import-mapping`，但服务端请求的是错误的 KIE 路径与模型名，导致 AI 实际未生效，前端却仍显示 AI 完成文案，造成误导。
+
+**影响范围**
+- AI 接口：KIE GPT-5.4 调用恢复为真实异步任务模式，成功时才会返回 AI 行级标准化结果。
+- UI/前端：用户可直接看到本次导入到底是否真的走了 AI；AI 失败时会展示原因并回退到规则预览，不再假装 AI 已成功。
+
+**回滚方式**
+- 恢复 `app/api/ai/import-mapping/route.ts` 中原来的 KIE market 路径与旧解析逻辑；删除 `public-pool.tsx` 中的 `importAiError` 状态与 AI 失败提示文案。
+
+### public-pool-ai-first-import-assistant: 公海导入升级为 AI 主导识别与风险提示
+
+
+**变更点**
+- 重写 `app/api/ai/import-mapping/route.ts`：AI 不再只返回简单列映射，而是同时返回字段置信度、整体置信度、预警信息，以及前 20 行的标准化预览结果，让 AI 从“猜列”升级为“理解表格语义并做行级标准化”。
+- 扩展 `lib/public-pool-import-mapping.ts`：新增字段值标准化、预览值构建与 AI 优先映射合并逻辑，支持在 AI 识别结果存在时优先按 AI 方案驱动导入，同时保留规则兜底。
+- 更新 `components/public-pool.tsx`：导入弹窗新增“AI 主导识别”信息区，展示整体置信度、字段级置信度、AI 预警与需重点关注的行；预览表改为优先展示 AI 标准化结果，并对低置信度/异常行做高亮提示。
+
+**变更原因（对应 PRD/原型）**
+- 你明确要求 AI 必须作为导入主导，因为真实业务文件里表头和内容都可能是错的，单靠固定模板或人工前置清洗效率太低；本次改造的目标就是让 AI 先理解数据，再把人工关注点收缩到少量低置信度异常项。
+
+**影响范围**
+- UI/前端：导入预览从“静态映射表”升级成“AI 智能识别面板 + 风险高亮预览”，用户能直接看到 AI 对这份表的理解质量。
+- AI 接口：`/api/ai/import-mapping` 的响应结构扩展为 richer JSON，现有调用方仍可读取 `columnMapping`，同时可以消费新增的 `fieldConfidence`、`overallConfidence`、`warnings`、`normalizedRows`。
+- 导入链路：实际后台导入继续复用 Worker + 分批 RPC，但字段映射合并策略已切换为 AI 优先、规则兜底。
+
+**回滚方式**
+- 恢复 `app/api/ai/import-mapping/route.ts` 为仅返回 `columnMapping` 的旧实现；删除 `public-pool.tsx` 中的 AI 置信度/风险提示 UI 和 `lib/public-pool-import-mapping.ts` 中的 AI 优先合并逻辑。
+
+### public-pool-import-preview-mapping-stability: 公海导入预览改为表头优先映射，避免 AI 错位
+
+
+**变更点**
+- 新增 `lib/public-pool-import-mapping.ts`：集中封装导入字段映射规则，先按标准模板和常见表头别名做确定性匹配，再用 AI 返回结果补齐未识别字段。
+- 更新 `components/public-pool.tsx`：上传预检查完成后，不再直接信任 AI 列映射；改为先解析表头、再合并 AI 建议，确保导入预览和最终导入 payload 使用同一份稳定映射。
+- 更新 `lib/workers/public-pool-import.worker.ts`：导入 payload 构造改为复用统一字段取值逻辑，保证预览与实际入库字段一致。
+
+**变更原因（对应 PRD/原型）**
+- 你反馈当前导入预览字段明显错位，说明单纯依赖 AI 猜列在真实市场表格上不稳定；对标准模板和常见业务表头，产品上必须优先保证“预览可信”，不能让 AI 把预算、联系人、来源猜乱后直接误导用户。
+
+**影响范围**
+- UI/前端：导入预览会优先按表头稳定对齐，标准模板和常见中文表头下不再出现明显串列；AI 继续保留，但降级为补充识别而不是唯一判断来源。
+- Worker/导入链路：实际后台导入与预览共享同一映射策略，减少“预览正常但入库错位”或“预览错位导致误导确认”的风险。
+
+**回滚方式**
+- 删除 `lib/public-pool-import-mapping.ts`，恢复 `public-pool.tsx` 和 Worker 内原来的内联取值与 AI 直连映射逻辑。
+
+### public-pool-import-worker-and-chunked-batch: 公海导入改为 Worker 预处理 + 分批后台导入
+
+
+**变更点**
+- 更新 `components/public-pool.tsx`：上传文件后不再在主线程解析整份 Excel/CSV，也不再把完整行数据塞进 React state；改为通过浏览器 `Web Worker` 在后台解析文件、抽样做 AI 映射与预览，再在确认导入后分批调用 Supabase RPC 执行导入，同时在页面顶部展示“后台导入中”提示并自动刷新任务列表。
+- 新增 `lib/workers/public-pool-import.worker.ts`：专门负责 Excel/CSV 解析、缓存完整数据行，以及根据 AI 映射构造导入 payload，彻底把大文件解析和大数组构造从主线程移走，避免上传后页面卡死。
+- 新增迁移 `supabase/migrations/048_leads_public_pool_import_rpc_chunking.sql`：为 `public.rpc_leads_import_public_pool` 增加可选参数 `p_mark_complete`，允许前端按批次导入时先把任务标为 `processing`，待全部批次完成后再统一标记 `completed/failed`。
+
+**变更原因（对应 PRD/原型）**
+- 你反馈真实 4000+ 行文件在“上传后预检查”阶段会直接把页面卡死，说明现有“主线程解析文件 + 主线程构造导入数据”的交互方案不满足生产环境稳定性要求；本次改为“UI 线程只负责交互，重计算在 Worker，写库走分批 RPC”，优先保证大文件导入时页面仍可继续操作。
+
+**影响范围**
+- UI/前端：公海导入弹窗的交互语义从“上传后立即占用主线程预处理”升级为“后台预处理 + 后台分批导入”，原有样式结构保持不变，但导入按钮在任务执行中会禁用，顶部会显示后台执行提示。
+- DB/RPC：新增一个兼容式补充函数签名 `public.rpc_leads_import_public_pool(uuid, jsonb, boolean)`；原有两参版本仍可继续使用，不影响其他调用方。
+
+**回滚方式**
+- 前端：删除 `public-pool.tsx` 中的 Worker 调用与后台导入逻辑，并移除 `lib/workers/public-pool-import.worker.ts`，恢复为旧版主线程解析流程。
+- DB：回滚 `048_leads_public_pool_import_rpc_chunking.sql`，或在后续迁移中删除三参版本 `public.rpc_leads_import_public_pool(uuid, jsonb, boolean)`，恢复只保留旧版两参函数。
+
 ## 2026-03-17
+
 
 ### analytics-product-type-distribution: 报表新增按产品/业务类型统计导入线索
 
@@ -25,7 +135,7 @@
 
 
 **变更点**
-- 新增 `app/api/ai/import-mapping/route.ts`：封装对 KIE Chat Completions (`model: gpt-5-4`) 的调用，接收上传表头和示例行，返回标准导入模板所需的列映射（公司名称/网址/联系人/电话/微信号/来源渠道/预算），供前端统一应用到整份导入数据。
+- 新增 `app/api/ai/import-mapping/route.ts`：封装对 KIE Chat Completions（当前模型为 `gpt-5-2`，历史使用过 `gpt-5-4`）的调用，接收上传表头和示例行，返回标准导入模板所需的列映射（公司名称/网址/联系人/电话/微信号/来源渠道/预算），供前端统一应用到整份导入数据。
 - 更新 `components/public-pool.tsx`：在本地解析 CSV/Excel 后优先调用上述 AI 接口获取字段映射，并基于映射结果构造标准化行，然后复用现有“基础信息三组必填 + 去重 + 预览 + 导入”流程；当 AI 不可用或返回异常时自动退回到原有模板格式解析逻辑。
 - 安装 `xlsx` 依赖并扩展导入支持 `.xlsx/.xls`，在本地解析阶段统一输出二维字符串数组，方便与 AI 字段映射结果衔接。
 
