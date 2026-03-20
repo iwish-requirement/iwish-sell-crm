@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 
-const DEFAULT_KIE_API_URL = "https://cloud.siliconflow.cn/inference/v1/chat/completions"
+const DEFAULT_KIE_API_URL = "https://api.siliconflow.cn/v1/chat/completions"
 
 function getKieApiUrl(): string {
   const raw = (Deno.env.get("SILICONFLOW_API_URL") ?? Deno.env.get("KIE_API_URL") ?? DEFAULT_KIE_API_URL).trim()

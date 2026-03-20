@@ -12,7 +12,7 @@ import {
 
 export const runtime = "edge"
 
-const DEFAULT_KIE_API_URL = "https://cloud.siliconflow.cn/inference/v1/chat/completions"
+const DEFAULT_KIE_API_URL = "https://api.siliconflow.cn/v1/chat/completions"
 const DEFAULT_KIE_MODEL = (process.env.SILICONFLOW_MODEL ?? "qwen3.5-chat").trim()
 
 const DEFAULT_AI_PROXY_PATH = "/ai-import-mapping-proxy"
