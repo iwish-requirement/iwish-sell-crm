@@ -213,12 +213,21 @@ function extractKieTextContent(payload: Record<string, any>): string | null {
 async function requestKieResponses(
   messages: Array<{ role: "system" | "user"; content: string }>,
 ) {
+  const supabaseAnonKey = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? process.env.SUPABASE_ANON_KEY ?? "").trim()
+
   const llmRes = await fetch(getKieApiUrl(), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      ...(supabaseAnonKey
+        ? {
+            apikey: supabaseAnonKey,
+            Authorization: `Bearer ${supabaseAnonKey}`,
+          }
+        : {}),
     },
     body: JSON.stringify({
+
       model: DEFAULT_KIE_MODEL,
       messages,
       temperature: 0,
