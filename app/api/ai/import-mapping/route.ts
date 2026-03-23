@@ -24,7 +24,7 @@ function getKieApiUrl(): string {
     return `${base}${DEFAULT_AI_PROXY_PATH}`
   }
 
-  const raw = (process.env.SILICONFLOW_API_URL ?? process.env.KIE_API_URL ?? DEFAULT_KIE_API_URL).trim()
+  const raw = (process.env.SILICONFLOW_API_URL ?? DEFAULT_KIE_API_URL).trim()
   return raw || DEFAULT_KIE_API_URL
 }
 
@@ -214,28 +214,45 @@ async function requestKieResponses(
   messages: Array<{ role: "system" | "user"; content: string }>,
 ) {
   const supabaseAnonKey = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? process.env.SUPABASE_ANON_KEY ?? "").trim()
-  const maxTokensEnv = (process.env.SILICONFLOW_MAX_TOKENS ?? process.env.KIE_MAX_TOKENS ?? "").trim()
-  const maxTokens = maxTokensEnv && Number.isFinite(Number(maxTokensEnv)) ? Math.max(128, Math.min(4096, Math.floor(Number(maxTokensEnv)))) : 1600
+  const maxTokensEnv = (process.env.SILICONFLOW_MAX_TOKENS ?? "").trim()
+  const maxTokens = maxTokensEnv && Number.isFinite(Number(maxTokensEnv)) ? Math.max(128, Math.min(4096, Math.floor(Number(maxTokensEnv)))) : 800
 
-  const llmRes = await fetch(getKieApiUrl(), {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(supabaseAnonKey
-        ? {
-            apikey: supabaseAnonKey,
-            Authorization: `Bearer ${supabaseAnonKey}`,
-          }
-        : {}),
-    },
-    body: JSON.stringify({
-      model: DEFAULT_KIE_MODEL,
-      messages,
-      temperature: 0,
-      max_tokens: maxTokens,
-    }),
-    cache: "no-store",
-  })
+  const timeoutMsEnv = (process.env.SILICONFLOW_EDGE_TIMEOUT_MS ?? "").trim()
+  const timeoutMs = timeoutMsEnv && Number.isFinite(Number(timeoutMsEnv)) ? Math.max(5000, Math.min(60000, Math.floor(Number(timeoutMsEnv)))) : 30000
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+
+  let llmRes: Response
+  try {
+    llmRes = await fetch(getKieApiUrl(), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(supabaseAnonKey
+          ? {
+              apikey: supabaseAnonKey,
+              Authorization: `Bearer ${supabaseAnonKey}`,
+            }
+          : {}),
+      },
+      body: JSON.stringify({
+        model: DEFAULT_KIE_MODEL,
+        messages,
+        temperature: 0,
+        max_tokens: maxTokens,
+      }),
+      cache: "no-store",
+      signal: controller.signal,
+    })
+  } catch (err: any) {
+    const name = typeof err?.name === "string" ? err.name : ""
+    if (name === "AbortError") {
+      throw new Error(`llm_task_timeout:${timeoutMs}:upstream_timeout`)
+    }
+    throw err
+  } finally {
+    clearTimeout(timeoutId)
+  }
 
 
   const rawText = await llmRes.text().catch(() => "")
@@ -261,7 +278,7 @@ async function getLlmJsonContent(messages: Array<{ role: "system" | "user"; cont
 
 
   if (!rawText.trim()) {
-    throw new Error("empty_llm_response:OpenRouter returned 200 with empty body")
+    throw new Error("empty_llm_response:AI provider returned 200 with empty body")
   }
 
   let parsed: any
@@ -303,8 +320,8 @@ export async function POST(req: NextRequest) {
     const rowsValues = (sampleRows as any[][]).map((row) => (row ?? []).map((cell) => sanitizeImportFieldValue(cell)))
     const previewValues = (previewRows as any[][]).map((row) => (row ?? []).map((cell) => sanitizeImportFieldValue(cell)))
 
-    const limitedSample = rowsValues.slice(0, 50)
-    const limitedPreview = previewValues.slice(0, 20)
+    const limitedSample = rowsValues.slice(0, 25)
+    const limitedPreview = previewValues.slice(0, 12)
 
     const systemPrompt =
       "你是一个 B2B CRM 智能导入助手，负责在表头可能错误、内容可能串列、格式可能不规范的情况下，尽量把市场导入表理解为标准 CRM 线索数据。" +
@@ -326,7 +343,7 @@ export async function POST(req: NextRequest) {
       { role: "system", content: systemPrompt },
       {
         role: "user",
-        content: "请根据下面的表结构和样本数据返回 JSON：\n" + JSON.stringify(userPayload, null, 2),
+        content: "请根据下面的表结构和样本数据返回 JSON：\n" + JSON.stringify(userPayload),
       },
     ])
 
