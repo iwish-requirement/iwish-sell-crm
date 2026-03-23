@@ -12,6 +12,11 @@ function getKieApiKey(): string | null {
   return raw.length > 0 ? raw : null
 }
 
+function shouldSendXApiKeyHeader(): boolean {
+  const raw = (Deno.env.get("SILICONFLOW_SEND_X_API_KEY") ?? "").trim().toLowerCase()
+  return raw === "1" || raw === "true" || raw === "yes"
+}
+
 serve(async (req) => {
   if (req.method !== "POST") {
     return new Response("Method Not Allowed", { status: 405 })
@@ -32,13 +37,19 @@ serve(async (req) => {
     // 直接透传请求体到上游 LLM，保持与 OpenRouter Chat Completions 协议兼容
     const upstreamBody = await req.text()
 
+    const upstreamHeaders: Record<string, string> = {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    }
+
+    if (shouldSendXApiKeyHeader()) {
+      upstreamHeaders["X-API-Key"] = apiKey
+    }
+
     const llmRes = await fetch(getKieApiUrl(), {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "X-API-Key": apiKey,
-        "Content-Type": "application/json",
-      },
+      headers: upstreamHeaders,
       body: upstreamBody,
     })
 
