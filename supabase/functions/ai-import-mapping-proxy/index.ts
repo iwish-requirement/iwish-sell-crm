@@ -1,14 +1,14 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 
-const DEFAULT_KIE_API_URL = "https://api.siliconflow.cn/v1/chat/completions"
+const DEFAULT_SILICONFLOW_API_URL = "https://api.siliconflow.cn/v1/chat/completions"
 
-function getKieApiUrl(): string {
-  const raw = (Deno.env.get("SILICONFLOW_API_URL") ?? Deno.env.get("KIE_API_URL") ?? DEFAULT_KIE_API_URL).trim()
-  return raw || DEFAULT_KIE_API_URL
+function getSiliconFlowApiUrl(): string {
+  const raw = (Deno.env.get("SILICONFLOW_API_URL") ?? DEFAULT_SILICONFLOW_API_URL).trim()
+  return raw || DEFAULT_SILICONFLOW_API_URL
 }
 
-function getKieApiKey(): string | null {
-  const raw = (Deno.env.get("SILICONFLOW_API_KEY") ?? Deno.env.get("KIE_API_KEY") ?? Deno.env.get("OPENROUTER_API_KEY") ?? "").trim()
+function getSiliconFlowApiKey(): string | null {
+  const raw = (Deno.env.get("SILICONFLOW_API_KEY") ?? "").trim()
   return raw.length > 0 ? raw : null
 }
 
@@ -23,10 +23,14 @@ serve(async (req) => {
   }
 
   try {
-    const apiKey = getKieApiKey()
+    const apiKey = getSiliconFlowApiKey()
     if (!apiKey) {
       return new Response(
-        JSON.stringify({ ok: false, error: "missing_api_key", detail: "OPENROUTER_API_KEY (或 SILICONFLOW_API_KEY/KIE_API_KEY) is not configured on Supabase Edge Function" }),
+        JSON.stringify({
+          ok: false,
+          error: "missing_api_key",
+          detail: "SILICONFLOW_API_KEY is not configured on Supabase Edge Function",
+        }),
         {
           status: 500,
           headers: { "content-type": "application/json" },
@@ -34,7 +38,6 @@ serve(async (req) => {
       )
     }
 
-    // 直接透传请求体到上游 LLM，保持与 OpenRouter Chat Completions 协议兼容
     const upstreamBody = await req.text()
 
     const upstreamHeaders: Record<string, string> = {
@@ -47,7 +50,7 @@ serve(async (req) => {
       upstreamHeaders["X-API-Key"] = apiKey
     }
 
-    const llmRes = await fetch(getKieApiUrl(), {
+    const llmRes = await fetch(getSiliconFlowApiUrl(), {
       method: "POST",
       headers: upstreamHeaders,
       body: upstreamBody,
