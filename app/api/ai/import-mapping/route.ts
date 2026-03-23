@@ -214,6 +214,8 @@ async function requestKieResponses(
   messages: Array<{ role: "system" | "user"; content: string }>,
 ) {
   const supabaseAnonKey = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? process.env.SUPABASE_ANON_KEY ?? "").trim()
+  const maxTokensEnv = (process.env.SILICONFLOW_MAX_TOKENS ?? process.env.KIE_MAX_TOKENS ?? "").trim()
+  const maxTokens = maxTokensEnv && Number.isFinite(Number(maxTokensEnv)) ? Math.max(128, Math.min(4096, Math.floor(Number(maxTokensEnv)))) : 1600
 
   const llmRes = await fetch(getKieApiUrl(), {
     method: "POST",
@@ -230,6 +232,7 @@ async function requestKieResponses(
       model: DEFAULT_KIE_MODEL,
       messages,
       temperature: 0,
+      max_tokens: maxTokens,
     }),
     cache: "no-store",
   })
