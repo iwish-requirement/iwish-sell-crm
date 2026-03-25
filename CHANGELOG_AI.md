@@ -5,6 +5,28 @@
 
 ## 2026-03-20
 
+### public-pool-ai-import-timeout-hardening: 公海池导入 AI 超时治理与链路收敛
+
+**变更点**
+- 更新 [app/api/ai/import-mapping/route.ts](/e:/iwish-sell-crm/app/api/ai/import-mapping/route.ts)：
+  - 将默认 `max_tokens` 从 `800` 下调为 `400`，减少模型生成体积。
+  - 将服务端 AI 请求默认超时从 `30000ms` 提升到 `55000ms`。
+  - 将送给 AI 的样本行数从 `25` 行缩减到 `8` 行，预览行数从 `12` 行缩减到 `6` 行，降低 prompt 长度与上游耗时。
+- 更新 [components/public-pool.tsx](/e:/iwish-sell-crm/components/public-pool.tsx)：
+  - 将前端等待 `/api/ai/import-mapping` 的超时从 `40000ms` 提升到 `65000ms`，与后端超时策略更一致，减少前端过早中断。
+- 更新 [supabase/functions/ai-import-mapping-proxy/index.ts](/e:/iwish-sell-crm/supabase/functions/ai-import-mapping-proxy/index.ts)：
+  - 将 Supabase Edge Function 默认上游超时从 `25000ms` 提升到 `55000ms`，避免真实导入 prompt 在上游未返回前被代理层提前切断。
+
+**变更原因**
+- 实测公海池导入在上传文件后会稳定命中 AI 调用失败；排查链路后确认不是文件解析问题，而是 `Cloudflare/Next -> Supabase Edge Function -> SiliconFlow` 在真实导入映射 prompt 下容易超过原来的 `25s/30s/40s` 多层超时阈值，最终前端统一回退到“AI 调用失败”。
+
+**影响范围**
+- 导入 AI 识别的成功率会明显依赖新的超时与 prompt 尺寸控制；功能协议不变，仍返回 `columnMapping/normalizedRows/fieldConfidence/overallConfidence/warnings/summary`。
+- 部署时建议同时在 Supabase Edge Function Secret 中配置 `SILICONFLOW_TIMEOUT_MS=55000`，以便与代码默认值保持一致。
+
+**回滚方式**
+- 如需回滚，可将以上 3 处超时与采样参数恢复到原值：`25000ms / 30000ms / 40000ms` 与 `25/12` 行采样策略。
+
 ### public-pool-ai-import-via-supabase-edge-function-siliconflow: 公海导入 AI 统一走 Supabase Edge Function 并切换硅基流动上游
 
 **变更点**

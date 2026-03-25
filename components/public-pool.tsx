@@ -1162,7 +1162,7 @@ export function PublicPool() {
           const controller = new AbortController()
           const timeoutId = window.setTimeout(() => {
             controller.abort()
-          }, 40000)
+          }, 65000)
 
 
           try {

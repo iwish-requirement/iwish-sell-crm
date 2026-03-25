@@ -8,7 +8,7 @@ function getUpstreamTimeoutMs(): number {
   if (Number.isFinite(parsed)) {
     return Math.max(5000, Math.min(60000, Math.floor(parsed)))
   }
-  return 25000
+  return 55000
 }
 
 function getSiliconFlowApiUrl(): string {
