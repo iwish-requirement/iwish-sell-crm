@@ -166,3 +166,24 @@
 - 删除 `lib/public-pool-import-mapping.ts`，恢复 `public-pool.tsx` 和 Worker 内原来的内联取值与 AI 直连映射逻辑。
 
 **后续历史记录保持不变，略**
+## 2026-03-27
+
+### public-pool-openrouter-api-migration: 公海导入 AI 切换为 OpenRouter API 接入
+
+**变更点**
+- 更新 [app/api/ai/import-mapping/route.ts](/e:/iwish-sell-crm/app/api/ai/import-mapping/route.ts)：
+  - 将默认上游地址恢复为 `https://openrouter.ai/api/v1/chat/completions`。
+  - 默认模型改为优先读取 `OPENROUTER_MODEL`，未配置时回退到 `openai/gpt-5-mini`，并保留对旧 `SILICONFLOW_MODEL` 的兼容。
+  - 超时与 token 配置优先读取 `OPENROUTER_EDGE_TIMEOUT_MS` / `OPENROUTER_MAX_TOKENS`，仍兼容旧 `SILICONFLOW_*` 变量。
+- 更新 [supabase/functions/ai-import-mapping-proxy/index.ts](/e:/iwish-sell-crm/supabase/functions/ai-import-mapping-proxy/index.ts)：
+  - 将 Edge Function 默认上游切换为 OpenRouter。
+  - API Key 优先读取 `OPENROUTER_API_KEY`，同时兼容 `SILICONFLOW_API_KEY` / `KIE_API_KEY` 作为回退。
+  - 增加 OpenRouter 推荐的 `HTTP-Referer` / `X-Title` 请求头，便于平台识别应用来源。
+- 调整导入 AI 的网络报错提示，使线上排查指向 OpenRouter 而不是旧的 SiliconFlow。
+
+**原因**
+- 当前导入公海池的 AI 识别链路已经抽象成 OpenAI 兼容协议，本次改造的重点不是前端协议，而是把内部上游重新收口到 OpenRouter，方便后续在同一入口下灵活切换更合适的模型。
+
+**影响**
+- `/api/ai/import-mapping` 的请求/响应结构保持不变，前端导入弹窗与后台导入流程不需要联动修改。
+- 部署时建议在 Supabase Edge Function 配置 `OPENROUTER_API_KEY`，可选再补充 `OPENROUTER_API_URL`、`OPENROUTER_TIMEOUT_MS`、`OPENROUTER_APP_NAME`、`OPENROUTER_SITE_URL`；Next 侧可选配置 `OPENROUTER_MODEL`、`OPENROUTER_MAX_TOKENS`、`OPENROUTER_EDGE_TIMEOUT_MS`。

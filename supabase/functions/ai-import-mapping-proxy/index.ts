@@ -1,9 +1,9 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 
-const DEFAULT_SILICONFLOW_API_URL = "https://api.siliconflow.cn/v1/chat/completions"
+const DEFAULT_OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 function getUpstreamTimeoutMs(): number {
-  const raw = (Deno.env.get("SILICONFLOW_TIMEOUT_MS") ?? "").trim()
+  const raw = (Deno.env.get("OPENROUTER_TIMEOUT_MS") ?? Deno.env.get("SILICONFLOW_TIMEOUT_MS") ?? "").trim()
   const parsed = raw ? Number(raw) : NaN
   if (Number.isFinite(parsed)) {
     return Math.max(5000, Math.min(60000, Math.floor(parsed)))
@@ -11,19 +11,24 @@ function getUpstreamTimeoutMs(): number {
   return 55000
 }
 
-function getSiliconFlowApiUrl(): string {
-  const raw = (Deno.env.get("SILICONFLOW_API_URL") ?? DEFAULT_SILICONFLOW_API_URL).trim()
-  return raw || DEFAULT_SILICONFLOW_API_URL
+function getOpenRouterApiUrl(): string {
+  const raw = (Deno.env.get("OPENROUTER_API_URL") ?? Deno.env.get("SILICONFLOW_API_URL") ?? DEFAULT_OPENROUTER_API_URL).trim()
+  return raw || DEFAULT_OPENROUTER_API_URL
 }
 
-function getSiliconFlowApiKey(): string | null {
-  const raw = (Deno.env.get("SILICONFLOW_API_KEY") ?? "").trim()
+function getOpenRouterApiKey(): string | null {
+  const raw = (Deno.env.get("OPENROUTER_API_KEY") ?? Deno.env.get("SILICONFLOW_API_KEY") ?? Deno.env.get("KIE_API_KEY") ?? "").trim()
   return raw.length > 0 ? raw : null
 }
 
-function shouldSendXApiKeyHeader(): boolean {
-  const raw = (Deno.env.get("SILICONFLOW_SEND_X_API_KEY") ?? "").trim().toLowerCase()
-  return raw === "1" || raw === "true" || raw === "yes"
+function getOpenRouterSiteUrl(): string | null {
+  const raw = (Deno.env.get("OPENROUTER_SITE_URL") ?? Deno.env.get("NEXT_PUBLIC_APP_URL") ?? "").trim()
+  return raw.length > 0 ? raw : null
+}
+
+function getOpenRouterAppName(): string | null {
+  const raw = (Deno.env.get("OPENROUTER_APP_NAME") ?? Deno.env.get("APP_NAME") ?? "iwish-sell-crm").trim()
+  return raw.length > 0 ? raw : null
 }
 
 serve(async (req) => {
@@ -32,16 +37,16 @@ serve(async (req) => {
   }
 
   try {
-    const upstreamUrl = getSiliconFlowApiUrl()
+    const upstreamUrl = getOpenRouterApiUrl()
     const timeoutMs = getUpstreamTimeoutMs()
     const startedAt = Date.now()
-    const apiKey = getSiliconFlowApiKey()
+    const apiKey = getOpenRouterApiKey()
     if (!apiKey) {
       return new Response(
         JSON.stringify({
           ok: false,
           error: "missing_api_key",
-          detail: "SILICONFLOW_API_KEY is not configured on Supabase Edge Function",
+          detail: "OPENROUTER_API_KEY is not configured on Supabase Edge Function",
         }),
         {
           status: 500,
@@ -58,8 +63,13 @@ serve(async (req) => {
       Accept: "application/json",
     }
 
-    if (shouldSendXApiKeyHeader()) {
-      upstreamHeaders["X-API-Key"] = apiKey
+    const siteUrl = getOpenRouterSiteUrl()
+    const appName = getOpenRouterAppName()
+    if (siteUrl) {
+      upstreamHeaders["HTTP-Referer"] = siteUrl
+    }
+    if (appName) {
+      upstreamHeaders["X-Title"] = appName
     }
 
     let model = ""
@@ -112,9 +122,9 @@ serve(async (req) => {
 
     const headers = new Headers()
     headers.set("content-type", llmRes.headers.get("content-type") ?? "application/json")
-    const traceId = llmRes.headers.get("x-siliconcloud-trace-id")
+    const traceId = llmRes.headers.get("x-request-id") ?? llmRes.headers.get("openrouter-generation-id")
     if (traceId) {
-      headers.set("x-siliconcloud-trace-id", traceId)
+      headers.set("x-openrouter-trace-id", traceId)
     }
 
     if (!llmRes.ok) {

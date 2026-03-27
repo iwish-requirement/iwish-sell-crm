@@ -12,8 +12,12 @@ import {
 
 export const runtime = "edge"
 
-const DEFAULT_KIE_API_URL = "https://api.siliconflow.cn/v1/chat/completions"
-const DEFAULT_KIE_MODEL = (process.env.SILICONFLOW_MODEL ?? "Pro/deepseek-ai/DeepSeek-V3.2").trim()
+const DEFAULT_OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+const DEFAULT_OPENROUTER_MODEL = (
+  process.env.OPENROUTER_MODEL ??
+  process.env.SILICONFLOW_MODEL ??
+  "openai/gpt-5-mini"
+).trim()
 
 const DEFAULT_AI_PROXY_PATH = "/ai-import-mapping-proxy"
 
@@ -24,8 +28,12 @@ function getKieApiUrl(): string {
     return `${base}${DEFAULT_AI_PROXY_PATH}`
   }
 
-  const raw = (process.env.SILICONFLOW_API_URL ?? DEFAULT_KIE_API_URL).trim()
-  return raw || DEFAULT_KIE_API_URL
+  const raw = (
+    process.env.OPENROUTER_API_URL ??
+    process.env.SILICONFLOW_API_URL ??
+    DEFAULT_OPENROUTER_API_URL
+  ).trim()
+  return raw || DEFAULT_OPENROUTER_API_URL
 }
 
 
@@ -214,10 +222,10 @@ async function requestKieResponses(
   messages: Array<{ role: "system" | "user"; content: string }>,
 ) {
   const supabaseAnonKey = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? process.env.SUPABASE_ANON_KEY ?? "").trim()
-  const maxTokensEnv = (process.env.SILICONFLOW_MAX_TOKENS ?? "").trim()
+  const maxTokensEnv = (process.env.OPENROUTER_MAX_TOKENS ?? process.env.SILICONFLOW_MAX_TOKENS ?? "").trim()
   const maxTokens = maxTokensEnv && Number.isFinite(Number(maxTokensEnv)) ? Math.max(128, Math.min(4096, Math.floor(Number(maxTokensEnv)))) : 400
 
-  const timeoutMsEnv = (process.env.SILICONFLOW_EDGE_TIMEOUT_MS ?? "").trim()
+  const timeoutMsEnv = (process.env.OPENROUTER_EDGE_TIMEOUT_MS ?? process.env.SILICONFLOW_EDGE_TIMEOUT_MS ?? "").trim()
   const timeoutMs = timeoutMsEnv && Number.isFinite(Number(timeoutMsEnv)) ? Math.max(5000, Math.min(60000, Math.floor(Number(timeoutMsEnv)))) : 55000
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
@@ -236,7 +244,7 @@ async function requestKieResponses(
           : {}),
       },
       body: JSON.stringify({
-        model: DEFAULT_KIE_MODEL,
+        model: DEFAULT_OPENROUTER_MODEL,
         messages,
         temperature: 0,
         max_tokens: maxTokens,
@@ -321,7 +329,7 @@ export async function POST(req: NextRequest) {
     const previewValues = (previewRows as any[][]).map((row) => (row ?? []).map((cell) => sanitizeImportFieldValue(cell)))
 
     // Fewer rows are enough for column inference and significantly reduce
-    // prompt size, which lowers timeout risk on SiliconFlow.
+    // prompt size, which lowers timeout risk on the upstream AI provider.
     const limitedSample = rowsValues.slice(0, 8)
     const limitedPreview = previewValues.slice(0, 6)
 
@@ -412,7 +420,7 @@ export async function POST(req: NextRequest) {
         {
           ok: false,
           error: "llm_network_error",
-          detail: "调用 AI 服务网络失败（fetch failed），请检查服务器到 SiliconFlow API 的网络连通性或代理配置",
+          detail: "调用 AI 服务网络失败（fetch failed），请检查服务器到 OpenRouter API 的网络连通性或代理配置",
         },
         { status: 502 },
       )
