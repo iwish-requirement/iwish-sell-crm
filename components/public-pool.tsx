@@ -1636,49 +1636,12 @@ export function PublicPool() {
 
     const supabase = getBrowserSupabaseClient()
 
-    try {
-      const { data: mePerms, error: permsError } = await supabase.rpc("rpc_me_permissions")
-      if (!permsError) {
-        const latestCanImportLeads = Boolean((mePerms as any)?.canImportLeads)
-        if (!latestCanImportLeads) {
-          toast.error("没有导入线索的权限", {
-            description: "当前账号未开通线索导入权限，如需调整权限，请联系系统管理员。",
-          })
-          return
-        }
-      } else {
-        console.error("Failed to refresh current user permissions before import", permsError)
-        if (!canImportLeads) {
-          toast.error("没有导入线索的权限", {
-            description: "当前账号未开通线索导入权限，如需调整权限，请联系系统管理员。",
-          })
-          return
-        }
-      }
-    } catch (permErr) {
-      console.error("Unexpected error while refreshing permissions before import", permErr)
-      if (!canImportLeads) {
-        toast.error("没有导入线索的权限", {
-          description: "当前账号未开通线索导入权限，如需调整权限，请联系系统管理员。",
-        })
-        return
-      }
-    }
-
     if (importStage !== "complete" || isSubmittingImport || !importJobId) {
       return
     }
 
     try {
       setIsSubmittingImport(true)
-
-      const currentProfile = await fetchCurrentUserProfile(supabase)
-      if (!currentProfile || currentProfile.teamId == null) {
-        toast.error("无法导入线索", {
-          description: "当前账号未加入任何团队，无法导入公海线索",
-        })
-        return
-      }
 
       if (!importReviewRows) {
         setIsPreparingImportReview(true)
@@ -1716,6 +1679,43 @@ export function PublicPool() {
         setImportReviewRows(reviewRows)
         toast.success("AI 全量分析已完成", {
           description: "请只校准异常或低置信度行，确认后再落库。",
+        })
+        return
+      }
+
+      try {
+        const { data: mePerms, error: permsError } = await supabase.rpc("rpc_me_permissions")
+        if (!permsError) {
+          const latestCanImportLeads = Boolean((mePerms as any)?.canImportLeads)
+          if (!latestCanImportLeads) {
+            toast.error("没有导入线索的权限", {
+              description: "当前账号未开通线索导入权限，如需调整权限，请联系系统管理员。",
+            })
+            return
+          }
+        } else {
+          console.error("Failed to refresh current user permissions before import", permsError)
+          if (!canImportLeads) {
+            toast.error("没有导入线索的权限", {
+              description: "当前账号未开通线索导入权限，如需调整权限，请联系系统管理员。",
+            })
+            return
+          }
+        }
+      } catch (permErr) {
+        console.error("Unexpected error while refreshing permissions before import", permErr)
+        if (!canImportLeads) {
+          toast.error("没有导入线索的权限", {
+            description: "当前账号未开通线索导入权限，如需调整权限，请联系系统管理员。",
+          })
+          return
+        }
+      }
+
+      const currentProfile = await fetchCurrentUserProfile(supabase)
+      if (!currentProfile || currentProfile.teamId == null) {
+        toast.error("无法导入线索", {
+          description: "当前账号未加入任何团队，无法导入公海线索",
         })
         return
       }
