@@ -4,7 +4,8 @@ import * as XLSX from "xlsx"
 import {
   deriveImportFieldValues,
   mergeImportFieldValues,
-  normalizeImportSourceLabelToKey,
+  normalizeStrictImportSourceKey,
+  normalizeStrictImportSourceLabel,
   sanitizeImportSourceGroups,
   type ImportAiMapping,
   type ImportAiNormalizedRow,
@@ -194,7 +195,8 @@ async function callImportAiProxyDirect(input: {
   const systemPrompt =
     "You are a B2B CRM import normalization assistant. Normalize each messy spreadsheet row into exactly 7 fields: company, website, contact, phone, wechat, sourceLabel, budget." +
     "\nUse headers, row cells, and ruleHints together. ruleHints are deterministic extraction hints and should be kept when they are obviously correct." +
-    "\nsourceLabel should be normalized to one of the allowed business labels whenever possible." +
+    "\nsourceLabel must be normalized to one of the allowed business labels whenever possible. If no allowed label matches, return an empty string." +
+    "\nNever put a website, phone number, or WeChat ID into budget. budget should be a numeric amount only when it is clearly a budget." +
     "\nTreat every row independently. If a field is missing, return an empty string. Do not invent unavailable facts." +
     "\nReturn strict JSON only with a top-level key normalizedRows." +
     "\nEach normalizedRows item must be: { rowIndex, confidence, issues, normalized }." +
@@ -232,7 +234,7 @@ async function callImportAiProxyDirect(input: {
     throw new Error(`llm_error:${res.status}:${rawText.slice(0, 1000)}`)
   }
 
-  const parsed = JSON.parse(rawText)
+  const parsed = parseImportAiJsonContent(rawText)
   const content = parsed?.choices?.[0]?.message?.content
   if (typeof content !== "string" || !content.trim()) {
     throw new Error("invalid_llm_response")
@@ -334,12 +336,14 @@ async function buildPayloads(payload: Record<string, unknown> | undefined) {
     const contact = mergedValues.contact ?? ""
     const phone = mergedValues.phone ?? ""
     const wechat = mergedValues.wechat ?? ""
-    const sourceLabel = mergedValues.sourceLabel ?? ""
+    const rawSourceLabel = mergedValues.sourceLabel ?? ""
     const budgetStr = mergedValues.budget ?? ""
+    const sourceKey = normalizeStrictImportSourceKey(rawSourceLabel, sourceGroups)
+    const sourceLabel = normalizeStrictImportSourceLabel(rawSourceLabel, sourceGroups)
 
     const hasIdentity = Boolean((company || website).trim())
     const hasContact = Boolean((phone || wechat).trim())
-    const hasSource = Boolean(sourceLabel.trim())
+    const hasSource = Boolean(sourceKey.trim() && sourceLabel.trim())
 
     if (!hasIdentity || !hasContact || !hasSource) {
       invalidBasicInfoCount += 1
@@ -362,7 +366,7 @@ async function buildPayloads(payload: Record<string, unknown> | undefined) {
       wechat: wechat || null,
       responsibility_type: primarySource,
       source_level1: primarySource,
-      source_level2: normalizeImportSourceLabelToKey(sourceLabel, sourceGroups),
+      source_level2: sourceKey,
     }
 
     if (budget !== null && !Number.isNaN(budget)) {
