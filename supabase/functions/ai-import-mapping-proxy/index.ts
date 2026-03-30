@@ -1,21 +1,32 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 
 const DEFAULT_OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
-const DEFAULT_OPENROUTER_MODEL = (Deno.env.get("OPENROUTER_MODEL") ?? Deno.env.get("SILICONFLOW_MODEL") ?? "qwen/qwen3-30b-a3b").trim()
-const DEFAULT_OPENROUTER_FALLBACK_MODEL = (Deno.env.get("OPENROUTER_FALLBACK_MODEL") ?? "mistralai/mistral-small-3.2-24b-instruct").trim()
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 }
 
+function getFirstNonEmptyEnv(...keys: string[]): string | null {
+  for (const key of keys) {
+    const raw = (Deno.env.get(key) ?? "").trim()
+    if (raw) {
+      return raw
+    }
+  }
+  return null
+}
+
+function getDefaultOpenRouterModel(): string {
+  return getFirstNonEmptyEnv("OPENROUTER_MODEL", "SILICONFLOW_MODEL") ?? "qwen/qwen3-30b-a3b"
+}
+
+function getDefaultOpenRouterFallbackModel(): string {
+  return getFirstNonEmptyEnv("OPENROUTER_FALLBACK_MODEL") ?? "mistralai/mistral-small-3.2-24b-instruct"
+}
+
 function getUpstreamTimeoutMs(): number {
-  const raw = (
-    Deno.env.get("OPENROUTER_TIMEOUT_MS") ??
-    Deno.env.get("OPENROUTER_EDGE_TIMEOUT_MS") ??
-    Deno.env.get("SILICONFLOW_TIMEOUT_MS") ??
-    ""
-  ).trim()
+  const raw = getFirstNonEmptyEnv("OPENROUTER_TIMEOUT_MS", "OPENROUTER_EDGE_TIMEOUT_MS", "SILICONFLOW_TIMEOUT_MS") ?? ""
   const parsed = raw ? Number(raw) : NaN
   if (Number.isFinite(parsed)) {
     return Math.max(5000, Math.min(60000, Math.floor(parsed)))
@@ -24,7 +35,7 @@ function getUpstreamTimeoutMs(): number {
 }
 
 function getMaxTokens(): number {
-  const raw = (Deno.env.get("OPENROUTER_MAX_TOKENS") ?? Deno.env.get("SILICONFLOW_MAX_TOKENS") ?? "").trim()
+  const raw = getFirstNonEmptyEnv("OPENROUTER_MAX_TOKENS", "SILICONFLOW_MAX_TOKENS") ?? ""
   const parsed = raw ? Number(raw) : NaN
   if (Number.isFinite(parsed)) {
     return Math.max(128, Math.min(2048, Math.floor(parsed)))
@@ -33,22 +44,22 @@ function getMaxTokens(): number {
 }
 
 function getOpenRouterApiUrl(): string {
-  const raw = (Deno.env.get("OPENROUTER_API_URL") ?? Deno.env.get("SILICONFLOW_API_URL") ?? DEFAULT_OPENROUTER_API_URL).trim()
+  const raw = getFirstNonEmptyEnv("OPENROUTER_API_URL", "SILICONFLOW_API_URL") ?? DEFAULT_OPENROUTER_API_URL
   return raw || DEFAULT_OPENROUTER_API_URL
 }
 
 function getOpenRouterApiKey(): string | null {
-  const raw = (Deno.env.get("OPENROUTER_API_KEY") ?? Deno.env.get("SILICONFLOW_API_KEY") ?? Deno.env.get("KIE_API_KEY") ?? "").trim()
+  const raw = getFirstNonEmptyEnv("OPENROUTER_API_KEY", "SILICONFLOW_API_KEY", "KIE_API_KEY") ?? ""
   return raw.length > 0 ? raw : null
 }
 
 function getOpenRouterSiteUrl(): string | null {
-  const raw = (Deno.env.get("OPENROUTER_SITE_URL") ?? Deno.env.get("NEXT_PUBLIC_APP_URL") ?? "").trim()
+  const raw = getFirstNonEmptyEnv("OPENROUTER_SITE_URL", "NEXT_PUBLIC_APP_URL") ?? ""
   return raw.length > 0 ? raw : null
 }
 
 function getOpenRouterAppName(): string | null {
-  const raw = (Deno.env.get("OPENROUTER_APP_NAME") ?? Deno.env.get("APP_NAME") ?? "iwish-sell-crm").trim()
+  const raw = getFirstNonEmptyEnv("OPENROUTER_APP_NAME", "APP_NAME") ?? "iwish-sell-crm"
   return raw.length > 0 ? raw : null
 }
 
@@ -105,6 +116,8 @@ serve(async (req) => {
 
   try {
     const upstreamUrl = getOpenRouterApiUrl()
+    const defaultModel = getDefaultOpenRouterModel()
+    const fallbackModel = getDefaultOpenRouterFallbackModel()
     const timeoutMs = getUpstreamTimeoutMs()
     const startedAt = Date.now()
     const apiKey = getOpenRouterApiKey()
@@ -136,10 +149,16 @@ serve(async (req) => {
     const selectedModel =
       typeof requestPayload.model === "string" && requestPayload.model.trim()
         ? requestPayload.model.trim()
-        : DEFAULT_OPENROUTER_MODEL
+        : defaultModel
 
     if (!("max_tokens" in requestPayload)) {
       requestPayload.max_tokens = getMaxTokens()
+    }
+
+    if (!("response_format" in requestPayload)) {
+      requestPayload.response_format = {
+        type: "json_object",
+      }
     }
 
     requestPayload.model = selectedModel
@@ -165,7 +184,7 @@ serve(async (req) => {
       timeoutMs,
       hasModel: true,
       model: selectedModel || undefined,
-      fallbackModel: DEFAULT_OPENROUTER_FALLBACK_MODEL || undefined,
+      fallbackModel: fallbackModel || undefined,
     })
 
     let llmRes: Response
@@ -198,17 +217,17 @@ serve(async (req) => {
 
     if (
       !llmRes.ok &&
-      DEFAULT_OPENROUTER_FALLBACK_MODEL &&
-      DEFAULT_OPENROUTER_FALLBACK_MODEL !== selectedModel &&
+      fallbackModel &&
+      fallbackModel !== selectedModel &&
       isProviderRestriction(llmRes.status, rawText)
     ) {
-      requestPayload.model = DEFAULT_OPENROUTER_FALLBACK_MODEL
+      requestPayload.model = fallbackModel
       upstreamBody = JSON.stringify(requestPayload)
-      finalModel = DEFAULT_OPENROUTER_FALLBACK_MODEL
+      finalModel = fallbackModel
 
       console.warn("ai-import-mapping-proxy primary model restricted; retrying fallback", {
         primaryModel: selectedModel,
-        fallbackModel: DEFAULT_OPENROUTER_FALLBACK_MODEL,
+        fallbackModel,
         status: llmRes.status,
         detail: rawText.slice(0, 400),
       })

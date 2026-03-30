@@ -214,6 +214,25 @@ function stripImportAiJsonFence(text: string) {
   return t
 }
 
+function extractImportAiJsonObject(text: string) {
+  const start = text.indexOf("{")
+  const end = text.lastIndexOf("}")
+  if (start >= 0 && end > start) {
+    return text.slice(start, end + 1)
+  }
+  return text
+}
+
+function parseImportAiJsonContent(text: string): ImportAiAnalysisResponse {
+  const normalized = stripImportAiJsonFence(text)
+  try {
+    return JSON.parse(normalized) as ImportAiAnalysisResponse
+  } catch {
+    const extracted = extractImportAiJsonObject(normalized)
+    return JSON.parse(extracted) as ImportAiAnalysisResponse
+  }
+}
+
 function buildSupabaseFunctionUrl(path: string) {
   const base = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").trim()
   if (!base) {
@@ -259,6 +278,9 @@ async function callImportAiProxyDirect(input: {
           }),
         },
       ],
+      response_format: {
+        type: "json_object",
+      },
       temperature: 0,
     }),
   })
@@ -274,7 +296,7 @@ async function callImportAiProxyDirect(input: {
     throw new Error("invalid_llm_response")
   }
 
-  return JSON.parse(stripImportAiJsonFence(content)) as ImportAiAnalysisResponse
+  return parseImportAiJsonContent(content)
 }
 
 
