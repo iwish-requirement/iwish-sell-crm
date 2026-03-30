@@ -47,6 +47,7 @@ import {
   buildImportPreviewValues,
   deriveImportFieldValues,
   mergeImportFieldValues,
+  normalizeStrictImportSourceLabel,
   pickImportCell,
   resolveImportColumnMapping,
   sanitizeImportSourceGroups,
@@ -322,6 +323,7 @@ async function callImportAiProxyDirect(input: {
   headers: string[]
   sampleRows: string[][]
   previewRows: string[][]
+  sourceGroups?: ImportSourceGroupOption[]
 }) {
   const anonKey = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "").trim()
   if (!anonKey) {
@@ -352,6 +354,7 @@ async function callImportAiProxyDirect(input: {
             headers: input.headers,
             sampleRows: input.sampleRows,
             previewRows: input.previewRows,
+            allowedSourceGroups: input.sourceGroups ?? [],
           }),
         },
       ],
@@ -368,7 +371,7 @@ async function callImportAiProxyDirect(input: {
     throw new Error(`llm_error:${res.status}:${rawText.slice(0, 1000)}`)
   }
 
-  const parsed = JSON.parse(rawText)
+  const parsed = parseImportAiJsonContent(rawText)
   const content = parsed?.choices?.[0]?.message?.content
   if (typeof content !== "string" || !content.trim()) {
     throw new Error("invalid_llm_response")
@@ -385,7 +388,11 @@ function buildImportPreviewRow(row: string[], aiMapping: ImportAiMapping): strin
 }
 
 
-function summarizeImportSample(sampleRows: string[][], aiMapping: ImportAiMapping) {
+function summarizeImportSample(
+  sampleRows: string[][],
+  aiMapping: ImportAiMapping,
+  sourceGroups: ImportSourceGroupOption[] = [],
+) {
   const columnMapping = aiMapping?.columnMapping ?? null
   const seenPhones = new Set<string>()
   let duplicatesFound = 0
@@ -399,7 +406,7 @@ function summarizeImportSample(sampleRows: string[][], aiMapping: ImportAiMappin
     const website = normalized.website ?? ""
     const phoneRaw = normalized.phone ?? ""
     const wechatRaw = normalized.wechat ?? ""
-    const sourceLabel = normalized.sourceLabel ?? ""
+    const sourceLabel = normalizeStrictImportSourceLabel(normalized.sourceLabel ?? "", sourceGroups)
 
     const hasIdentity = Boolean((company || website).trim())
     const hasContact = Boolean((phoneRaw || wechatRaw).trim())
@@ -1339,7 +1346,22 @@ export function PublicPool() {
         warnings: [],
       }
 
-      const sampleSummary = summarizeImportSample(sampleRows, finalImportMapping)
+      let previewSourceGroups: ImportSourceGroupOption[] = []
+      try {
+        const supabase = getBrowserSupabaseClient()
+        const { data: sourceGroupsSetting } = await supabase
+          .from("settings")
+          .select("value")
+          .eq("key", "leads.company_resource_source_groups")
+          .maybeSingle()
+
+        const sourceGroupsValue = (sourceGroupsSetting?.value as ImportSourceGroupsResponse | null)?.groups ?? []
+        previewSourceGroups = sanitizeImportSourceGroups(sourceGroupsValue)
+      } catch (sourceGroupErr) {
+        console.error("Failed to load company resource source groups for import preview", sourceGroupErr)
+      }
+
+      const sampleSummary = summarizeImportSample(sampleRows, finalImportMapping, previewSourceGroups)
       const previewRows: ImportPreviewRow[] = previewSourceRows.map((row, index) => {
         return {
           rowIndex: index,
@@ -1386,6 +1408,7 @@ export function PublicPool() {
               headers: headerRow,
               sampleRows,
               previewRows: previewSourceRows.slice(0, 20),
+              sourceGroups: previewSourceGroups,
             })
 
             const resolvedAiMapping = resolveImportColumnMapping(
@@ -1411,6 +1434,13 @@ export function PublicPool() {
                   aiRow.normalized,
                   deriveImportFieldValues(row, aiMapping.columnMapping ?? null),
                 )
+                const normalizedSourceLabel = normalizeStrictImportSourceLabel(
+                  mergedValues.sourceLabel ?? "",
+                  previewSourceGroups,
+                )
+                if (normalizedSourceLabel) {
+                  mergedValues.sourceLabel = normalizedSourceLabel
+                }
                 return {
                   rowIndex: index,
                   values: buildImportPreviewValues(mergedValues),

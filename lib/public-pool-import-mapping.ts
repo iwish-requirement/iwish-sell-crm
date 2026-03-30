@@ -337,7 +337,7 @@ function looksLikeNoiseForCompany(value: string): boolean {
   if (!normalized) return true
   if (extractWebsite(normalized)) return true
   if (extractPhone(normalized)) return true
-  if (looksLikeBudget(normalized)) return true
+  if (extractStrictBudgetValue(normalized)) return true
   if (looksLikeWechat(normalized)) return true
   return /^[\d\s+().-]+$/.test(normalized)
 }
@@ -379,8 +379,8 @@ export function deriveImportFieldValues(
     findFirstCell(row, (value) => looksLikeWechat(value) && !extractWebsite(value) && !extractPhone(value))
 
   const budget =
-    extractBudget(mappedBudget) ||
-    findFirstCell(row, (value) => Boolean(extractBudget(value)))
+    extractStrictBudgetValue(mappedBudget) ||
+    findFirstCell(row, (value) => Boolean(extractStrictBudgetValue(value)))
 
   const company = looksLikeNoiseForCompany(mappedCompany) ? "" : sanitizeImportFieldValue(mappedCompany)
   const contact = looksLikeNoiseForCompany(mappedContact) ? "" : sanitizeImportFieldValue(mappedContact)
@@ -421,4 +421,86 @@ export function pickImportCell(row: string[], columnMapping: ImportColumnMapping
   const cols = [...row]
   while (cols.length <= fallbackIndex) cols.push("")
   return sanitizeImportFieldValue(cols[fallbackIndex])
+}
+
+export function extractStrictBudgetValue(value: string): string {
+  const normalized = sanitizeImportFieldValue(value)
+  if (!normalized) return ""
+  if (extractWebsite(normalized)) return ""
+  if (looksLikeWechat(normalized)) return ""
+
+  const compact = normalized.replace(/,/g, "").replace(/\s+/g, "")
+  const numericMatch = compact.match(/(\d+(?:\.\d+)?)/)
+  if (!numericMatch) return ""
+
+  const amount = Number(numericMatch[1])
+  if (!Number.isFinite(amount) || amount <= 0) return ""
+
+  let multiplier = 1
+  const lower = compact.toLowerCase()
+  if (compact.includes("亿")) multiplier = 100000000
+  else if (compact.includes("万") || lower.includes("w")) multiplier = 10000
+  else if (compact.includes("千") || lower.includes("k")) multiplier = 1000
+  else if (lower.includes("m")) multiplier = 1000000
+
+  const hasBudgetKeyword = /预算|金额|费用|报价|price|budget|cost|rmb|cny|usd/i.test(normalized)
+  const digitOnly = compact.replace(/[^\d]/g, "")
+
+  if (!hasBudgetKeyword && multiplier === 1) {
+    if (!/^\d+(?:\.\d+)?$/.test(compact)) {
+      return ""
+    }
+
+    if (digitOnly.length >= 7) {
+      return ""
+    }
+  }
+
+  return String(Math.round(amount * multiplier))
+}
+
+export function resolveStrictImportSourceMatch(
+  sourceLabel: string,
+  groups: ImportSourceGroupOption[] | null | undefined,
+): ImportSourceChildOption | null {
+  const normalized = sanitizeImportFieldValue(sourceLabel)
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, "")
+  if (!normalized) return null
+
+  const children = (groups ?? []).flatMap((group) => group.children)
+  for (const child of children) {
+    const aliases = new Set<string>([
+      String(child.key ?? "").trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ""),
+      String(child.label ?? "").trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ""),
+    ])
+
+    if (child.key === "website_form") aliases.add("官网")
+    if (child.key === "website_wechat") aliases.add("官网加微信")
+
+    const normalizedAliases = [...aliases].filter(Boolean)
+    if (normalizedAliases.includes(normalized)) {
+      return child
+    }
+    if (normalizedAliases.some((alias) => normalized.includes(alias) || alias.includes(normalized))) {
+      return child
+    }
+  }
+
+  return null
+}
+
+export function normalizeStrictImportSourceLabel(
+  sourceLabel: string,
+  groups: ImportSourceGroupOption[] | null | undefined,
+): string {
+  return resolveStrictImportSourceMatch(sourceLabel, groups)?.label ?? ""
+}
+
+export function normalizeStrictImportSourceKey(
+  sourceLabel: string,
+  groups: ImportSourceGroupOption[] | null | undefined,
+): string {
+  return resolveStrictImportSourceMatch(sourceLabel, groups)?.key ?? ""
 }

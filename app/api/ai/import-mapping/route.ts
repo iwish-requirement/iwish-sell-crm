@@ -476,7 +476,7 @@ async function getLlmJsonContent(messages: Array<{ role: "system" | "user"; cont
 
   let parsed: any
   try {
-    parsed = JSON.parse(rawText)
+    parsed = parseJsonContent(rawText)
   } catch (err) {
     console.error("AI provider response is not valid JSON", {
       bodyPreview: rawText.slice(0, 1000),
