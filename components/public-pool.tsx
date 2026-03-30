@@ -153,6 +153,8 @@ const IMPORT_SECONDARY_LABEL_TO_KEY: Record<string, string> = {
 const IMPORT_FALLBACK_SECONDARY_KEY = "other_event" as const
 const IMPORT_BATCH_SIZE = 200
 const IMPORT_AI_LOW_CONFIDENCE_THRESHOLD = 0.65
+const IMPORT_AI_FUNCTION_PATH = "/ai-import-mapping-proxy"
+const IMPORT_AI_PREVIEW_MAX_TOKENS = 1400
 
 const IMPORT_FIELD_LABELS = {
   company: "公司名称",
@@ -325,22 +327,58 @@ function parseImportAiJsonContent(text: string): ImportAiAnalysisResponse {
   }
 }
 
+function buildSupabaseFunctionUrl(path: string) {
+  const base = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").trim()
+  if (!base) {
+    throw new Error("NEXT_PUBLIC_SUPABASE_URL 未配置")
+  }
+  return `${base.replace(/\/+$/, "").replace(".supabase.co", ".functions.supabase.co")}${path}`
+}
+
 async function callImportAiProxyDirect(input: {
   headers: string[]
   sampleRows: string[][]
   previewRows: string[][]
   sourceGroups?: ImportSourceGroupOption[]
 }) {
-  const res = await fetch("/api/ai/import-mapping", {
+  const anonKey = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "").trim()
+  if (!anonKey) {
+    throw new Error("NEXT_PUBLIC_SUPABASE_ANON_KEY 未配置")
+  }
+
+  const functionUrl = buildSupabaseFunctionUrl(IMPORT_AI_FUNCTION_PATH)
+  const systemPrompt =
+    "你是一个 B2B CRM 智能导入助手，负责在表头可能错误、内容可能串列、格式可能不规范的情况下，尽量把市场导入表理解为标准 CRM 线索数据。" +
+    "\n标准字段只有 7 个：company（公司名称）、website（网址）、contact（联系人）、phone（电话）、wechat（微信号）、sourceLabel（来源渠道）、budget（预算）。" +
+    "\n请优先根据整列语义、单元格内容模式和中文业务语境判断，而不是机械相信表头。" +
+    "\n请严格输出 JSON，包含 columnMapping、fieldConfidence、overallConfidence、summary、warnings、normalizedRows。" +
+    "\nnormalizedRows 中每项格式必须是：{ rowIndex, confidence, issues, normalized }，normalized 必须包含 7 个标准字段。"
+
+  const res = await fetch(functionUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      apikey: anonKey,
+      Authorization: `Bearer ${anonKey}`,
     },
     body: JSON.stringify({
-      headers: input.headers,
-      sampleRows: input.sampleRows,
-      previewRows: input.previewRows,
-      sourceGroups: input.sourceGroups ?? [],
+      messages: [
+        { role: "system", content: systemPrompt },
+        {
+          role: "user",
+          content: "请根据下面的表结构和样本数据返回 JSON：\n" + JSON.stringify({
+            headers: input.headers,
+            sampleRows: input.sampleRows,
+            previewRows: input.previewRows,
+            allowedSourceGroups: input.sourceGroups ?? [],
+          }),
+        },
+      ],
+      response_format: {
+        type: "json_object",
+      },
+      temperature: 0,
+      max_tokens: IMPORT_AI_PREVIEW_MAX_TOKENS,
     }),
   })
 
@@ -349,12 +387,15 @@ async function callImportAiProxyDirect(input: {
     throw new Error(`llm_error:${res.status}:${rawText.slice(0, 1000)}`)
   }
 
-  const parsed = parseImportAiJsonContent(rawText)
-  if (!parsed || parsed.ok === false) {
-    throw new Error(String(parsed?.detail || parsed?.error || "invalid_llm_response"))
+  const parsed = parseImportAiJsonContent(rawText) as {
+    choices?: Array<{ message?: { content?: string } }>
+  } | null
+  const content = parsed?.choices?.[0]?.message?.content
+  if (typeof content !== "string" || !content.trim()) {
+    throw new Error("invalid_llm_response")
   }
 
-  return parsed
+  return parseImportAiJsonContent(content)
 }
 
 
