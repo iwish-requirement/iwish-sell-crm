@@ -51,6 +51,25 @@ function stripJsonFence(text: string): string {
   return t
 }
 
+function extractJsonObject(text: string): string {
+  const start = text.indexOf("{")
+  const end = text.lastIndexOf("}")
+  if (start >= 0 && end > start) {
+    return text.slice(start, end + 1)
+  }
+  return text
+}
+
+function parseJsonContent(text: string): Record<string, unknown> {
+  const normalized = stripJsonFence(text)
+  try {
+    return JSON.parse(normalized) as Record<string, unknown>
+  } catch {
+    const extracted = extractJsonObject(normalized)
+    return JSON.parse(extracted) as Record<string, unknown>
+  }
+}
+
 function clampConfidence(value: unknown): number | null {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return null
@@ -311,6 +330,9 @@ async function requestKieResponses(
       body: JSON.stringify({
         model,
         messages,
+        response_format: {
+          type: "json_object",
+        },
         temperature: 0,
         max_tokens: maxTokens,
       }),
@@ -400,7 +422,7 @@ async function getLlmJsonContent(messages: Array<{ role: "system" | "user"; cont
     throw new Error("invalid_llm_response")
   }
 
-  return JSON.parse(stripJsonFence(content)) as Record<string, unknown>
+  return parseJsonContent(content)
 }
 
 
