@@ -1,8 +1,17 @@
 /// <reference lib="webworker" />
 
 import * as XLSX from "xlsx"
-import { pickImportCell, type ImportAiMapping } from "../public-pool-import-mapping"
-
+import {
+  deriveImportFieldValues,
+  mergeImportFieldValues,
+  normalizeImportSourceLabelToKey,
+  sanitizeImportSourceGroups,
+  type ImportAiMapping,
+  type ImportAiNormalizedRow,
+  type ImportColumnMapping,
+  type ImportFieldValueMap,
+  type ImportSourceGroupOption,
+} from "../public-pool-import-mapping"
 
 type WorkerRequest = {
   requestId: string
@@ -11,18 +20,22 @@ type WorkerRequest = {
 }
 
 let cachedRows: string[][] | null = null
+let cachedHeaderRow: string[] | null = null
+
+const IMPORT_AI_FUNCTION_PATH = "/ai-import-mapping-proxy"
+const IMPORT_AI_BATCH_SIZE = 20
+const IMPORT_AI_IMPORT_MAX_TOKENS = 1800
 
 function normalizeCell(value: unknown): string {
   if (value == null) return ""
   return String(value).trim()
 }
 
-
 async function parseFile(file: File) {
   const ext = file.name.toLowerCase().split(".").pop() ?? ""
 
   if (!["csv", "xlsx", "xls"].includes(ext)) {
-    throw new Error("当前版本仅支持 CSV 或 Excel 模板导入，请使用下载的模板文件")
+    throw new Error("Unsupported file type. Please use CSV or Excel.")
   }
 
   let headerRow: string[] = []
@@ -36,7 +49,7 @@ async function parseFile(file: File) {
       .filter((line) => line.length > 0)
 
     if (lines.length <= 1) {
-      throw new Error("导入文件为空或只有表头，请检查模板内容")
+      throw new Error("Import file is empty or only contains a header row.")
     }
 
     headerRow = (lines[0] ?? "").split(",").map((cell) => cell.trim())
@@ -53,13 +66,14 @@ async function parseFile(file: File) {
       .filter((row) => row.some((cell: string) => cell.length > 0))
 
     if (rows.length <= 1) {
-      throw new Error("导入文件为空或只有表头，请检查模板内容")
+      throw new Error("Import file is empty or only contains a header row.")
     }
 
     headerRow = rows[0] ?? []
     dataRows = rows.slice(1)
   }
 
+  cachedHeaderRow = headerRow
   cachedRows = dataRows
 
   return {
@@ -70,33 +84,258 @@ async function parseFile(file: File) {
   }
 }
 
+function buildSupabaseFunctionUrl(base: string, path: string) {
+  return `${base.replace(/\/+$/, "").replace(".supabase.co", ".functions.supabase.co")}${path}`
+}
+
+function stripImportAiJsonFence(text: string) {
+  let t = text.trim()
+  if (t.startsWith("```")) {
+    t = t.replace(/^```[a-zA-Z]*\n?/, "").replace(/```$/, "").trim()
+  }
+  return t
+}
+
+function extractImportAiJsonObject(text: string) {
+  const start = text.indexOf("{")
+  const end = text.lastIndexOf("}")
+  if (start >= 0 && end > start) {
+    return text.slice(start, end + 1)
+  }
+  return text
+}
+
+function repairImportAiJsonText(text: string) {
+  const source = extractImportAiJsonObject(stripImportAiJsonFence(text))
+  let result = ""
+  let inString = false
+  let escaping = false
+
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index]
+
+    if (escaping) {
+      result += char
+      escaping = false
+      continue
+    }
+
+    if (char === "\\") {
+      result += char
+      escaping = true
+      continue
+    }
+
+    if (char === "\"") {
+      if (!inString) {
+        inString = true
+        result += char
+        continue
+      }
+
+      let nextIndex = index + 1
+      while (nextIndex < source.length && /\s/.test(source[nextIndex])) {
+        nextIndex += 1
+      }
+      const nextChar = source[nextIndex] ?? ""
+
+      if (nextChar === "," || nextChar === "}" || nextChar === "]" || nextChar === ":") {
+        inString = false
+        result += char
+      } else {
+        result += "\\\""
+      }
+      continue
+    }
+
+    if (inString) {
+      if (char === "\n") {
+        result += "\\n"
+        continue
+      }
+      if (char === "\r") {
+        result += "\\r"
+        continue
+      }
+      if (char === "\t") {
+        result += "\\t"
+        continue
+      }
+    }
+
+    result += char
+  }
+
+  return result.replace(/,\s*([}\]])/g, "$1")
+}
+
+function parseImportAiJsonContent(text: string) {
+  const normalized = stripImportAiJsonFence(text)
+  try {
+    return JSON.parse(normalized) as Record<string, unknown>
+  } catch {
+    const extracted = extractImportAiJsonObject(normalized)
+    try {
+      return JSON.parse(extracted) as Record<string, unknown>
+    } catch {
+      return JSON.parse(repairImportAiJsonText(extracted)) as Record<string, unknown>
+    }
+  }
+}
+
+async function callImportAiProxyDirect(input: {
+  supabaseUrl: string
+  anonKey: string
+  headers: string[]
+  sourceGroups: ImportSourceGroupOption[]
+  rows: Array<{ rowIndex: number; cells: string[]; ruleHints: ImportFieldValueMap }>
+}) {
+  const functionUrl = buildSupabaseFunctionUrl(input.supabaseUrl, IMPORT_AI_FUNCTION_PATH)
+  const systemPrompt =
+    "You are a B2B CRM import normalization assistant. Normalize each messy spreadsheet row into exactly 7 fields: company, website, contact, phone, wechat, sourceLabel, budget." +
+    "\nUse headers, row cells, and ruleHints together. ruleHints are deterministic extraction hints and should be kept when they are obviously correct." +
+    "\nsourceLabel should be normalized to one of the allowed business labels whenever possible." +
+    "\nTreat every row independently. If a field is missing, return an empty string. Do not invent unavailable facts." +
+    "\nReturn strict JSON only with a top-level key normalizedRows." +
+    "\nEach normalizedRows item must be: { rowIndex, confidence, issues, normalized }." +
+    "\nnormalized must include all 7 fields as strings."
+
+  const res = await fetch(functionUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: input.anonKey,
+      Authorization: `Bearer ${input.anonKey}`,
+    },
+    body: JSON.stringify({
+      messages: [
+        { role: "system", content: systemPrompt },
+        {
+          role: "user",
+          content: JSON.stringify({
+            headers: input.headers,
+            allowedSourceGroups: input.sourceGroups,
+            rows: input.rows,
+          }),
+        },
+      ],
+      response_format: {
+        type: "json_object",
+      },
+      temperature: 0,
+      max_tokens: IMPORT_AI_IMPORT_MAX_TOKENS,
+    }),
+  })
+
+  const rawText = await res.text().catch(() => "")
+  if (!res.ok) {
+    throw new Error(`llm_error:${res.status}:${rawText.slice(0, 1000)}`)
+  }
+
+  const parsed = JSON.parse(rawText)
+  const content = parsed?.choices?.[0]?.message?.content
+  if (typeof content !== "string" || !content.trim()) {
+    throw new Error("invalid_llm_response")
+  }
+
+  return parseImportAiJsonContent(content)
+}
+
+async function buildAiNormalizedRows(params: {
+  headers: string[]
+  rows: string[][]
+  columnMapping: ImportColumnMapping | null | undefined
+  supabaseUrl: string
+  anonKey: string
+  sourceGroups: ImportSourceGroupOption[]
+}) {
+  const normalizedByIndex = new Map<number, ImportAiNormalizedRow>()
+
+  for (let start = 0; start < params.rows.length; start += IMPORT_AI_BATCH_SIZE) {
+    const batchRows = params.rows.slice(start, start + IMPORT_AI_BATCH_SIZE)
+    const batchPayload = batchRows.map((row, offset) => ({
+      rowIndex: start + offset,
+      cells: row,
+      ruleHints: deriveImportFieldValues(row, params.columnMapping ?? null),
+    }))
+
+    try {
+      const parsed = await callImportAiProxyDirect({
+        supabaseUrl: params.supabaseUrl,
+        anonKey: params.anonKey,
+        headers: params.headers,
+        sourceGroups: params.sourceGroups,
+        rows: batchPayload,
+      })
+
+      const normalizedRows = Array.isArray((parsed as any)?.normalizedRows)
+        ? ((parsed as any).normalizedRows as ImportAiNormalizedRow[])
+        : []
+
+      for (const item of normalizedRows) {
+        if (typeof item?.rowIndex !== "number" || !item?.normalized || typeof item.normalized !== "object") {
+          continue
+        }
+        normalizedByIndex.set(item.rowIndex, item)
+      }
+    } catch {
+      continue
+    }
+  }
+
+  return normalizedByIndex
+}
+
 async function buildPayloads(payload: Record<string, unknown> | undefined) {
   if (!cachedRows || cachedRows.length === 0) {
-    throw new Error("找不到待导入的数据行，请重新选择文件进行预检查")
+    throw new Error("No cached rows to import. Please re-run preview.")
+  }
+
+  if (!cachedHeaderRow || cachedHeaderRow.length === 0) {
+    throw new Error("No cached headers to import. Please re-run preview.")
   }
 
   const teamId = payload?.teamId
   const ownerId = payload?.ownerId
   if (typeof teamId !== "number" || !Number.isFinite(teamId) || typeof ownerId !== "string" || ownerId.length === 0) {
-    throw new Error("缺少导入所需的团队或负责人信息")
+    throw new Error("Missing team or owner information for import.")
   }
 
   const aiMapping = (payload?.aiMapping as ImportAiMapping | undefined) ?? null
   const columnMapping = aiMapping?.columnMapping ?? null
+  const supabaseUrl = typeof payload?.supabaseUrl === "string" ? payload.supabaseUrl.trim() : ""
+  const anonKey = typeof payload?.anonKey === "string" ? payload.anonKey.trim() : ""
+  const sourceGroups = sanitizeImportSourceGroups(payload?.sourceGroups)
+
+  const aiNormalizedByIndex =
+    columnMapping && supabaseUrl && anonKey
+      ? await buildAiNormalizedRows({
+          headers: cachedHeaderRow,
+          rows: cachedRows,
+          columnMapping,
+          supabaseUrl,
+          anonKey,
+          sourceGroups,
+        })
+      : new Map<number, ImportAiNormalizedRow>()
 
   const payloads: Record<string, unknown>[] = []
   let invalidBasicInfoCount = 0
 
-  for (const row of cachedRows) {
+  for (const [rowIndex, row] of cachedRows.entries()) {
     if (!row || row.length === 0) continue
 
-    const company = pickImportCell(row, columnMapping, "company", 0)
-    const website = pickImportCell(row, columnMapping, "website", 1)
-    const contact = pickImportCell(row, columnMapping, "contact", 2)
-    const phone = pickImportCell(row, columnMapping, "phone", 3)
-    const wechat = pickImportCell(row, columnMapping, "wechat", 4)
-    const sourceLabel = pickImportCell(row, columnMapping, "sourceLabel", 5)
-    const budgetStr = pickImportCell(row, columnMapping, "budget", 6)
+    const ruleValues = deriveImportFieldValues(row, columnMapping)
+    const aiRow = aiNormalizedByIndex.get(rowIndex)
+    const mergedValues = mergeImportFieldValues(aiRow?.normalized, ruleValues)
+
+    const company = mergedValues.company ?? ""
+    const website = mergedValues.website ?? ""
+    const contact = mergedValues.contact ?? ""
+    const phone = mergedValues.phone ?? ""
+    const wechat = mergedValues.wechat ?? ""
+    const sourceLabel = mergedValues.sourceLabel ?? ""
+    const budgetStr = mergedValues.budget ?? ""
 
     const hasIdentity = Boolean((company || website).trim())
     const hasContact = Boolean((phone || wechat).trim())
@@ -108,42 +347,22 @@ async function buildPayloads(payload: Record<string, unknown> | undefined) {
     }
 
     const budget = budgetStr ? Number(budgetStr.replace(/[^0-9.]/g, "")) : null
-
     const primarySource = "company_resource"
-    const secondarySourceKey = {
-      抖音: "douyin",
-      "视频号（公司号）": "wechat_company",
-      "视频号（IP号）": "wechat_ip_1",
-      "视频号（IP号2）": "wechat_ip_2",
-      小红书: "xiaohongshu",
-      公众号: "official_account",
-      社群: "community",
-      官网表单: "website_form",
-      官网加微信: "website_wechat",
-      一号位战略课: "strategy_course",
-      流量系列课: "traffic_course",
-      品牌系列课: "brand_course",
-      SEO系列课: "seo_course",
-      展会: "expo",
-      公开课分享会: "public_workshop",
-      其他活动: "other_event",
-      直播间线索: "livestream_lead",
-    }[sourceLabel] ?? "other_event"
 
     const leadPayload: Record<string, unknown> = {
       team_id: teamId,
       owner_id: ownerId,
-      name: company || website || "未命名线索",
+      name: company || website || "Unnamed Lead",
       website: website || null,
-      source: sourceLabel || "公司分配资源",
+      source: sourceLabel || "Company Resource",
       stage: "L1",
       status: "pool",
-      customer_name: contact || "未填写联系人",
+      customer_name: contact || "Unknown Contact",
       customer_phone: phone || null,
       wechat: wechat || null,
       responsibility_type: primarySource,
       source_level1: primarySource,
-      source_level2: secondarySourceKey,
+      source_level2: normalizeImportSourceLabelToKey(sourceLabel, sourceGroups),
     }
 
     if (budget !== null && !Number.isNaN(budget)) {
@@ -162,6 +381,7 @@ async function buildPayloads(payload: Record<string, unknown> | undefined) {
 
 function resetCache() {
   cachedRows = null
+  cachedHeaderRow = null
   return { ok: true }
 }
 
@@ -174,7 +394,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
     if (action === "parse-file") {
       const file = payload?.file
       if (!(file instanceof File)) {
-        throw new Error("未收到有效的导入文件")
+        throw new Error("Missing import file.")
       }
       result = await parseFile(file)
     } else if (action === "build-payloads") {
@@ -188,7 +408,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
     self.postMessage({
       requestId,
       ok: false,
-      error: error instanceof Error ? error.message : "导入处理失败",
+      error: error instanceof Error ? error.message : "Import processing failed.",
     })
   }
 }

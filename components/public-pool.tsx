@@ -45,11 +45,15 @@ import { MePermissionsContext } from "@/components/app-root"
 import { fetchCurrentUserProfile } from "@/lib/auth/profile"
 import {
   buildImportPreviewValues,
+  deriveImportFieldValues,
+  mergeImportFieldValues,
   pickImportCell,
   resolveImportColumnMapping,
+  sanitizeImportSourceGroups,
   type ImportAiMapping,
   type ImportAiNormalizedRow,
   type ImportFieldConfidenceMap,
+  type ImportSourceGroupOption,
 } from "@/lib/public-pool-import-mapping"
 
 
@@ -149,6 +153,7 @@ const IMPORT_FALLBACK_SECONDARY_KEY = "other_event" as const
 const IMPORT_BATCH_SIZE = 200
 const IMPORT_AI_LOW_CONFIDENCE_THRESHOLD = 0.65
 const IMPORT_AI_FUNCTION_PATH = "/ai-import-mapping-proxy"
+const IMPORT_AI_PREVIEW_MAX_TOKENS = 1400
 
 const IMPORT_FIELD_LABELS = {
   company: "公司名称",
@@ -173,6 +178,10 @@ type ImportWorkerBuildPayloadsResult = {
   payloads: Record<string, unknown>[]
   invalidBasicInfoCount: number
   totalCount: number
+}
+
+type ImportSourceGroupsResponse = {
+  groups?: ImportSourceGroupOption[]
 }
 
 type ImportPreviewRow = {
@@ -350,6 +359,7 @@ async function callImportAiProxyDirect(input: {
         type: "json_object",
       },
       temperature: 0,
+      max_tokens: IMPORT_AI_PREVIEW_MAX_TOKENS,
     }),
   })
 
@@ -371,16 +381,7 @@ async function callImportAiProxyDirect(input: {
 
 function buildImportPreviewRow(row: string[], aiMapping: ImportAiMapping): string[] {
   const columnMapping = aiMapping?.columnMapping ?? null
-
-  return [
-    pickImportCell(row, columnMapping, "company", 0),
-    pickImportCell(row, columnMapping, "website", 1),
-    pickImportCell(row, columnMapping, "contact", 2),
-    pickImportCell(row, columnMapping, "phone", 3),
-    pickImportCell(row, columnMapping, "wechat", 4),
-    pickImportCell(row, columnMapping, "sourceLabel", 5),
-    pickImportCell(row, columnMapping, "budget", 6),
-  ]
+  return buildImportPreviewValues(deriveImportFieldValues(row, columnMapping))
 }
 
 
@@ -393,11 +394,12 @@ function summarizeImportSample(sampleRows: string[][], aiMapping: ImportAiMappin
   for (const row of sampleRows) {
     if (!row || row.length === 0) continue
 
-    const company = pickImportCell(row, columnMapping, "company", 0)
-    const website = pickImportCell(row, columnMapping, "website", 1)
-    const phoneRaw = pickImportCell(row, columnMapping, "phone", 3)
-    const wechatRaw = pickImportCell(row, columnMapping, "wechat", 4)
-    const sourceLabel = pickImportCell(row, columnMapping, "sourceLabel", 5)
+    const normalized = deriveImportFieldValues(row, columnMapping)
+    const company = normalized.company ?? ""
+    const website = normalized.website ?? ""
+    const phoneRaw = normalized.phone ?? ""
+    const wechatRaw = normalized.wechat ?? ""
+    const sourceLabel = normalized.sourceLabel ?? ""
 
     const hasIdentity = Boolean((company || website).trim())
     const hasContact = Boolean((phoneRaw || wechatRaw).trim())
@@ -1383,7 +1385,7 @@ export function PublicPool() {
             const aiAnalysis = await callImportAiProxyDirect({
               headers: headerRow,
               sampleRows,
-              previewRows: previewSourceRows.slice(0, 4),
+              previewRows: previewSourceRows.slice(0, 20),
             })
 
             const resolvedAiMapping = resolveImportColumnMapping(
@@ -1405,9 +1407,13 @@ export function PublicPool() {
             const mergedPreviewRows: ImportPreviewRow[] = previewSourceRows.map((row, index) => {
               const aiRow = aiPreviewByIndex.get(index)
               if (aiRow) {
+                const mergedValues = mergeImportFieldValues(
+                  aiRow.normalized,
+                  deriveImportFieldValues(row, aiMapping.columnMapping ?? null),
+                )
                 return {
                   rowIndex: index,
-                  values: buildImportPreviewValues(aiRow.normalized),
+                  values: buildImportPreviewValues(mergedValues),
                   confidence: aiRow.confidence,
                   issues: aiRow.issues,
                   aiEnhanced: true,
@@ -1552,10 +1558,27 @@ export function PublicPool() {
         description: "系统正在后台准备并分批导入，你可以继续使用当前页面。",
       })
 
+      let importSourceGroups: ImportSourceGroupOption[] = []
+      try {
+        const { data: sourceGroupsSetting } = await supabase
+          .from("settings")
+          .select("value")
+          .eq("key", "leads.company_resource_source_groups")
+          .maybeSingle()
+
+        const sourceGroupsValue = (sourceGroupsSetting?.value as ImportSourceGroupsResponse | null)?.groups ?? []
+        importSourceGroups = sanitizeImportSourceGroups(sourceGroupsValue)
+      } catch (sourceGroupErr) {
+        console.error("Failed to load company resource source groups before import", sourceGroupErr)
+      }
+
       const buildResult = (await callImportWorker("build-payloads", {
         aiMapping: importAiMapping?.columnMapping ? importAiMapping : null,
         teamId: currentProfile.teamId,
         ownerId: currentProfile.id,
+        supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
+        anonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "",
+        sourceGroups: importSourceGroups,
       })) as ImportWorkerBuildPayloadsResult
 
       const payloads = Array.isArray(buildResult?.payloads) ? buildResult.payloads : []
@@ -2581,7 +2604,7 @@ export function PublicPool() {
                               整体置信度 {formatImportConfidence(importAiInsight.overallConfidence)}
                             </Badge>
                             <Badge variant="secondary" className="bg-white/80 text-blue-900 border border-blue-200">
-                              AI 深度识别 {importAiInsight.aiEnhancedCount} 行
+                              AI 预览识别 {importAiInsight.aiEnhancedCount} 行
                             </Badge>
                             {importAiInsight.reviewNeededCount > 0 && (
                               <Badge variant="secondary" className="bg-amber-100 text-amber-900 border border-amber-200">
@@ -2656,7 +2679,7 @@ export function PublicPool() {
                             {importAiInsight ? "AI 导入预览" : "导入预览（规则兜底）"}（前 {importPreviewRows.length} 条 / 共 {estimatedTotalCount ?? parsedImportRows.length} 条）
                           </span>
                           <span className="text-[11px] text-muted-foreground">
-                            {importAiInsight ? "AI 深度处理前 20 条，其余行按识别规则自动补全预览" : "AI 未成功返回时，预览按规则映射和兜底逻辑生成"}
+                            {importAiInsight ? "AI 预览重点识别前 20 条；正式后台导入时会对全量数据分批做 AI 标准化后再落库" : "AI 未成功返回时，预览按规则映射和兜底逻辑生成"}
                           </span>
 
                         </div>
