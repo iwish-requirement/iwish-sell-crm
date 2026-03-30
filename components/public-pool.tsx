@@ -149,9 +149,6 @@ const IMPORT_FALLBACK_SECONDARY_KEY = "other_event" as const
 const IMPORT_BATCH_SIZE = 200
 const IMPORT_AI_LOW_CONFIDENCE_THRESHOLD = 0.65
 const IMPORT_AI_FUNCTION_PATH = "/ai-import-mapping-proxy"
-const IMPORT_AI_PRIMARY_MODEL = process.env.NEXT_PUBLIC_OPENROUTER_MODEL ?? "google/gemini-2.5-flash-lite"
-const IMPORT_AI_FALLBACK_MODEL = process.env.NEXT_PUBLIC_OPENROUTER_FALLBACK_MODEL ?? "qwen/qwen3-235b-a22b"
-const IMPORT_AI_MAX_TOKENS = Number(process.env.NEXT_PUBLIC_OPENROUTER_MAX_TOKENS ?? "220")
 
 const IMPORT_FIELD_LABELS = {
   company: "公司名称",
@@ -225,22 +222,10 @@ function buildSupabaseFunctionUrl(path: string) {
   return `${base.replace(/\/+$/, "").replace(".supabase.co", ".functions.supabase.co")}${path}`
 }
 
-function isImportAiProviderRestriction(detail: string) {
-  const normalized = detail.toLowerCase()
-  return (
-    normalized.includes("author") ||
-    normalized.includes("provider") ||
-    normalized.includes("banned") ||
-    normalized.includes("forbidden") ||
-    normalized.includes("restricted")
-  )
-}
-
 async function callImportAiProxyDirect(input: {
   headers: string[]
   sampleRows: string[][]
   previewRows: string[][]
-  model: string
 }) {
   const anonKey = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "").trim()
   if (!anonKey) {
@@ -263,7 +248,6 @@ async function callImportAiProxyDirect(input: {
       Authorization: `Bearer ${anonKey}`,
     },
     body: JSON.stringify({
-      model: input.model,
       messages: [
         { role: "system", content: systemPrompt },
         {
@@ -276,7 +260,6 @@ async function callImportAiProxyDirect(input: {
         },
       ],
       temperature: 0,
-      max_tokens: Number.isFinite(IMPORT_AI_MAX_TOKENS) ? Math.max(128, Math.min(2048, Math.floor(IMPORT_AI_MAX_TOKENS))) : 220,
     }),
   })
 
@@ -1307,38 +1290,11 @@ export function PublicPool() {
       if (headerRow.length > 0 && sampleRows.length > 0) {
         const runAiAnalysis = async () => {
           try {
-            let aiAnalysis: ImportAiAnalysisResponse | null = null
-
-            try {
-              aiAnalysis = await callImportAiProxyDirect({
-                headers: headerRow,
-                sampleRows,
-                previewRows: previewSourceRows.slice(0, 4),
-                model: IMPORT_AI_PRIMARY_MODEL,
-              })
-            } catch (primaryErr) {
-              const primaryMessage = primaryErr instanceof Error ? primaryErr.message : String(primaryErr ?? "")
-              if (
-                IMPORT_AI_FALLBACK_MODEL &&
-                IMPORT_AI_FALLBACK_MODEL !== IMPORT_AI_PRIMARY_MODEL &&
-                primaryMessage.startsWith("llm_error:")
-              ) {
-                const [, statusText, detail = ""] = primaryMessage.split(":", 3)
-                const status = Number(statusText)
-                if (status === 403 && isImportAiProviderRestriction(detail)) {
-                  aiAnalysis = await callImportAiProxyDirect({
-                    headers: headerRow,
-                    sampleRows,
-                    previewRows: previewSourceRows.slice(0, 4),
-                    model: IMPORT_AI_FALLBACK_MODEL,
-                  })
-                } else {
-                  throw primaryErr
-                }
-              } else {
-                throw primaryErr
-              }
-            }
+            const aiAnalysis = await callImportAiProxyDirect({
+              headers: headerRow,
+              sampleRows,
+              previewRows: previewSourceRows.slice(0, 4),
+            })
 
             const resolvedAiMapping = resolveImportColumnMapping(
               headerRow,

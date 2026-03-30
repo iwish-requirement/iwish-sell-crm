@@ -16,11 +16,11 @@ const DEFAULT_OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completion
 const DEFAULT_OPENROUTER_MODEL = (
   process.env.OPENROUTER_MODEL ??
   process.env.SILICONFLOW_MODEL ??
-  "google/gemini-2.5-flash-lite"
+  "qwen/qwen3-30b-a3b"
 ).trim()
 const DEFAULT_OPENROUTER_FALLBACK_MODEL = (
   process.env.OPENROUTER_FALLBACK_MODEL ??
-  "qwen/qwen3-235b-a22b"
+  "mistralai/mistral-small-3.2-24b-instruct"
 ).trim()
 
 const DEFAULT_AI_PROXY_PATH = "/ai-import-mapping-proxy"
@@ -237,6 +237,51 @@ function isProviderRestrictionError(status: number, detail: string): boolean {
   )
 }
 
+function parseLlmErrorMessage(message: string): { status: number | null; detail: string } {
+  const prefix = "llm_error:"
+  if (!message.startsWith(prefix)) {
+    return { status: null, detail: "" }
+  }
+
+  const rest = message.slice(prefix.length)
+  const firstColonIndex = rest.indexOf(":")
+  if (firstColonIndex < 0) {
+    const status = Number(rest)
+    return { status: Number.isFinite(status) ? status : null, detail: "" }
+  }
+
+  const statusText = rest.slice(0, firstColonIndex)
+  const detail = rest.slice(firstColonIndex + 1)
+  const status = Number(statusText)
+
+  return {
+    status: Number.isFinite(status) ? status : null,
+    detail,
+  }
+}
+
+function parseStatusDetailMessage(prefix: string, message: string): { status: number | null; detail: string } {
+  if (!message.startsWith(prefix)) {
+    return { status: null, detail: "" }
+  }
+
+  const rest = message.slice(prefix.length)
+  const firstColonIndex = rest.indexOf(":")
+  if (firstColonIndex < 0) {
+    const status = Number(rest)
+    return { status: Number.isFinite(status) ? status : null, detail: "" }
+  }
+
+  const statusText = rest.slice(0, firstColonIndex)
+  const detail = rest.slice(firstColonIndex + 1)
+  const status = Number(statusText)
+
+  return {
+    status: Number.isFinite(status) ? status : null,
+    detail,
+  }
+}
+
 async function requestKieResponses(
   messages: Array<{ role: "system" | "user"; content: string }>,
   model: string,
@@ -315,8 +360,7 @@ async function getLlmJsonContent(messages: Array<{ role: "system" | "user"; cont
       DEFAULT_OPENROUTER_FALLBACK_MODEL !== selectedModel &&
       message.startsWith("llm_error:")
     ) {
-      const [, statusText, detail = ""] = message.split(":", 3)
-      const status = Number(statusText)
+      const { status, detail } = parseLlmErrorMessage(message)
       if (Number.isFinite(status) && isProviderRestrictionError(status, detail)) {
         selectedModel = DEFAULT_OPENROUTER_FALLBACK_MODEL
         console.warn("Primary OpenRouter model is restricted; retrying with fallback model", {
@@ -434,13 +478,13 @@ export async function POST(req: NextRequest) {
     console.error("/api/ai/import-mapping POST failed", err)
 
     if (message.startsWith("llm_error:")) {
-      const [, status, detail] = message.split(":", 3)
-      return NextResponse.json({ ok: false, error: "llm_error", status: Number(status), detail }, { status: 502 })
+      const { status, detail } = parseLlmErrorMessage(message)
+      return NextResponse.json({ ok: false, error: "llm_error", status, detail }, { status: 502 })
     }
 
     if (message.startsWith("llm_task_detail_error:")) {
-      const [, status, detail] = message.split(":", 3)
-      return NextResponse.json({ ok: false, error: "llm_task_detail_error", status: Number(status), detail }, { status: 502 })
+      const { status, detail } = parseStatusDetailMessage("llm_task_detail_error:", message)
+      return NextResponse.json({ ok: false, error: "llm_task_detail_error", status, detail }, { status: 502 })
     }
 
     if (message.startsWith("llm_task_failed:")) {
