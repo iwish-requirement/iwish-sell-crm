@@ -204,3 +204,42 @@
   - `OPENROUTER_MODEL=qwen/qwen3-235b-a22b`
   - `OPENROUTER_FALLBACK_MODEL=google/gemini-2.5-flash-lite`
 - Supabase Edge Function 无需修改协议代码，只要继续配置 `OPENROUTER_API_KEY` 等既有 secrets 即可。
+
+### public-pool-openrouter-speed-first-model-tuning: 公海导入 AI 改为速度优先模型与更轻量 prompt
+
+**变更点**
+- 更新 [app/api/ai/import-mapping/route.ts](/e:/iwish-sell-crm/app/api/ai/import-mapping/route.ts)：
+  - 将默认主模型调整为 `google/gemini-2.5-flash-lite`，把 `qwen/qwen3-235b-a22b` 改为备用模型，优先保证导入预检查在同步弹窗链路里的返回速度。
+  - 将默认 `OPENROUTER_MAX_TOKENS` 回退值从 `400` 进一步压缩到 `220`，减少模型输出体积。
+  - 将默认 `OPENROUTER_EDGE_TIMEOUT_MS` 回退值从 `55000ms` 调整为 `45000ms`，避免上游虽然最终返回成功，但前面的 Cloudflare/站点层已先超时断开。
+  - 将送给模型的 `sampleRows` / `previewRows` 从 `8/6` 进一步压缩为 `4/4`，降低 prompt 规模和推理延迟。
+
+**原因**
+- 实测 `qwen/qwen3-235b-a22b` 在当前导入预检查场景下，虽然能成功返回，但单次耗时接近 `45s`，已经逼近并穿透站点同步请求链路的容忍范围，最终前端仍表现为 `502`。该链路更适合“快而足够准”的模型，而不是偏重的深度推理模型。
+
+**影响**
+- 部署时建议在 Cloudflare/Next 侧显式配置：
+  - `OPENROUTER_MODEL=google/gemini-2.5-flash-lite`
+  - `OPENROUTER_FALLBACK_MODEL=qwen/qwen3-235b-a22b`
+  - `OPENROUTER_MAX_TOKENS=220`
+  - `OPENROUTER_EDGE_TIMEOUT_MS=45000`
+- Supabase Edge Function 代码仍无需修改，仅继续保留 `OPENROUTER_API_KEY`、`OPENROUTER_TIMEOUT_MS` 等 secrets。
+
+### public-pool-import-ai-background-locking: 公海导入 AI 改为后台分析并在完成前锁定导入
+
+**变更点**
+- 更新 [components/public-pool.tsx](/e:/iwish-sell-crm/components/public-pool.tsx)：
+  - 上传文件后先快速生成规则预览并展示给用户，不再同步阻塞等待站点层 `/api/ai/import-mapping` 返回。
+  - 前端改为直接调用 Supabase Edge Function `ai-import-mapping-proxy` 跑 AI 分析，绕开 `sell.iwishweb.com -> Cloudflare -> Next API` 这一层较容易出现的 502 超时瓶颈。
+  - 在 AI 分析进行中，导入按钮保持禁用，文案明确提示“等待 AI 分析完成”；只有 AI 完成或明确失败后才允许用户继续下一步。
+  - AI 成功返回后自动刷新预览和字段映射；AI 失败时保留规则兜底预览，并允许用户手动按规则导入。
+
+**原因**
+- 实测长达 40~45 秒的 AI 调用虽然在 Supabase Edge Function 侧能最终返回 200，但站点同步请求链路会先在 Cloudflare/Next 层表现为 502，导致功能卡死。改成“规则预览秒出 + AI 后台分析 + 完成前锁定导入”能同时满足可用性和业务正确性。
+
+**影响**
+- 部署时需要在 Cloudflare/Next 侧补充公开环境变量，供浏览器直连 Supabase Function 时读取：
+  - `NEXT_PUBLIC_OPENROUTER_MODEL=google/gemini-2.5-flash-lite`
+  - `NEXT_PUBLIC_OPENROUTER_FALLBACK_MODEL=qwen/qwen3-235b-a22b`
+  - `NEXT_PUBLIC_OPENROUTER_MAX_TOKENS=220`
+- Supabase Edge Function 代码仍无需修改，只需继续保留现有 OpenRouter secrets。

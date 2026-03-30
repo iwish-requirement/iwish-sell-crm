@@ -148,6 +148,10 @@ const IMPORT_SECONDARY_LABEL_TO_KEY: Record<string, string> = {
 const IMPORT_FALLBACK_SECONDARY_KEY = "other_event" as const
 const IMPORT_BATCH_SIZE = 200
 const IMPORT_AI_LOW_CONFIDENCE_THRESHOLD = 0.65
+const IMPORT_AI_FUNCTION_PATH = "/ai-import-mapping-proxy"
+const IMPORT_AI_PRIMARY_MODEL = process.env.NEXT_PUBLIC_OPENROUTER_MODEL ?? "google/gemini-2.5-flash-lite"
+const IMPORT_AI_FALLBACK_MODEL = process.env.NEXT_PUBLIC_OPENROUTER_FALLBACK_MODEL ?? "qwen/qwen3-235b-a22b"
+const IMPORT_AI_MAX_TOKENS = Number(process.env.NEXT_PUBLIC_OPENROUTER_MAX_TOKENS ?? "220")
 
 const IMPORT_FIELD_LABELS = {
   company: "公司名称",
@@ -191,6 +195,8 @@ type ImportAiInsight = {
   reviewNeededCount: number
 }
 
+type ImportAiStatus = "idle" | "processing" | "completed" | "failed"
+
 type ImportAiAnalysisResponse = {
   ok?: boolean
   error?: string
@@ -201,6 +207,91 @@ type ImportAiAnalysisResponse = {
   overallConfidence?: number | null
   summary?: string | null
   warnings?: string[]
+}
+
+function stripImportAiJsonFence(text: string) {
+  let t = text.trim()
+  if (t.startsWith("```")) {
+    t = t.replace(/^```[a-zA-Z]*\n?/, "").replace(/```$/, "").trim()
+  }
+  return t
+}
+
+function buildSupabaseFunctionUrl(path: string) {
+  const base = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").trim()
+  if (!base) {
+    throw new Error("NEXT_PUBLIC_SUPABASE_URL 未配置")
+  }
+  return `${base.replace(/\/+$/, "").replace(".supabase.co", ".functions.supabase.co")}${path}`
+}
+
+function isImportAiProviderRestriction(detail: string) {
+  const normalized = detail.toLowerCase()
+  return (
+    normalized.includes("author") ||
+    normalized.includes("provider") ||
+    normalized.includes("banned") ||
+    normalized.includes("forbidden") ||
+    normalized.includes("restricted")
+  )
+}
+
+async function callImportAiProxyDirect(input: {
+  headers: string[]
+  sampleRows: string[][]
+  previewRows: string[][]
+  model: string
+}) {
+  const anonKey = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "").trim()
+  if (!anonKey) {
+    throw new Error("NEXT_PUBLIC_SUPABASE_ANON_KEY 未配置")
+  }
+
+  const functionUrl = buildSupabaseFunctionUrl(IMPORT_AI_FUNCTION_PATH)
+  const systemPrompt =
+    "你是一个 B2B CRM 智能导入助手，负责在表头可能错误、内容可能串列、格式可能不规范的情况下，尽量把市场导入表理解为标准 CRM 线索数据。" +
+    "\n标准字段只有 7 个：company（公司名称）、website（网址）、contact（联系人）、phone（电话）、wechat（微信号）、sourceLabel（来源渠道）、budget（预算）。" +
+    "\n请优先根据整列语义、单元格内容模式和中文业务语境判断，而不是机械相信表头。" +
+    "\n请严格输出 JSON，包含 columnMapping、fieldConfidence、overallConfidence、summary、warnings、normalizedRows。" +
+    "\nnormalizedRows 中每项格式必须是：{ rowIndex, confidence, issues, normalized }，normalized 必须包含 7 个标准字段。"
+
+  const res = await fetch(functionUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: anonKey,
+      Authorization: `Bearer ${anonKey}`,
+    },
+    body: JSON.stringify({
+      model: input.model,
+      messages: [
+        { role: "system", content: systemPrompt },
+        {
+          role: "user",
+          content: "请根据下面的表结构和样本数据返回 JSON：\n" + JSON.stringify({
+            headers: input.headers,
+            sampleRows: input.sampleRows,
+            previewRows: input.previewRows,
+          }),
+        },
+      ],
+      temperature: 0,
+      max_tokens: Number.isFinite(IMPORT_AI_MAX_TOKENS) ? Math.max(128, Math.min(2048, Math.floor(IMPORT_AI_MAX_TOKENS))) : 220,
+    }),
+  })
+
+  const rawText = await res.text().catch(() => "")
+  if (!res.ok) {
+    throw new Error(`llm_error:${res.status}:${rawText.slice(0, 1000)}`)
+  }
+
+  const parsed = JSON.parse(rawText)
+  const content = parsed?.choices?.[0]?.message?.content
+  if (typeof content !== "string" || !content.trim()) {
+    throw new Error("invalid_llm_response")
+  }
+
+  return JSON.parse(stripImportAiJsonFence(content)) as ImportAiAnalysisResponse
 }
 
 
@@ -415,6 +506,7 @@ export function PublicPool() {
   const [importAiMapping, setImportAiMapping] = useState<ImportAiMapping>(null)
   const [importAiInsight, setImportAiInsight] = useState<ImportAiInsight | null>(null)
   const [importAiError, setImportAiError] = useState<string | null>(null)
+  const [importAiStatus, setImportAiStatus] = useState<ImportAiStatus>("idle")
   const [isSubmittingImport, setIsSubmittingImport] = useState(false)
 
 
@@ -1091,6 +1183,9 @@ export function PublicPool() {
     setInvalidBasicInfoCount(0)
     setImportJobId(null)
     setImportAiMapping(null)
+    setImportAiInsight(null)
+    setImportAiError(null)
+    setImportAiStatus("idle")
 
     let slowProgressTimer: ReturnType<typeof setInterval> | null = null
     let progress = 5
@@ -1155,87 +1250,22 @@ export function PublicPool() {
       const previewSourceRows = parsedResult?.previewSourceRows ?? []
       const totalCount = Number(parsedResult?.totalCount ?? 0)
 
-      let aiAnalysis: ImportAiAnalysisResponse | null = null
-      let aiFailureReason: string | null = null
-      try {
-        if (headerRow.length > 0 && sampleRows.length > 0) {
-          const controller = new AbortController()
-          const timeoutId = window.setTimeout(() => {
-            controller.abort()
-          }, 65000)
-
-
-          try {
-            const aiRes = await fetch("/api/ai/import-mapping", {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                headers: headerRow,
-                sampleRows,
-                previewRows: previewSourceRows.slice(0, 20),
-              }),
-              signal: controller.signal,
-            })
-
-            if (aiRes.ok) {
-              const aiJson = (await aiRes.json().catch(() => null)) as ImportAiAnalysisResponse | null
-              if (aiJson?.ok !== false) {
-                aiAnalysis = aiJson
-              } else {
-                aiFailureReason = aiJson?.detail || aiJson?.error || "AI 返回结果异常"
-              }
-            } else {
-              const aiJson = (await aiRes.json().catch(() => null)) as { error?: string; detail?: string; status?: number } | null
-              aiFailureReason = aiJson?.detail || aiJson?.error || `AI 服务调用失败（${aiRes.status}）`
-              console.error("/api/ai/import-mapping returned non-200 from client", aiRes.status, aiJson)
-            }
-          } finally {
-            window.clearTimeout(timeoutId)
-          }
-        }
-      } catch (aiErr) {
-        const anyErr = aiErr as any
-        if (anyErr && typeof anyErr === "object" && anyErr.name === "AbortError") {
-          aiFailureReason = "AI 服务调用超时，请稍后重试"
-        } else {
-          aiFailureReason = aiErr instanceof Error ? aiErr.message : "AI 服务调用失败"
-        }
-        console.error("Failed to call /api/ai/import-mapping from client", aiErr)
-      }
-
-
-
       const resolvedColumnMapping = resolveImportColumnMapping(
         headerRow,
         sampleRows,
-        aiAnalysis?.columnMapping ?? null,
-        { preferAi: true },
+        null,
+        { preferAi: false },
       )
       const finalImportMapping: ImportAiMapping = {
         columnMapping: resolvedColumnMapping,
-        fieldConfidence: aiAnalysis?.fieldConfidence ?? null,
-        overallConfidence: aiAnalysis?.overallConfidence ?? null,
-        summary: aiAnalysis?.summary ?? null,
-        warnings: aiAnalysis?.warnings ?? [],
+        fieldConfidence: null,
+        overallConfidence: null,
+        summary: null,
+        warnings: [],
       }
 
       const sampleSummary = summarizeImportSample(sampleRows, finalImportMapping)
-      const aiPreviewRows = Array.isArray(aiAnalysis?.normalizedRows) ? aiAnalysis.normalizedRows : []
-      const aiPreviewByIndex = new Map(aiPreviewRows.map((row) => [row.rowIndex, row]))
       const previewRows: ImportPreviewRow[] = previewSourceRows.map((row, index) => {
-        const aiRow = aiPreviewByIndex.get(index)
-        if (aiRow) {
-          return {
-            rowIndex: index,
-            values: buildImportPreviewValues(aiRow.normalized),
-            confidence: aiRow.confidence,
-            issues: aiRow.issues,
-            aiEnhanced: true,
-          }
-        }
-
         return {
           rowIndex: index,
           values: buildImportPreviewRow(row, finalImportMapping),
@@ -1245,30 +1275,15 @@ export function PublicPool() {
         }
       })
 
-      const reviewNeededCount = aiPreviewRows.filter(
-        (row) => row.issues.length > 0 || isImportConfidenceLow(row.confidence),
-      ).length
-
       setImportJobId(previewJson.jobId as string)
       setEstimatedTotalCount(totalCount)
       setDuplicatesFound(sampleSummary.duplicatesFound)
       setInvalidBasicInfoCount(sampleSummary.invalidBasicInfoCount)
       setParsedImportRows(previewRows)
       setImportAiMapping(finalImportMapping)
-      setImportAiError(aiFailureReason)
-      setImportAiInsight(
-
-        aiAnalysis
-          ? {
-              summary: aiAnalysis.summary?.trim() || null,
-              warnings: aiAnalysis.warnings ?? [],
-              overallConfidence: aiAnalysis.overallConfidence ?? null,
-              fieldConfidence: aiAnalysis.fieldConfidence ?? {},
-              aiEnhancedCount: aiPreviewRows.length,
-              reviewNeededCount,
-            }
-          : null,
-      )
+      setImportAiError(null)
+      setImportAiInsight(null)
+      setImportAiStatus(headerRow.length > 0 && sampleRows.length > 0 ? "processing" : "failed")
 
 
 
@@ -1288,6 +1303,106 @@ export function PublicPool() {
         }
         setImportProgress(finalProgress)
       }, 80)
+
+      if (headerRow.length > 0 && sampleRows.length > 0) {
+        const runAiAnalysis = async () => {
+          try {
+            let aiAnalysis: ImportAiAnalysisResponse | null = null
+
+            try {
+              aiAnalysis = await callImportAiProxyDirect({
+                headers: headerRow,
+                sampleRows,
+                previewRows: previewSourceRows.slice(0, 4),
+                model: IMPORT_AI_PRIMARY_MODEL,
+              })
+            } catch (primaryErr) {
+              const primaryMessage = primaryErr instanceof Error ? primaryErr.message : String(primaryErr ?? "")
+              if (
+                IMPORT_AI_FALLBACK_MODEL &&
+                IMPORT_AI_FALLBACK_MODEL !== IMPORT_AI_PRIMARY_MODEL &&
+                primaryMessage.startsWith("llm_error:")
+              ) {
+                const [, statusText, detail = ""] = primaryMessage.split(":", 3)
+                const status = Number(statusText)
+                if (status === 403 && isImportAiProviderRestriction(detail)) {
+                  aiAnalysis = await callImportAiProxyDirect({
+                    headers: headerRow,
+                    sampleRows,
+                    previewRows: previewSourceRows.slice(0, 4),
+                    model: IMPORT_AI_FALLBACK_MODEL,
+                  })
+                } else {
+                  throw primaryErr
+                }
+              } else {
+                throw primaryErr
+              }
+            }
+
+            const resolvedAiMapping = resolveImportColumnMapping(
+              headerRow,
+              sampleRows,
+              aiAnalysis?.columnMapping ?? null,
+              { preferAi: true },
+            )
+            const aiMapping: ImportAiMapping = {
+              columnMapping: resolvedAiMapping,
+              fieldConfidence: aiAnalysis?.fieldConfidence ?? null,
+              overallConfidence: aiAnalysis?.overallConfidence ?? null,
+              summary: aiAnalysis?.summary ?? null,
+              warnings: aiAnalysis?.warnings ?? [],
+            }
+
+            const aiPreviewRows = Array.isArray(aiAnalysis?.normalizedRows) ? aiAnalysis.normalizedRows : []
+            const aiPreviewByIndex = new Map(aiPreviewRows.map((row) => [row.rowIndex, row]))
+            const mergedPreviewRows: ImportPreviewRow[] = previewSourceRows.map((row, index) => {
+              const aiRow = aiPreviewByIndex.get(index)
+              if (aiRow) {
+                return {
+                  rowIndex: index,
+                  values: buildImportPreviewValues(aiRow.normalized),
+                  confidence: aiRow.confidence,
+                  issues: aiRow.issues,
+                  aiEnhanced: true,
+                }
+              }
+
+              return {
+                rowIndex: index,
+                values: buildImportPreviewRow(row, aiMapping),
+                confidence: null,
+                issues: [],
+                aiEnhanced: false,
+              }
+            })
+
+            const reviewNeededCount = aiPreviewRows.filter(
+              (row) => row.issues.length > 0 || isImportConfidenceLow(row.confidence),
+            ).length
+
+            setParsedImportRows(mergedPreviewRows)
+            setImportAiMapping(aiMapping)
+            setImportAiError(null)
+            setImportAiInsight({
+              summary: aiAnalysis?.summary?.trim() || null,
+              warnings: aiAnalysis?.warnings ?? [],
+              overallConfidence: aiAnalysis?.overallConfidence ?? null,
+              fieldConfidence: aiAnalysis?.fieldConfidence ?? {},
+              aiEnhancedCount: aiPreviewRows.length,
+              reviewNeededCount,
+            })
+            setImportAiStatus("completed")
+          } catch (aiErr) {
+            console.error("Failed to call ai-import-mapping-proxy directly from client", aiErr)
+            setImportAiInsight(null)
+            setImportAiError(aiErr instanceof Error ? aiErr.message : "AI 服务调用失败")
+            setImportAiStatus("failed")
+          }
+        }
+
+        void runAiAnalysis()
+      }
     } catch (err) {
       console.error("Failed to run import preview on client", err)
       toast.error("导入失败", { description: "预检查导入文件时出错，请稍后重试" })
@@ -1317,6 +1432,7 @@ export function PublicPool() {
     setImportAiMapping(null)
     setImportAiInsight(null)
     setImportAiError(null)
+    setImportAiStatus("idle")
     void callImportWorker("reset-cache").catch(() => undefined)
   }
 
@@ -1332,6 +1448,13 @@ export function PublicPool() {
   }
 
   const handleConfirmImport = async () => {
+    if (importAiStatus === "processing") {
+      toast.info("AI 正在分析表格", {
+        description: "请等待 AI 智能映射完成后再开始后台导入",
+      })
+      return
+    }
+
     const supabase = getBrowserSupabaseClient()
 
     try {
@@ -2373,7 +2496,9 @@ export function PublicPool() {
                       {importStage === "uploading" && "正在上传文件并准备 AI 分析..."}
                       {importStage === "checking" && "AI 正在理解表格结构并检查冲突..."}
                       {importStage === "complete" &&
-                        (importAiInsight
+                        (importAiStatus === "processing"
+                          ? "规则预览已生成，AI 正在后台分析，完成后才可开始导入"
+                          : importAiInsight
                           ? "AI 预检查完成，导入过程将在后台执行"
                           : importAiError
                             ? "AI 调用失败，当前展示规则兜底预览"
@@ -2441,6 +2566,17 @@ export function PublicPool() {
                             ))}
                           </div>
                         )}
+                      </div>
+                    )}
+                    {importAiStatus === "processing" && (
+                      <div className="flex items-start gap-2 p-3 bg-blue-50 text-blue-900 rounded-lg border border-blue-200">
+                        <Clock className="w-5 h-5 mt-0.5" />
+                        <div className="text-sm">
+                          <div className="font-medium">AI 正在后台分析表格</div>
+                          <div className="text-blue-800/90">
+                            当前先展示规则预览，开始后台导入按钮会在 AI 分析完成后自动解锁。
+                          </div>
+                        </div>
                       </div>
                     )}
                     {!importAiInsight && importAiError && (
@@ -2556,10 +2692,16 @@ export function PublicPool() {
               取消
             </Button>
             <Button
-              disabled={importStage !== "complete" || isSubmittingImport}
+              disabled={importStage !== "complete" || isSubmittingImport || importAiStatus === "processing"}
               onClick={handleConfirmImport}
             >
-              {isSubmittingImport ? "后台导入中..." : importStage === "complete" ? "开始后台导入" : "开始导入"}
+              {isSubmittingImport
+                ? "后台导入中..."
+                : importAiStatus === "processing"
+                  ? "等待 AI 分析完成..."
+                  : importStage === "complete"
+                    ? "开始后台导入"
+                    : "开始导入"}
 
             </Button>
           </DialogFooter>

@@ -16,11 +16,11 @@ const DEFAULT_OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completion
 const DEFAULT_OPENROUTER_MODEL = (
   process.env.OPENROUTER_MODEL ??
   process.env.SILICONFLOW_MODEL ??
-  "qwen/qwen3-235b-a22b"
+  "google/gemini-2.5-flash-lite"
 ).trim()
 const DEFAULT_OPENROUTER_FALLBACK_MODEL = (
   process.env.OPENROUTER_FALLBACK_MODEL ??
-  "google/gemini-2.5-flash-lite"
+  "qwen/qwen3-235b-a22b"
 ).trim()
 
 const DEFAULT_AI_PROXY_PATH = "/ai-import-mapping-proxy"
@@ -243,10 +243,10 @@ async function requestKieResponses(
 ) {
   const supabaseAnonKey = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? process.env.SUPABASE_ANON_KEY ?? "").trim()
   const maxTokensEnv = (process.env.OPENROUTER_MAX_TOKENS ?? process.env.SILICONFLOW_MAX_TOKENS ?? "").trim()
-  const maxTokens = maxTokensEnv && Number.isFinite(Number(maxTokensEnv)) ? Math.max(128, Math.min(4096, Math.floor(Number(maxTokensEnv)))) : 400
+  const maxTokens = maxTokensEnv && Number.isFinite(Number(maxTokensEnv)) ? Math.max(128, Math.min(2048, Math.floor(Number(maxTokensEnv)))) : 220
 
   const timeoutMsEnv = (process.env.OPENROUTER_EDGE_TIMEOUT_MS ?? process.env.SILICONFLOW_EDGE_TIMEOUT_MS ?? "").trim()
-  const timeoutMs = timeoutMsEnv && Number.isFinite(Number(timeoutMsEnv)) ? Math.max(5000, Math.min(60000, Math.floor(Number(timeoutMsEnv)))) : 55000
+  const timeoutMs = timeoutMsEnv && Number.isFinite(Number(timeoutMsEnv)) ? Math.max(5000, Math.min(50000, Math.floor(Number(timeoutMsEnv)))) : 45000
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
 
@@ -381,8 +381,8 @@ export async function POST(req: NextRequest) {
 
     // Fewer rows are enough for column inference and significantly reduce
     // prompt size, which lowers timeout risk on the upstream AI provider.
-    const limitedSample = rowsValues.slice(0, 8)
-    const limitedPreview = previewValues.slice(0, 6)
+    const limitedSample = rowsValues.slice(0, 4)
+    const limitedPreview = previewValues.slice(0, 4)
 
     const systemPrompt =
       "你是一个 B2B CRM 智能导入助手，负责在表头可能错误、内容可能串列、格式可能不规范的情况下，尽量把市场导入表理解为标准 CRM 线索数据。" +
