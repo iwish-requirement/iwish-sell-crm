@@ -16,7 +16,11 @@ const DEFAULT_OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completion
 const DEFAULT_OPENROUTER_MODEL = (
   process.env.OPENROUTER_MODEL ??
   process.env.SILICONFLOW_MODEL ??
-  "openai/gpt-5-mini"
+  "qwen/qwen3-235b-a22b"
+).trim()
+const DEFAULT_OPENROUTER_FALLBACK_MODEL = (
+  process.env.OPENROUTER_FALLBACK_MODEL ??
+  "google/gemini-2.5-flash-lite"
 ).trim()
 
 const DEFAULT_AI_PROXY_PATH = "/ai-import-mapping-proxy"
@@ -218,8 +222,24 @@ function extractKieTextContent(payload: Record<string, any>): string | null {
   return typeof payload?.output_text === "string" && payload.output_text.trim() ? payload.output_text : null
 }
 
+function isProviderRestrictionError(status: number, detail: string): boolean {
+  if (status !== 403) {
+    return false
+  }
+
+  const normalized = detail.toLowerCase()
+  return (
+    normalized.includes("author") ||
+    normalized.includes("provider") ||
+    normalized.includes("banned") ||
+    normalized.includes("forbidden") ||
+    normalized.includes("restricted")
+  )
+}
+
 async function requestKieResponses(
   messages: Array<{ role: "system" | "user"; content: string }>,
+  model: string,
 ) {
   const supabaseAnonKey = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? process.env.SUPABASE_ANON_KEY ?? "").trim()
   const maxTokensEnv = (process.env.OPENROUTER_MAX_TOKENS ?? process.env.SILICONFLOW_MAX_TOKENS ?? "").trim()
@@ -244,7 +264,7 @@ async function requestKieResponses(
           : {}),
       },
       body: JSON.stringify({
-        model: DEFAULT_OPENROUTER_MODEL,
+        model,
         messages,
         temperature: 0,
         max_tokens: maxTokens,
@@ -282,7 +302,38 @@ async function requestKieResponses(
 
 
 async function getLlmJsonContent(messages: Array<{ role: "system" | "user"; content: string }>) {
-  const { rawText } = await requestKieResponses(messages)
+  let rawText = ""
+  let selectedModel = DEFAULT_OPENROUTER_MODEL
+
+  try {
+    const response = await requestKieResponses(messages, selectedModel)
+    rawText = response.rawText
+  } catch (err: any) {
+    const message = String(err?.message ?? "")
+    if (
+      DEFAULT_OPENROUTER_FALLBACK_MODEL &&
+      DEFAULT_OPENROUTER_FALLBACK_MODEL !== selectedModel &&
+      message.startsWith("llm_error:")
+    ) {
+      const [, statusText, detail = ""] = message.split(":", 3)
+      const status = Number(statusText)
+      if (Number.isFinite(status) && isProviderRestrictionError(status, detail)) {
+        selectedModel = DEFAULT_OPENROUTER_FALLBACK_MODEL
+        console.warn("Primary OpenRouter model is restricted; retrying with fallback model", {
+          primaryModel: DEFAULT_OPENROUTER_MODEL,
+          fallbackModel: DEFAULT_OPENROUTER_FALLBACK_MODEL,
+          status,
+          detail,
+        })
+        const response = await requestKieResponses(messages, selectedModel)
+        rawText = response.rawText
+      } else {
+        throw err
+      }
+    } else {
+      throw err
+    }
+  }
 
 
   if (!rawText.trim()) {

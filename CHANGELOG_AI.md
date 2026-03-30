@@ -187,3 +187,20 @@
 **影响**
 - `/api/ai/import-mapping` 的请求/响应结构保持不变，前端导入弹窗与后台导入流程不需要联动修改。
 - 部署时建议在 Supabase Edge Function 配置 `OPENROUTER_API_KEY`，可选再补充 `OPENROUTER_API_URL`、`OPENROUTER_TIMEOUT_MS`、`OPENROUTER_APP_NAME`、`OPENROUTER_SITE_URL`；Next 侧可选配置 `OPENROUTER_MODEL`、`OPENROUTER_MAX_TOKENS`、`OPENROUTER_EDGE_TIMEOUT_MS`。
+
+### public-pool-openrouter-qwen-default-and-fallback: 公海导入 AI 默认模型切到 Qwen 并增加 OpenRouter 受限兜底
+
+**变更点**
+- 更新 [app/api/ai/import-mapping/route.ts](/e:/iwish-sell-crm/app/api/ai/import-mapping/route.ts)：
+  - 将默认 `OPENROUTER_MODEL` 回退值从 `openai/gpt-5-mini` 调整为 `qwen/qwen3-235b-a22b`，更贴合当前账号可用性和中文导入识别场景。
+  - 新增 `OPENROUTER_FALLBACK_MODEL` 支持，默认回退到 `google/gemini-2.5-flash-lite`。
+  - 当 OpenRouter 返回 `403` 且错误内容包含 `author/provider banned/restricted` 等限制信号时，服务端会自动改用备用模型重试一次，减少导入预检查直接失败的概率。
+
+**原因**
+- 实际联调发现当前 OpenRouter 账号对 `openai/*` 作者存在限制，导致公海池导入在默认模型为 OpenAI 系列时会稳定返回 `403 Author openai is banned`。与其继续依赖账号不稳定的作者访问权限，不如直接切到更适合中文表格语义识别的 Qwen，并在供应商受限时自动降级。
+
+**影响**
+- 部署时建议在 Cloudflare/Next 侧显式配置：
+  - `OPENROUTER_MODEL=qwen/qwen3-235b-a22b`
+  - `OPENROUTER_FALLBACK_MODEL=google/gemini-2.5-flash-lite`
+- Supabase Edge Function 无需修改协议代码，只要继续配置 `OPENROUTER_API_KEY` 等既有 secrets 即可。
