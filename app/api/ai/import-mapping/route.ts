@@ -60,13 +60,81 @@ function extractJsonObject(text: string): string {
   return text
 }
 
+function repairJsonText(text: string): string {
+  const source = extractJsonObject(stripJsonFence(text))
+  let result = ""
+  let inString = false
+  let escaping = false
+
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index]
+
+    if (escaping) {
+      result += char
+      escaping = false
+      continue
+    }
+
+    if (char === "\\") {
+      result += char
+      escaping = true
+      continue
+    }
+
+    if (char === "\"") {
+      if (!inString) {
+        inString = true
+        result += char
+        continue
+      }
+
+      let nextIndex = index + 1
+      while (nextIndex < source.length && /\s/.test(source[nextIndex])) {
+        nextIndex += 1
+      }
+      const nextChar = source[nextIndex] ?? ""
+
+      if (nextChar === "," || nextChar === "}" || nextChar === "]" || nextChar === ":") {
+        inString = false
+        result += char
+      } else {
+        result += "\\\""
+      }
+      continue
+    }
+
+    if (inString) {
+      if (char === "\n") {
+        result += "\\n"
+        continue
+      }
+      if (char === "\r") {
+        result += "\\r"
+        continue
+      }
+      if (char === "\t") {
+        result += "\\t"
+        continue
+      }
+    }
+
+    result += char
+  }
+
+  return result.replace(/,\s*([}\]])/g, "$1")
+}
+
 function parseJsonContent(text: string): Record<string, unknown> {
   const normalized = stripJsonFence(text)
   try {
     return JSON.parse(normalized) as Record<string, unknown>
   } catch {
     const extracted = extractJsonObject(normalized)
-    return JSON.parse(extracted) as Record<string, unknown>
+    try {
+      return JSON.parse(extracted) as Record<string, unknown>
+    } catch {
+      return JSON.parse(repairJsonText(extracted)) as Record<string, unknown>
+    }
   }
 }
 
