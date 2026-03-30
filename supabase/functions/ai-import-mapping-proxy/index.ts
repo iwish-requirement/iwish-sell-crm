@@ -1,6 +1,11 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 
 const DEFAULT_OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+}
 
 function getUpstreamTimeoutMs(): number {
   const raw = (Deno.env.get("OPENROUTER_TIMEOUT_MS") ?? Deno.env.get("SILICONFLOW_TIMEOUT_MS") ?? "").trim()
@@ -32,8 +37,18 @@ function getOpenRouterAppName(): string | null {
 }
 
 serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response("ok", {
+      status: 200,
+      headers: CORS_HEADERS,
+    })
+  }
+
   if (req.method !== "POST") {
-    return new Response("Method Not Allowed", { status: 405 })
+    return new Response("Method Not Allowed", {
+      status: 405,
+      headers: CORS_HEADERS,
+    })
   }
 
   try {
@@ -50,7 +65,7 @@ serve(async (req) => {
         }),
         {
           status: 500,
-          headers: { "content-type": "application/json" },
+          headers: { ...CORS_HEADERS, "content-type": "application/json" },
         },
       )
     }
@@ -105,14 +120,14 @@ serve(async (req) => {
         console.error("ai-import-mapping-proxy upstream timeout", { upstreamUrl, timeoutMs, elapsedMs: Date.now() - startedAt })
         return new Response(JSON.stringify({ ok: false, error: "upstream_timeout", detail: `Upstream timed out after ${timeoutMs}ms` }), {
           status: 504,
-          headers: { "content-type": "application/json" },
+          headers: { ...CORS_HEADERS, "content-type": "application/json" },
         })
       }
 
       console.error("ai-import-mapping-proxy upstream fetch failed", { upstreamUrl, elapsedMs: Date.now() - startedAt, detail: String(err?.message ?? "") })
       return new Response(JSON.stringify({ ok: false, error: "upstream_fetch_failed", detail: String(err?.message ?? "") }), {
         status: 502,
-        headers: { "content-type": "application/json" },
+        headers: { ...CORS_HEADERS, "content-type": "application/json" },
       })
     } finally {
       clearTimeout(timeoutId)
@@ -121,6 +136,9 @@ serve(async (req) => {
     const rawText = await llmRes.text()
 
     const headers = new Headers()
+    headers.set("Access-Control-Allow-Origin", CORS_HEADERS["Access-Control-Allow-Origin"])
+    headers.set("Access-Control-Allow-Headers", CORS_HEADERS["Access-Control-Allow-Headers"])
+    headers.set("Access-Control-Allow-Methods", CORS_HEADERS["Access-Control-Allow-Methods"])
     headers.set("content-type", llmRes.headers.get("content-type") ?? "application/json")
     const traceId = llmRes.headers.get("x-request-id") ?? llmRes.headers.get("openrouter-generation-id")
     if (traceId) {
@@ -165,7 +183,7 @@ serve(async (req) => {
       JSON.stringify({ ok: false, error: "unexpected", detail: String(err?.message ?? "") }),
       {
         status: 500,
-        headers: { "content-type": "application/json" },
+        headers: { ...CORS_HEADERS, "content-type": "application/json" },
       },
     )
   }
