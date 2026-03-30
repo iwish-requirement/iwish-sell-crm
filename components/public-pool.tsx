@@ -347,6 +347,8 @@ async function callImportAiProxyDirect(input: {
   }
 
   const functionUrl = buildSupabaseFunctionUrl(IMPORT_AI_FUNCTION_PATH)
+  const limitedSampleRows = input.sampleRows.slice(0, 4)
+  const limitedPreviewRows = input.previewRows.slice(0, 4)
   const systemPrompt =
     "你是一个 B2B CRM 智能导入助手，负责在表头可能错误、内容可能串列、格式可能不规范的情况下，尽量把市场导入表理解为标准 CRM 线索数据。" +
     "\n标准字段只有 7 个：company（公司名称）、website（网址）、contact（联系人）、phone（电话）、wechat（微信号）、sourceLabel（来源渠道）、budget（预算）。" +
@@ -368,8 +370,8 @@ async function callImportAiProxyDirect(input: {
           role: "user",
           content: "请根据下面的表结构和样本数据返回 JSON：\n" + JSON.stringify({
             headers: input.headers,
-            sampleRows: input.sampleRows,
-            previewRows: input.previewRows,
+            sampleRows: limitedSampleRows,
+            previewRows: limitedPreviewRows,
             allowedSourceGroups: input.sourceGroups ?? [],
           }),
         },
