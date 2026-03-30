@@ -1,6 +1,8 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 
 const DEFAULT_OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+const DEFAULT_OPENROUTER_MODEL = (Deno.env.get("OPENROUTER_MODEL") ?? Deno.env.get("SILICONFLOW_MODEL") ?? "qwen/qwen3-30b-a3b").trim()
+const DEFAULT_OPENROUTER_FALLBACK_MODEL = (Deno.env.get("OPENROUTER_FALLBACK_MODEL") ?? "mistralai/mistral-small-3.2-24b-instruct").trim()
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -8,12 +10,26 @@ const CORS_HEADERS = {
 }
 
 function getUpstreamTimeoutMs(): number {
-  const raw = (Deno.env.get("OPENROUTER_TIMEOUT_MS") ?? Deno.env.get("SILICONFLOW_TIMEOUT_MS") ?? "").trim()
+  const raw = (
+    Deno.env.get("OPENROUTER_TIMEOUT_MS") ??
+    Deno.env.get("OPENROUTER_EDGE_TIMEOUT_MS") ??
+    Deno.env.get("SILICONFLOW_TIMEOUT_MS") ??
+    ""
+  ).trim()
   const parsed = raw ? Number(raw) : NaN
   if (Number.isFinite(parsed)) {
     return Math.max(5000, Math.min(60000, Math.floor(parsed)))
   }
   return 55000
+}
+
+function getMaxTokens(): number {
+  const raw = (Deno.env.get("OPENROUTER_MAX_TOKENS") ?? Deno.env.get("SILICONFLOW_MAX_TOKENS") ?? "").trim()
+  const parsed = raw ? Number(raw) : NaN
+  if (Number.isFinite(parsed)) {
+    return Math.max(128, Math.min(2048, Math.floor(parsed)))
+  }
+  return 220
 }
 
 function getOpenRouterApiUrl(): string {
@@ -34,6 +50,42 @@ function getOpenRouterSiteUrl(): string | null {
 function getOpenRouterAppName(): string | null {
   const raw = (Deno.env.get("OPENROUTER_APP_NAME") ?? Deno.env.get("APP_NAME") ?? "iwish-sell-crm").trim()
   return raw.length > 0 ? raw : null
+}
+
+function isProviderRestriction(status: number, detail: string): boolean {
+  if (status !== 403) {
+    return false
+  }
+
+  const normalized = detail.toLowerCase()
+  return (
+    normalized.includes("author") ||
+    normalized.includes("provider") ||
+    normalized.includes("banned") ||
+    normalized.includes("forbidden") ||
+    normalized.includes("restricted")
+  )
+}
+
+async function requestOpenRouter(params: {
+  upstreamUrl: string
+  upstreamHeaders: Record<string, string>
+  upstreamBody: string
+  timeoutMs: number
+}) {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), params.timeoutMs)
+
+  try {
+    return await fetch(params.upstreamUrl, {
+      method: "POST",
+      headers: params.upstreamHeaders,
+      body: params.upstreamBody,
+      signal: controller.signal,
+    })
+  } finally {
+    clearTimeout(timeoutId)
+  }
 }
 
 serve(async (req) => {
@@ -70,7 +122,28 @@ serve(async (req) => {
       )
     }
 
-    const upstreamBody = await req.text()
+    const rawBody = await req.text()
+    let requestPayload: Record<string, unknown>
+    try {
+      requestPayload = JSON.parse(rawBody) as Record<string, unknown>
+    } catch {
+      return new Response(JSON.stringify({ ok: false, error: "invalid_json_body" }), {
+        status: 400,
+        headers: { ...CORS_HEADERS, "content-type": "application/json" },
+      })
+    }
+
+    const selectedModel =
+      typeof requestPayload.model === "string" && requestPayload.model.trim()
+        ? requestPayload.model.trim()
+        : DEFAULT_OPENROUTER_MODEL
+
+    if (!("max_tokens" in requestPayload)) {
+      requestPayload.max_tokens = getMaxTokens()
+    }
+
+    requestPayload.model = selectedModel
+    let upstreamBody = JSON.stringify(requestPayload)
 
     const upstreamHeaders: Record<string, string> = {
       Authorization: `Bearer ${apiKey}`,
@@ -87,32 +160,21 @@ serve(async (req) => {
       upstreamHeaders["X-Title"] = appName
     }
 
-    let model = ""
-    try {
-      const parsed = JSON.parse(upstreamBody) as any
-      if (parsed && typeof parsed === "object" && typeof parsed.model === "string") {
-        model = parsed.model
-      }
-    } catch {
-    }
-
     console.info("ai-import-mapping-proxy request start", {
       upstreamUrl,
       timeoutMs,
-      hasModel: Boolean(model),
-      model: model || undefined,
+      hasModel: true,
+      model: selectedModel || undefined,
+      fallbackModel: DEFAULT_OPENROUTER_FALLBACK_MODEL || undefined,
     })
-
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
 
     let llmRes: Response
     try {
-      llmRes = await fetch(upstreamUrl, {
-        method: "POST",
-        headers: upstreamHeaders,
-        body: upstreamBody,
-        signal: controller.signal,
+      llmRes = await requestOpenRouter({
+        upstreamUrl,
+        upstreamHeaders,
+        upstreamBody,
+        timeoutMs,
       })
     } catch (err: any) {
       const name = typeof err?.name === "string" ? err.name : ""
@@ -129,11 +191,61 @@ serve(async (req) => {
         status: 502,
         headers: { ...CORS_HEADERS, "content-type": "application/json" },
       })
-    } finally {
-      clearTimeout(timeoutId)
     }
 
-    const rawText = await llmRes.text()
+    let rawText = await llmRes.text()
+    let finalModel = selectedModel
+
+    if (
+      !llmRes.ok &&
+      DEFAULT_OPENROUTER_FALLBACK_MODEL &&
+      DEFAULT_OPENROUTER_FALLBACK_MODEL !== selectedModel &&
+      isProviderRestriction(llmRes.status, rawText)
+    ) {
+      requestPayload.model = DEFAULT_OPENROUTER_FALLBACK_MODEL
+      upstreamBody = JSON.stringify(requestPayload)
+      finalModel = DEFAULT_OPENROUTER_FALLBACK_MODEL
+
+      console.warn("ai-import-mapping-proxy primary model restricted; retrying fallback", {
+        primaryModel: selectedModel,
+        fallbackModel: DEFAULT_OPENROUTER_FALLBACK_MODEL,
+        status: llmRes.status,
+        detail: rawText.slice(0, 400),
+      })
+
+      try {
+        llmRes = await requestOpenRouter({
+          upstreamUrl,
+          upstreamHeaders,
+          upstreamBody,
+          timeoutMs,
+        })
+        rawText = await llmRes.text()
+      } catch (err: any) {
+        const name = typeof err?.name === "string" ? err.name : ""
+        if (name === "AbortError") {
+          console.error("ai-import-mapping-proxy fallback upstream timeout", {
+            upstreamUrl,
+            timeoutMs,
+            elapsedMs: Date.now() - startedAt,
+          })
+          return new Response(JSON.stringify({ ok: false, error: "upstream_timeout", detail: `Upstream timed out after ${timeoutMs}ms` }), {
+            status: 504,
+            headers: { ...CORS_HEADERS, "content-type": "application/json" },
+          })
+        }
+
+        console.error("ai-import-mapping-proxy fallback upstream fetch failed", {
+          upstreamUrl,
+          elapsedMs: Date.now() - startedAt,
+          detail: String(err?.message ?? ""),
+        })
+        return new Response(JSON.stringify({ ok: false, error: "upstream_fetch_failed", detail: String(err?.message ?? "") }), {
+          status: 502,
+          headers: { ...CORS_HEADERS, "content-type": "application/json" },
+        })
+      }
+    }
 
     const headers = new Headers()
     headers.set("Access-Control-Allow-Origin", CORS_HEADERS["Access-Control-Allow-Origin"])
@@ -170,6 +282,7 @@ serve(async (req) => {
     console.info("ai-import-mapping-proxy request done", {
       status: llmRes.status,
       elapsedMs: Date.now() - startedAt,
+      model: finalModel,
       traceId: traceId || undefined,
     })
 
