@@ -451,7 +451,7 @@ async function getLlmJsonContent(messages: Array<{ role: "system" | "user"; cont
       message.startsWith("llm_error:")
     ) {
       const { status, detail } = parseLlmErrorMessage(message)
-      if (Number.isFinite(status) && isProviderRestrictionError(status, detail)) {
+      if (typeof status === "number" && Number.isFinite(status) && isProviderRestrictionError(status, detail)) {
         selectedModel = DEFAULT_OPENROUTER_FALLBACK_MODEL
         console.warn("Primary OpenRouter model is restricted; retrying with fallback model", {
           primaryModel: DEFAULT_OPENROUTER_MODEL,
@@ -504,6 +504,7 @@ export async function POST(req: NextRequest) {
     const headers = (body?.headers ?? []) as unknown
     const sampleRows = (body?.sampleRows ?? []) as unknown
     const previewRows = (body?.previewRows ?? body?.sampleRows ?? []) as unknown
+    const sourceGroups = body?.sourceGroups ?? []
 
     if (!Array.isArray(headers) || headers.length === 0 || !Array.isArray(sampleRows) || !Array.isArray(previewRows)) {
       return NextResponse.json({ ok: false, error: "invalid_payload" }, { status: 400 })
@@ -532,6 +533,7 @@ export async function POST(req: NextRequest) {
       headers: headerValues,
       sampleRows: limitedSample,
       previewRows: limitedPreview,
+      sourceGroups,
     }
 
     const parsed = await getLlmJsonContent([

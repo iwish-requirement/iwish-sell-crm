@@ -153,8 +153,6 @@ const IMPORT_SECONDARY_LABEL_TO_KEY: Record<string, string> = {
 const IMPORT_FALLBACK_SECONDARY_KEY = "other_event" as const
 const IMPORT_BATCH_SIZE = 200
 const IMPORT_AI_LOW_CONFIDENCE_THRESHOLD = 0.65
-const IMPORT_AI_FUNCTION_PATH = "/ai-import-mapping-proxy"
-const IMPORT_AI_PREVIEW_MAX_TOKENS = 1400
 
 const IMPORT_FIELD_LABELS = {
   company: "公司名称",
@@ -176,7 +174,7 @@ type ImportWorkerParseResult = {
 }
 
 type ImportWorkerBuildPayloadsResult = {
-  payloads: Record<string, unknown>[]
+  reviewRows: ImportReviewDraftRow[]
   invalidBasicInfoCount: number
   totalCount: number
 }
@@ -191,6 +189,22 @@ type ImportPreviewRow = {
   confidence: number | null
   issues: string[]
   aiEnhanced: boolean
+}
+
+type ImportReviewDraftRow = {
+  rowIndex: number
+  company: string
+  website: string
+  contact: string
+  phone: string
+  wechat: string
+  sourceLabel: string
+  sourceKey: string
+  budget: string
+  confidence: number | null
+  issues: string[]
+  aiEnhanced: boolean
+  canImport: boolean
 }
 
 type ImportAiInsight = {
@@ -311,58 +325,22 @@ function parseImportAiJsonContent(text: string): ImportAiAnalysisResponse {
   }
 }
 
-function buildSupabaseFunctionUrl(path: string) {
-  const base = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").trim()
-  if (!base) {
-    throw new Error("NEXT_PUBLIC_SUPABASE_URL 未配置")
-  }
-  return `${base.replace(/\/+$/, "").replace(".supabase.co", ".functions.supabase.co")}${path}`
-}
-
 async function callImportAiProxyDirect(input: {
   headers: string[]
   sampleRows: string[][]
   previewRows: string[][]
   sourceGroups?: ImportSourceGroupOption[]
 }) {
-  const anonKey = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "").trim()
-  if (!anonKey) {
-    throw new Error("NEXT_PUBLIC_SUPABASE_ANON_KEY 未配置")
-  }
-
-  const functionUrl = buildSupabaseFunctionUrl(IMPORT_AI_FUNCTION_PATH)
-  const systemPrompt =
-    "你是一个 B2B CRM 智能导入助手，负责在表头可能错误、内容可能串列、格式可能不规范的情况下，尽量把市场导入表理解为标准 CRM 线索数据。" +
-    "\n标准字段只有 7 个：company（公司名称）、website（网址）、contact（联系人）、phone（电话）、wechat（微信号）、sourceLabel（来源渠道）、budget（预算）。" +
-    "\n请优先根据整列语义、单元格内容模式和中文业务语境判断，而不是机械相信表头。" +
-    "\n请严格输出 JSON，包含 columnMapping、fieldConfidence、overallConfidence、summary、warnings、normalizedRows。" +
-    "\nnormalizedRows 中每项格式必须是：{ rowIndex, confidence, issues, normalized }，normalized 必须包含 7 个标准字段。"
-
-  const res = await fetch(functionUrl, {
+  const res = await fetch("/api/ai/import-mapping", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      apikey: anonKey,
-      Authorization: `Bearer ${anonKey}`,
     },
     body: JSON.stringify({
-      messages: [
-        { role: "system", content: systemPrompt },
-        {
-          role: "user",
-          content: "请根据下面的表结构和样本数据返回 JSON：\n" + JSON.stringify({
-            headers: input.headers,
-            sampleRows: input.sampleRows,
-            previewRows: input.previewRows,
-            allowedSourceGroups: input.sourceGroups ?? [],
-          }),
-        },
-      ],
-      response_format: {
-        type: "json_object",
-      },
-      temperature: 0,
-      max_tokens: IMPORT_AI_PREVIEW_MAX_TOKENS,
+      headers: input.headers,
+      sampleRows: input.sampleRows,
+      previewRows: input.previewRows,
+      sourceGroups: input.sourceGroups ?? [],
     }),
   })
 
@@ -372,12 +350,11 @@ async function callImportAiProxyDirect(input: {
   }
 
   const parsed = parseImportAiJsonContent(rawText)
-  const content = parsed?.choices?.[0]?.message?.content
-  if (typeof content !== "string" || !content.trim()) {
-    throw new Error("invalid_llm_response")
+  if (!parsed || parsed.ok === false) {
+    throw new Error(String(parsed?.detail || parsed?.error || "invalid_llm_response"))
   }
 
-  return parseImportAiJsonContent(content)
+  return parsed
 }
 
 
@@ -590,12 +567,64 @@ export function PublicPool() {
   const [importAiError, setImportAiError] = useState<string | null>(null)
   const [importAiStatus, setImportAiStatus] = useState<ImportAiStatus>("idle")
   const [isSubmittingImport, setIsSubmittingImport] = useState(false)
+  const [importSourceGroups, setImportSourceGroups] = useState<ImportSourceGroupOption[]>([])
+  const [importReviewRows, setImportReviewRows] = useState<ImportReviewDraftRow[] | null>(null)
+  const [isPreparingImportReview, setIsPreparingImportReview] = useState(false)
+  const [showOnlyReviewFocusRows, setShowOnlyReviewFocusRows] = useState(true)
 
 
   const importPreviewRows = useMemo(
     () => (parsedImportRows ? parsedImportRows.slice(0, 50) : []),
     [parsedImportRows],
   )
+
+  const importSourceOptions = useMemo(
+    () => importSourceGroups.flatMap((group) => group.children.map((child) => ({ ...child, groupLabel: group.label }))),
+    [importSourceGroups],
+  )
+
+  const isReviewFocusRow = useCallback(
+    (row: ImportReviewDraftRow) => !row.canImport || isImportConfidenceLow(row.confidence) || row.issues.length > 0,
+    [],
+  )
+
+  const importReviewSummary = useMemo(() => {
+    const rows = importReviewRows ?? []
+    const selectedRows = rows.filter((row) => row.canImport)
+    const lowConfidenceCount = rows.filter((row) => isImportConfidenceLow(row.confidence)).length
+    const issueCount = rows.filter((row) => row.issues.length > 0).length
+    const focusCount = rows.filter((row) => isReviewFocusRow(row)).length
+    return {
+      totalCount: rows.length,
+      selectedCount: selectedRows.length,
+      skippedCount: rows.length - selectedRows.length,
+      lowConfidenceCount,
+      issueCount,
+      focusCount,
+    }
+  }, [importReviewRows, isReviewFocusRow])
+
+  const sortedImportReviewRows = useMemo(() => {
+    const rows = [...(importReviewRows ?? [])]
+    const getPriority = (row: ImportReviewDraftRow) => {
+      if (!row.canImport) return 0
+      if (row.issues.length > 0) return 1
+      if (isImportConfidenceLow(row.confidence)) return 2
+      return 3
+    }
+    return rows.sort((a, b) => {
+      const priorityDiff = getPriority(a) - getPriority(b)
+      if (priorityDiff !== 0) return priorityDiff
+      return a.rowIndex - b.rowIndex
+    })
+  }, [importReviewRows])
+
+  const visibleImportReviewRows = useMemo(() => {
+    if (!showOnlyReviewFocusRows) {
+      return sortedImportReviewRows
+    }
+    return sortedImportReviewRows.filter((row) => isReviewFocusRow(row))
+  }, [showOnlyReviewFocusRows, sortedImportReviewRows, isReviewFocusRow])
 
 
   useEffect(() => {
@@ -1357,6 +1386,7 @@ export function PublicPool() {
 
         const sourceGroupsValue = (sourceGroupsSetting?.value as ImportSourceGroupsResponse | null)?.groups ?? []
         previewSourceGroups = sanitizeImportSourceGroups(sourceGroupsValue)
+        setImportSourceGroups(previewSourceGroups)
       } catch (sourceGroupErr) {
         console.error("Failed to load company resource source groups for import preview", sourceGroupErr)
       }
@@ -1476,7 +1506,7 @@ export function PublicPool() {
             })
             setImportAiStatus("completed")
           } catch (aiErr) {
-            console.error("Failed to call ai-import-mapping-proxy directly from client", aiErr)
+            console.error("Failed to call /api/ai/import-mapping for import preview", aiErr)
             setImportAiInsight(null)
             setImportAiError(aiErr instanceof Error ? aiErr.message : "AI 服务调用失败")
             setImportAiStatus("failed")
@@ -1515,6 +1545,10 @@ export function PublicPool() {
     setImportAiInsight(null)
     setImportAiError(null)
     setImportAiStatus("idle")
+    setImportSourceGroups([])
+    setImportReviewRows(null)
+    setIsPreparingImportReview(false)
+    setShowOnlyReviewFocusRows(true)
     void callImportWorker("reset-cache").catch(() => undefined)
   }
 
@@ -1529,10 +1563,73 @@ export function PublicPool() {
     setTimeout(resetImport, 300)
   }
 
+  const updateImportReviewRow = useCallback((rowIndex: number, patch: Partial<ImportReviewDraftRow>) => {
+    setImportReviewRows((current) =>
+      (current ?? []).map((row) => {
+        if (row.rowIndex !== rowIndex) return row
+        const nextRow = { ...row, ...patch }
+        const hasIdentity = Boolean((nextRow.company || nextRow.website).trim())
+        const hasContact = Boolean((nextRow.phone || nextRow.wechat).trim())
+        const hasSource = Boolean(nextRow.sourceKey.trim() && nextRow.sourceLabel.trim())
+        return {
+          ...nextRow,
+          canImport: patch.canImport ?? (hasIdentity && hasContact && hasSource),
+        }
+      }),
+    )
+  }, [])
+
+  const updateImportReviewRows = useCallback((predicate: (row: ImportReviewDraftRow) => boolean, canImport: boolean) => {
+    setImportReviewRows((current) =>
+      (current ?? []).map((row) => (predicate(row) ? { ...row, canImport } : row)),
+    )
+  }, [])
+
+  const handleSkipFocusRows = useCallback(() => {
+    updateImportReviewRows((row) => isReviewFocusRow(row), false)
+  }, [isReviewFocusRow, updateImportReviewRows])
+
+  const handleRestoreFocusRows = useCallback(() => {
+    updateImportReviewRows((row) => isReviewFocusRow(row), true)
+  }, [isReviewFocusRow, updateImportReviewRows])
+
+  const buildImportPayloadsFromReviewRows = useCallback(
+    (rows: ImportReviewDraftRow[], teamId: number, ownerId: string) => {
+      const primarySource = "company_resource"
+      return rows
+        .filter((row) => row.canImport)
+        .map((row) => {
+          const budget = row.budget ? Number(String(row.budget).replace(/[^0-9.]/g, "")) : null
+          const payload: Record<string, unknown> = {
+            team_id: teamId,
+            owner_id: ownerId,
+            name: row.company || row.website || "Unnamed Lead",
+            website: row.website || null,
+            source: row.sourceLabel || "Company Resource",
+            stage: "L1",
+            status: "pool",
+            customer_name: row.contact || "Unknown Contact",
+            customer_phone: row.phone || null,
+            wechat: row.wechat || null,
+            responsibility_type: primarySource,
+            source_level1: primarySource,
+            source_level2: row.sourceKey || null,
+          }
+
+          if (budget !== null && !Number.isNaN(budget)) {
+            payload.budget = budget
+          }
+
+          return payload
+        })
+    },
+    [],
+  )
+
   const handleConfirmImport = async () => {
     if (importAiStatus === "processing") {
       toast.info("AI 正在分析表格", {
-        description: "请等待 AI 智能映射完成后再开始后台导入",
+        description: "请等待 AI 智能映射完成后再生成全量导入结果",
       })
       return
     }
@@ -1583,54 +1680,61 @@ export function PublicPool() {
         return
       }
 
-      setImportDialogOpen(false)
-      toast.info("导入任务已开始", {
-        description: "系统正在后台准备并分批导入，你可以继续使用当前页面。",
-      })
+      if (!importReviewRows) {
+        setIsPreparingImportReview(true)
 
-      let importSourceGroups: ImportSourceGroupOption[] = []
-      try {
-        const { data: sourceGroupsSetting } = await supabase
-          .from("settings")
-          .select("value")
-          .eq("key", "leads.company_resource_source_groups")
-          .maybeSingle()
+        let effectiveSourceGroups = importSourceGroups
+        if (effectiveSourceGroups.length === 0) {
+          try {
+            const { data: sourceGroupsSetting } = await supabase
+              .from("settings")
+              .select("value")
+              .eq("key", "leads.company_resource_source_groups")
+              .maybeSingle()
 
-        const sourceGroupsValue = (sourceGroupsSetting?.value as ImportSourceGroupsResponse | null)?.groups ?? []
-        importSourceGroups = sanitizeImportSourceGroups(sourceGroupsValue)
-      } catch (sourceGroupErr) {
-        console.error("Failed to load company resource source groups before import", sourceGroupErr)
-      }
+            const sourceGroupsValue = (sourceGroupsSetting?.value as ImportSourceGroupsResponse | null)?.groups ?? []
+            effectiveSourceGroups = sanitizeImportSourceGroups(sourceGroupsValue)
+            setImportSourceGroups(effectiveSourceGroups)
+          } catch (sourceGroupErr) {
+            console.error("Failed to load company resource source groups before review", sourceGroupErr)
+          }
+        }
 
-      const buildResult = (await callImportWorker("build-payloads", {
-        aiMapping: importAiMapping?.columnMapping ? importAiMapping : null,
-        teamId: currentProfile.teamId,
-        ownerId: currentProfile.id,
-        supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
-        anonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "",
-        sourceGroups: importSourceGroups,
-      })) as ImportWorkerBuildPayloadsResult
+        const buildResult = (await callImportWorker("build-payloads", {
+          aiMapping: importAiMapping?.columnMapping ? importAiMapping : null,
+          supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
+          anonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "",
+          sourceGroups: effectiveSourceGroups,
+        })) as ImportWorkerBuildPayloadsResult
 
-      const payloads = Array.isArray(buildResult?.payloads) ? buildResult.payloads : []
-      const invalidCount = Number(buildResult?.invalidBasicInfoCount ?? 0)
-      const totalCount = Number(buildResult?.totalCount ?? estimatedTotalCount ?? payloads.length + invalidCount)
+        const reviewRows = Array.isArray(buildResult?.reviewRows) ? buildResult.reviewRows : []
+        const invalidCount = Number(buildResult?.invalidBasicInfoCount ?? 0)
+        const totalCount = Number(buildResult?.totalCount ?? estimatedTotalCount ?? reviewRows.length)
 
-      if (payloads.length === 0) {
-        await supabase.rpc("rpc_leads_import_mark_complete", {
-          p_job_id: importJobId,
-          p_status: "failed",
-          p_total_count: totalCount,
-          p_success_count: 0,
-          p_duplicate_count: 0,
-          p_error_message: "没有符合导入条件的数据行",
+        setEstimatedTotalCount(totalCount)
+        setInvalidBasicInfoCount(invalidCount)
+        setImportReviewRows(reviewRows)
+        toast.success("AI 全量分析已完成", {
+          description: "请只校准异常或低置信度行，确认后再落库。",
         })
-
-        toast.error("导入失败", {
-          description: "所有行都缺少基础信息，无法导入，请检查模板内容",
-        })
-        resetImport()
         return
       }
+
+      const payloads = buildImportPayloadsFromReviewRows(importReviewRows, currentProfile.teamId, currentProfile.id)
+      const invalidCount = importReviewRows.filter((row) => !row.canImport).length
+      const totalCount = Number(estimatedTotalCount ?? importReviewRows.length)
+
+      if (payloads.length === 0) {
+        toast.error("导入失败", {
+          description: "当前没有可导入的校准结果，请至少保留一条可导入数据。",
+        })
+        return
+      }
+
+      setImportDialogOpen(false)
+      toast.info("导入任务已开始", {
+        description: "系统正在按校准后的结果分批落库，你可以继续使用当前页面。",
+      })
 
       await supabase.rpc("rpc_leads_import_mark_complete", {
         p_job_id: importJobId,
@@ -1710,9 +1814,9 @@ export function PublicPool() {
       toast.error("导入失败", {
         description: "执行批量导入时出错，请稍后重试",
       })
-      resetImport()
       retryLoad()
     } finally {
+      setIsPreparingImportReview(false)
       setIsSubmittingImport(false)
     }
   }
@@ -1721,8 +1825,7 @@ export function PublicPool() {
 
 
 
-
-  const getDaysInPoolBadge = (days: number) => {
+const getDaysInPoolBadge = (days: number) => {
     if (days >= 14) {
       return <Badge variant="destructive" className="font-bold px-2.5 h-6">{days} 天</Badge>
     } else if (days >= 7) {
@@ -2778,6 +2881,213 @@ export function PublicPool() {
                         </div>
                       </div>
                     )}
+                    {importReviewRows && importReviewRows.length > 0 && (
+                      <div className="space-y-3 rounded-lg border border-emerald-200 bg-emerald-50/60 p-3">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                          <div>
+                            <p className="text-sm font-semibold text-emerald-950">全量 AI 结果已生成，落库前兜底校准</p>
+                            <p className="text-xs text-emerald-900/80">
+                              AI 已经完成全量标准化；这里只需要处理异常、低置信度或你想手动修正的行。
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap gap-2 text-xs">
+                            <Badge variant="secondary" className="bg-white/80 text-emerald-900 border border-emerald-200">
+                              可导入 {importReviewSummary.selectedCount} 条
+                            </Badge>
+                            <Badge variant="secondary" className="bg-white/80 text-emerald-900 border border-emerald-200">
+                              跳过 {importReviewSummary.skippedCount} 条
+                            </Badge>
+                            <Badge variant="secondary" className="bg-white/80 text-emerald-900 border border-emerald-200">
+                              低置信度 {importReviewSummary.lowConfidenceCount} 条
+                            </Badge>
+                            <Badge variant="secondary" className="bg-white/80 text-emerald-900 border border-emerald-200">
+                              有问题提示 {importReviewSummary.issueCount} 条
+                            </Badge>
+                            <Badge variant="secondary" className="bg-white/80 text-emerald-900 border border-emerald-200">
+                              待校准 {importReviewSummary.focusCount} 条
+                            </Badge>
+                          </div>
+                        </div>
+                        <div className="flex flex-col gap-3 rounded-md border border-emerald-200/80 bg-white/70 p-3">
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                            <label className="flex items-center gap-2 text-xs text-emerald-950">
+                              <Checkbox
+                                checked={showOnlyReviewFocusRows}
+                                onCheckedChange={(checked) => setShowOnlyReviewFocusRows(checked === true)}
+                              />
+                              只看待校准项
+                            </label>
+                            <p className="text-xs text-emerald-900/80">
+                              当前显示 {visibleImportReviewRows.length} / {importReviewSummary.totalCount} 条，
+                              默认优先展示不可导入、低置信度或有问题提示的行。
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <Button type="button" variant="outline" size="sm" onClick={handleSkipFocusRows}>
+                              跳过待校准项
+                            </Button>
+                            <Button type="button" variant="outline" size="sm" onClick={handleRestoreFocusRows}>
+                              恢复待校准项
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setShowOnlyReviewFocusRows((current) => !current)}
+                            >
+                              {showOnlyReviewFocusRows ? "展开全部" : "收起正常项"}
+                            </Button>
+                          </div>
+                        </div>
+                        <div className="border rounded-md bg-background max-h-[28rem] overflow-auto">
+                          <Table>
+                            <TableHeader className="bg-muted/40 sticky top-0 z-10">
+                              <TableRow>
+                                <TableHead className="text-xs">导入</TableHead>
+                                <TableHead className="text-xs">公司名称</TableHead>
+                                <TableHead className="text-xs">网址</TableHead>
+                                <TableHead className="text-xs">联系人</TableHead>
+                                <TableHead className="text-xs">电话</TableHead>
+                                <TableHead className="text-xs">微信号</TableHead>
+                                <TableHead className="text-xs">一级来源</TableHead>
+                                <TableHead className="text-xs">二级来源</TableHead>
+                                <TableHead className="text-xs">预算</TableHead>
+                                <TableHead className="text-xs">问题提示</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {visibleImportReviewRows.map((row) => (
+                                <TableRow
+                                  key={row.rowIndex}
+                                  className={cn(
+                                    !row.canImport && "bg-amber-50/60",
+                                    isImportConfidenceLow(row.confidence) && "bg-blue-50/50",
+                                  )}
+                                >
+                                  <TableCell className="align-top">
+                                    <Checkbox
+                                      checked={row.canImport}
+                                      onCheckedChange={(checked) =>
+                                        updateImportReviewRow(row.rowIndex, { canImport: checked === true })
+                                      }
+                                    />
+                                  </TableCell>
+                                  <TableCell className="min-w-[180px] align-top">
+                                    <Input
+                                      value={row.company}
+                                      onChange={(event) => updateImportReviewRow(row.rowIndex, { company: event.target.value })}
+                                      className="h-8 text-xs"
+                                    />
+                                  </TableCell>
+                                  <TableCell className="min-w-[180px] align-top">
+                                    <Input
+                                      value={row.website}
+                                      onChange={(event) => updateImportReviewRow(row.rowIndex, { website: event.target.value })}
+                                      className="h-8 text-xs"
+                                    />
+                                  </TableCell>
+                                  <TableCell className="min-w-[120px] align-top">
+                                    <Input
+                                      value={row.contact}
+                                      onChange={(event) => updateImportReviewRow(row.rowIndex, { contact: event.target.value })}
+                                      className="h-8 text-xs"
+                                    />
+                                  </TableCell>
+                                  <TableCell className="min-w-[130px] align-top">
+                                    <Input
+                                      value={row.phone}
+                                      onChange={(event) => updateImportReviewRow(row.rowIndex, { phone: event.target.value })}
+                                      className="h-8 text-xs"
+                                    />
+                                  </TableCell>
+                                  <TableCell className="min-w-[130px] align-top">
+                                    <Input
+                                      value={row.wechat}
+                                      onChange={(event) => updateImportReviewRow(row.rowIndex, { wechat: event.target.value })}
+                                      className="h-8 text-xs"
+                                    />
+                                  </TableCell>
+                                  <TableCell className="min-w-[110px] align-top">
+                                    <div className="h-8 px-2 border rounded-md bg-muted/40 text-xs flex items-center text-muted-foreground">
+                                      公司分配资源
+                                    </div>
+                                  </TableCell>
+                                  <TableCell className="min-w-[180px] align-top">
+                                    <Select
+                                      value={row.sourceKey || "__empty__"}
+                                      onValueChange={(value) => {
+                                        if (value === "__empty__") {
+                                          updateImportReviewRow(row.rowIndex, { sourceKey: "", sourceLabel: "" })
+                                          return
+                                        }
+                                        const option = importSourceOptions.find((item) => item.key === value)
+                                        updateImportReviewRow(row.rowIndex, {
+                                          sourceKey: option?.key ?? "",
+                                          sourceLabel: option?.label ?? "",
+                                        })
+                                      }}
+                                    >
+                                      <SelectTrigger className="h-8 text-xs">
+                                        <SelectValue placeholder="选择二级来源" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="__empty__">不导入该来源</SelectItem>
+                                        {importSourceOptions.map((option) => (
+                                          <SelectItem key={option.key} value={option.key}>
+                                            {option.groupLabel} / {option.label}
+                                          </SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                  </TableCell>
+                                  <TableCell className="min-w-[100px] align-top">
+                                    <Input
+                                      value={row.budget}
+                                      onChange={(event) => updateImportReviewRow(row.rowIndex, { budget: event.target.value })}
+                                      className="h-8 text-xs"
+                                    />
+                                  </TableCell>
+                                  <TableCell className="min-w-[220px] align-top whitespace-normal">
+                                    <div className="space-y-1">
+                                      <div className="flex flex-wrap gap-1">
+                                        {row.aiEnhanced && (
+                                          <Badge variant="outline" className="h-5 px-1.5 text-[10px] border-blue-200 text-blue-700">
+                                            AI
+                                          </Badge>
+                                        )}
+                                        {row.confidence != null && (
+                                          <Badge
+                                            variant="outline"
+                                            className={cn(
+                                              "h-5 px-1.5 text-[10px]",
+                                              isImportConfidenceLow(row.confidence)
+                                                ? "border-amber-200 text-amber-700"
+                                                : "border-emerald-200 text-emerald-700",
+                                            )}
+                                          >
+                                            置信度 {formatImportConfidence(row.confidence)}
+                                          </Badge>
+                                        )}
+                                      </div>
+                                      <div className="text-[11px] leading-4 text-muted-foreground whitespace-normal">
+                                        {row.issues.length > 0 ? row.issues.join("；") : "无明显异常"}
+                                      </div>
+                                    </div>
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                              {visibleImportReviewRows.length === 0 && (
+                                <TableRow>
+                                  <TableCell colSpan={10} className="h-24 text-center text-sm text-muted-foreground">
+                                    当前没有待校准项。你可以取消“只看待校准项”来查看全部 AI 结果。
+                                  </TableCell>
+                                </TableRow>
+                              )}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -2791,16 +3101,27 @@ export function PublicPool() {
               取消
             </Button>
             <Button
-              disabled={importStage !== "complete" || isSubmittingImport || importAiStatus === "processing"}
+              disabled={
+                importStage !== "complete" ||
+                isSubmittingImport ||
+                isPreparingImportReview ||
+                importAiStatus === "processing"
+              }
               onClick={handleConfirmImport}
             >
-              {isSubmittingImport
-                ? "后台导入中..."
-                : importAiStatus === "processing"
-                  ? "等待 AI 分析完成..."
-                  : importStage === "complete"
-                    ? "开始后台导入"
-                    : "开始导入"}
+              {isPreparingImportReview
+                ? "AI 全量分析中..."
+                : isSubmittingImport
+                  ? importReviewRows
+                    ? "正在确认导入..."
+                    : "正在生成导入结果..."
+                  : importAiStatus === "processing"
+                    ? "等待 AI 分析完成..."
+                    : importReviewRows
+                      ? "确认校准结果并导入"
+                      : importStage === "complete"
+                        ? "生成全量 AI 结果"
+                        : "开始导入"}
 
             </Button>
           </DialogFooter>

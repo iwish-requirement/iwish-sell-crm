@@ -20,6 +20,22 @@ type WorkerRequest = {
   payload?: Record<string, unknown>
 }
 
+type ImportReviewRow = {
+  rowIndex: number
+  company: string
+  website: string
+  contact: string
+  phone: string
+  wechat: string
+  sourceLabel: string
+  sourceKey: string
+  budget: string
+  confidence: number | null
+  issues: string[]
+  aiEnhanced: boolean
+  canImport: boolean
+}
+
 let cachedRows: string[][] | null = null
 let cachedHeaderRow: string[] | null = null
 
@@ -234,7 +250,9 @@ async function callImportAiProxyDirect(input: {
     throw new Error(`llm_error:${res.status}:${rawText.slice(0, 1000)}`)
   }
 
-  const parsed = parseImportAiJsonContent(rawText)
+  const parsed = parseImportAiJsonContent(rawText) as {
+    choices?: Array<{ message?: { content?: string } }>
+  } | null
   const content = parsed?.choices?.[0]?.message?.content
   if (typeof content !== "string" || !content.trim()) {
     throw new Error("invalid_llm_response")
@@ -297,12 +315,6 @@ async function buildPayloads(payload: Record<string, unknown> | undefined) {
     throw new Error("No cached headers to import. Please re-run preview.")
   }
 
-  const teamId = payload?.teamId
-  const ownerId = payload?.ownerId
-  if (typeof teamId !== "number" || !Number.isFinite(teamId) || typeof ownerId !== "string" || ownerId.length === 0) {
-    throw new Error("Missing team or owner information for import.")
-  }
-
   const aiMapping = (payload?.aiMapping as ImportAiMapping | undefined) ?? null
   const columnMapping = aiMapping?.columnMapping ?? null
   const supabaseUrl = typeof payload?.supabaseUrl === "string" ? payload.supabaseUrl.trim() : ""
@@ -321,7 +333,7 @@ async function buildPayloads(payload: Record<string, unknown> | undefined) {
         })
       : new Map<number, ImportAiNormalizedRow>()
 
-  const payloads: Record<string, unknown>[] = []
+  const reviewRows: ImportReviewRow[] = []
   let invalidBasicInfoCount = 0
 
   for (const [rowIndex, row] of cachedRows.entries()) {
@@ -344,40 +356,42 @@ async function buildPayloads(payload: Record<string, unknown> | undefined) {
     const hasIdentity = Boolean((company || website).trim())
     const hasContact = Boolean((phone || wechat).trim())
     const hasSource = Boolean(sourceKey.trim() && sourceLabel.trim())
+    const issues = [...(aiRow?.issues ?? [])]
 
-    if (!hasIdentity || !hasContact || !hasSource) {
+    if (!hasIdentity) {
+      issues.push("缺少公司名称或网址")
+    }
+    if (!hasContact) {
+      issues.push("缺少电话或微信号")
+    }
+    if (!hasSource) {
+      issues.push("未命中系统二级来源")
+    }
+
+    const canImport = hasIdentity && hasContact && hasSource
+    if (!canImport) {
       invalidBasicInfoCount += 1
-      continue
     }
 
-    const budget = budgetStr ? Number(budgetStr.replace(/[^0-9.]/g, "")) : null
-    const primarySource = "company_resource"
-
-    const leadPayload: Record<string, unknown> = {
-      team_id: teamId,
-      owner_id: ownerId,
-      name: company || website || "Unnamed Lead",
-      website: website || null,
-      source: sourceLabel || "Company Resource",
-      stage: "L1",
-      status: "pool",
-      customer_name: contact || "Unknown Contact",
-      customer_phone: phone || null,
-      wechat: wechat || null,
-      responsibility_type: primarySource,
-      source_level1: primarySource,
-      source_level2: sourceKey,
-    }
-
-    if (budget !== null && !Number.isNaN(budget)) {
-      leadPayload.budget = budget
-    }
-
-    payloads.push(leadPayload)
+    reviewRows.push({
+      rowIndex,
+      company,
+      website,
+      contact,
+      phone,
+      wechat,
+      sourceLabel,
+      sourceKey,
+      budget: budgetStr,
+      confidence: aiRow?.confidence ?? null,
+      issues,
+      aiEnhanced: Boolean(aiRow),
+      canImport,
+    })
   }
 
   return {
-    payloads,
+    reviewRows,
     invalidBasicInfoCount,
     totalCount: cachedRows.length,
   }
