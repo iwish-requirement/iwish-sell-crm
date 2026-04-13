@@ -1,4 +1,3 @@
-import ExcelJS from "exceljs"
 import { NextRequest, NextResponse } from "next/server"
 
 import {
@@ -11,7 +10,7 @@ import {
 } from "@/lib/lead-import/shared/company-resource-template"
 import { createRouteHandlerClient } from "@/lib/supabase/server"
 
-export const runtime = "nodejs"
+export const runtime = "edge"
 
 type SourceGroupSetting = {
   key: string
@@ -101,45 +100,13 @@ function sanitizeGrades(value: unknown): GradeDefinitionSetting[] {
       ]
 }
 
-function columnLetter(index: number) {
-  let value = ""
-  let current = index
-  while (current > 0) {
-    const remainder = (current - 1) % 26
-    value = String.fromCharCode(65 + remainder) + value
-    current = Math.floor((current - 1) / 26)
-  }
-  return value
-}
-
-function addListValidation(
-  worksheet: ExcelJS.Worksheet,
-  columnIndex: number,
-  optionsSheetName: string,
-  optionColumnIndex: number,
-  optionCount: number,
-  rowStart = 2,
-  rowEnd = 500,
-) {
-  if (optionCount <= 0) return
-
-  const optionColumnLetter = columnLetter(optionColumnIndex)
-  const formula = `'${optionsSheetName}'!$${optionColumnLetter}$2:$${optionColumnLetter}$${optionCount + 1}`
-
-  for (let row = rowStart; row <= rowEnd; row += 1) {
-    worksheet.getCell(row, columnIndex).dataValidation = {
-      type: "list",
-      allowBlank: true,
-      formulae: [formula],
-      showErrorMessage: true,
-      errorTitle: "请选择模板内置选项",
-      error: "请从下拉列表中选择，或按说明页中的允许值填写。",
-    }
-  }
+function setColumnWidths(sheet: any, widths: number[]) {
+  sheet["!cols"] = widths.map((wch) => ({ wch }))
 }
 
 export async function GET(req: NextRequest) {
   try {
+    const XLSX = await import("xlsx")
     const supabase = createRouteHandlerClient(req)
     const [{ data: profile }, { data: mePerms }, settingsResult, businessTypesResult, membersResult] = await Promise.all([
       supabase.rpc("rpc_me_profile"),
@@ -189,7 +156,8 @@ export async function GET(req: NextRequest) {
       .filter(Boolean)
 
     const currentTeamId = (profile as any)?.team_id != null ? Number((profile as any).team_id) : null
-    const createScopeType = ((mePerms as any)?.leadCreateScopeType as "self" | "team" | "org" | "custom" | undefined) ?? "self"
+    const createScopeType =
+      ((mePerms as any)?.leadCreateScopeType as "self" | "team" | "org" | "custom" | undefined) ?? "self"
     const membersForTemplate =
       (createScopeType === "self" || createScopeType === "team") && currentTeamId != null
         ? ((membersResult.data ?? []) as any[]).filter((row) => row.team_id === currentTeamId)
@@ -205,53 +173,18 @@ export async function GET(req: NextRequest) {
       .map((row) => String(row.full_name ?? "").trim())
       .filter(Boolean)
 
-    const workbook = new ExcelJS.Workbook()
-    workbook.creator = "OpenAI Codex"
-    workbook.created = new Date()
+    const workbook = XLSX.utils.book_new()
 
-    const templateSheet = workbook.addWorksheet("线索看板导入模板")
-    const optionsSheet = workbook.addWorksheet("下拉选项")
-    const guideSheet = workbook.addWorksheet("填写说明")
+    const templateRows = [
+      [...COMPANY_RESOURCE_TEMPLATE_HEADERS],
+      ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""],
+    ]
+    const templateSheet = XLSX.utils.aoa_to_sheet(templateRows)
+    setColumnWidths(templateSheet, [24, 28, 16, 16, 18, 18, 18, 18, 18, 22, 18, 20, 14, 24, 14, 24, 16])
+    templateSheet["!freeze"] = { xSplit: 0, ySplit: 1 }
+    templateSheet["!autofilter"] = { ref: `A1:Q1` }
 
-    templateSheet.views = [{ state: "frozen", ySplit: 1 }]
-    templateSheet.addRow([...COMPANY_RESOURCE_TEMPLATE_HEADERS])
-    templateSheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } }
-    templateSheet.getRow(1).fill = {
-      type: "pattern",
-      pattern: "solid",
-      fgColor: { argb: "FF2563EB" },
-    }
-    templateSheet.getRow(1).alignment = { vertical: "middle", horizontal: "center" }
-    templateSheet.autoFilter = {
-      from: { row: 1, column: 1 },
-      to: { row: 1, column: COMPANY_RESOURCE_TEMPLATE_HEADERS.length },
-    }
-
-    const widths = [24, 28, 16, 16, 18, 18, 18, 18, 18, 22, 18, 20, 14, 24, 14, 24, 16]
-    widths.forEach((width, index) => {
-      templateSheet.getColumn(index + 1).width = width
-    })
-
-    const conditionallyRequiredHeaders = new Set([
-      "网址",
-      "责任归因",
-      "业务类型",
-      "电话",
-      "微信号",
-      "二级来源",
-      "开发方式",
-      "转介绍客户名称",
-      "转介绍类型",
-    ])
-    for (let col = 1; col <= COMPANY_RESOURCE_TEMPLATE_HEADERS.length; col += 1) {
-      const cell = templateSheet.getCell(1, col)
-      if (conditionallyRequiredHeaders.has(String(cell.value))) {
-        cell.note = "该列会根据导入规则参与必填校验，请参考“填写说明”工作表。"
-      }
-    }
-
-    optionsSheet.addRow(["责任归因", "二级来源", "来源责任部门", "开发方式", "转介绍类型", "业务类型", "客户级别", "负责人"])
-    const maxRows = Math.max(
+    const optionMaxRows = Math.max(
       COMPANY_RESOURCE_RESPONSIBILITY_TYPES.length,
       sourceLabels.length,
       sourceDepartments.length,
@@ -262,9 +195,11 @@ export async function GET(req: NextRequest) {
       ownerNames.length,
       1,
     )
-
-    for (let i = 0; i < maxRows; i += 1) {
-      optionsSheet.addRow([
+    const optionRows: Array<Array<string>> = [
+      ["责任归因", "二级来源", "来源责任部门", "开发方式", "转介绍类型", "业务类型", "客户级别", "负责人"],
+    ]
+    for (let i = 0; i < optionMaxRows; i += 1) {
+      optionRows.push([
         COMPANY_RESOURCE_RESPONSIBILITY_TYPES[i]?.label ?? "",
         sourceLabels[i] ?? "",
         sourceDepartments[i]?.label ?? "",
@@ -275,24 +210,15 @@ export async function GET(req: NextRequest) {
         ownerNames[i] ?? "",
       ])
     }
-    optionsSheet.state = "veryHidden"
+    const optionSheet = XLSX.utils.aoa_to_sheet(optionRows)
+    setColumnWidths(optionSheet, [18, 24, 18, 18, 18, 28, 12, 18])
 
-    addListValidation(templateSheet, 6, optionsSheet.name, 1, COMPANY_RESOURCE_RESPONSIBILITY_TYPES.length)
-    addListValidation(templateSheet, 7, optionsSheet.name, 2, sourceLabels.length)
-    addListValidation(templateSheet, 8, optionsSheet.name, 3, sourceDepartments.length)
-    addListValidation(templateSheet, 9, optionsSheet.name, 4, COMPANY_RESOURCE_DEV_METHODS.length)
-    addListValidation(templateSheet, 11, optionsSheet.name, 5, COMPANY_RESOURCE_REFERRAL_TYPES.length)
-    addListValidation(templateSheet, 14, optionsSheet.name, 6, businessTypeNames.length)
-    addListValidation(templateSheet, 15, optionsSheet.name, 7, grades.length)
-    addListValidation(templateSheet, 17, optionsSheet.name, 8, ownerNames.length)
-
-    guideSheet.columns = [{ width: 24 }, { width: 90 }]
-    guideSheet.addRows([
+    const guideRows = [
       ["字段", "说明"],
       ["公司名称", "可选。建议填写，便于识别线索。"],
       ["网址", "与公司名称二选一，至少填写一个。填写时必须是可识别的网址或域名。"],
       ["联系人", "可选。未填写时系统会使用默认联系人名称。"],
-      ["电话 / 微信号", "至少填写一个。若手机号已存在于线索看板，该行会在预检查中直接标记为不可导入。"],
+      ["电话 / 微信号", "至少填写一个。"],
       ["责任归因", "必填。请从下拉中选择：公司分配资源 / 销售自主开发 / 客户转介绍。"],
       ["二级来源", "当责任归因为“公司分配资源”时必填，选项来自系统设置。"],
       ["来源责任部门", "可选，选项来自系统设置。"],
@@ -301,24 +227,28 @@ export async function GET(req: NextRequest) {
       ["转介绍类型", "当责任归因为“客户转介绍”时必填。"],
       ["活动名称", "可选。"],
       ["预算", "可选，填写纯数字即可，例如 500000；也支持万、亿、k、m。"],
-      ["业务类型", "必填。请填写“一级分类 / 业务类型”的完整名称，例如“B2B / Google广告”；支持下拉选择。"],
+      ["业务类型", "必填。请填写“一级分类 / 业务类型”的完整名称，例如“B2B / Google广告”。"],
       ["客户级别", "可选，选项来自系统设置。"],
       ["标签", "可选。多个标签请用“、”“，”或英文逗号分隔。"],
       ["负责人", "当顶部选择“按文件内负责人分配”时，本列必填；统一负责人模式下可留空。"],
-      ["说明", "若当前账号的线索创建范围仅限本人或本团队，负责人下拉会只保留本团队成员；正式导入时也会按这个范围校验。"],
-    ])
-    guideSheet.getRow(1).font = { bold: true }
-    guideSheet.getRow(1).fill = {
-      type: "pattern",
-      pattern: "solid",
-      fgColor: { argb: "FFE5E7EB" },
-    }
-    guideSheet.getColumn(2).alignment = { wrapText: true, vertical: "top" }
+      ["说明", "若当前账号的线索创建范围仅限本人或本团队，负责人建议填写当前可操作范围内成员。"],
+    ]
+    const guideSheet = XLSX.utils.aoa_to_sheet(guideRows)
+    setColumnWidths(guideSheet, [24, 90])
 
-    const buffer = await workbook.xlsx.writeBuffer()
+    XLSX.utils.book_append_sheet(workbook, templateSheet, "线索看板导入模板")
+    XLSX.utils.book_append_sheet(workbook, optionSheet, "下拉选项")
+    XLSX.utils.book_append_sheet(workbook, guideSheet, "填写说明")
+
+    const buffer = XLSX.write(workbook, {
+      type: "array",
+      bookType: "xlsx",
+      compression: true,
+    }) as ArrayBuffer
+
     const fileName = `线索看板导入模板-${new Date().toISOString().slice(0, 10)}.xlsx`
 
-    return new NextResponse(Buffer.from(buffer), {
+    return new NextResponse(buffer, {
       status: 200,
       headers: {
         "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
