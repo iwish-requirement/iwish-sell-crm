@@ -1,18 +1,17 @@
 "use client"
 
-import { useState, useEffect, useContext } from "react"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import { Users, TrendingUp, DollarSign, AlertTriangle, ArrowUp, ArrowDown } from "lucide-react"
-import { SalesFunnel } from "@/components/sales-funnel"
-import { RecentActivityTable } from "@/components/recent-activity-table"
-import { KPICardSkeleton, ChartSkeleton, TableSkeleton } from "@/components/skeleton-loaders"
-import { fetchDashboardSummary } from "@/lib/services/dashboard"
-import { RecentDealsCard } from "@/components/recent-deals-card"
-import { getBrowserSupabaseClient } from "@/lib/supabase/client"
-import { MePermissionsContext } from "@/components/app-root"
-import { fetchCurrentUserProfile, fetchCurrentUserPublicProfile } from "@/lib/auth/profile"
+import { useContext, useEffect, useState } from "react"
+import { AlertTriangle, ArrowDown, ArrowUp, DollarSign, TrendingUp, Users } from "lucide-react"
 
+import { MePermissionsContext } from "@/components/app-root"
+import { RecentDealsCard } from "@/components/recent-deals-card"
+import { SalesFunnel } from "@/components/sales-funnel"
+import { ChartSkeleton, KPICardSkeleton, TableSkeleton } from "@/components/skeleton-loaders"
+import { Badge } from "@/components/ui/badge"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { fetchCurrentUserProfile, fetchCurrentUserPublicProfile } from "@/lib/auth/profile"
+import { fetchDashboardSummary } from "@/lib/services/dashboard"
+import { getBrowserSupabaseClient } from "@/lib/supabase/client"
 
 interface DashboardSummary {
   totalLeads: number
@@ -22,7 +21,6 @@ interface DashboardSummary {
 }
 
 type DashboardCardKey = "totalLeads" | "winRate" | "monthlyRevenue" | "riskLeads"
-
 
 interface DashboardCardDefinition {
   key: DashboardCardKey
@@ -82,10 +80,7 @@ function formatCurrency(value: number): string {
 
 function formatKpiValue(card: DashboardCardDefinition, summary: DashboardSummary | null): string {
   if (!summary) {
-    if (card.key === "winRate") {
-      return "--"
-    }
-    return "0"
+    return card.key === "winRate" ? "--" : "0"
   }
 
   if (card.key === "totalLeads") {
@@ -108,11 +103,7 @@ function formatKpiValue(card: DashboardCardDefinition, summary: DashboardSummary
 }
 
 function getBadgeVariant(card: DashboardCardDefinition): "default" | "destructive" {
-  if (card.key === "riskLeads") {
-    return "destructive"
-  }
-
-  return "default"
+  return card.key === "riskLeads" ? "destructive" : "default"
 }
 
 export function Dashboard() {
@@ -136,14 +127,10 @@ export function Dashboard() {
         const scopeType = mePermissions?.leadScopeType ?? "self"
         const params: { teamId?: number; ownerId?: string } = {}
 
-        if (scopeType === "self") {
-          if (profile?.id) {
-            params.ownerId = profile.id
-          }
-        } else if (scopeType === "team") {
-          if (profile?.teamId != null) {
-            params.teamId = profile.teamId
-          }
+        if (scopeType === "self" && profile?.id) {
+          params.ownerId = profile.id
+        } else if (scopeType === "team" && profile?.teamId != null) {
+          params.teamId = profile.teamId
         }
 
         const nextSummary = await fetchDashboardSummary(params)
@@ -159,7 +146,7 @@ export function Dashboard() {
         if (!isMounted) {
           return
         }
-        setLoadError("仪表盘数据加载失败，请稍后重试")
+        setLoadError("仪表盘数据加载失败，请稍后重试。")
         setIsLoading(false)
       }
     }
@@ -216,7 +203,6 @@ export function Dashboard() {
           setWelcomeText(finalText)
         }
       } catch (err) {
-
         console.error("Unexpected error while building dashboard welcome text", err)
         if (isMounted) {
           setWelcomeText("欢迎回来，以下是您的销售概览。")
@@ -236,14 +222,14 @@ export function Dashboard() {
       <div className="space-y-6">
         <div>
           <h1 className="text-3xl font-bold text-foreground tracking-tight">仪表盘</h1>
-          <p className="text-sm text-muted-foreground font-medium mt-1">同步销售概览数据中...</p>
+          <p className="mt-1 text-sm font-medium text-muted-foreground">正在同步销售概览数据...</p>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
           {Array.from({ length: 4 }).map((_, i) => (
             <KPICardSkeleton key={i} />
           ))}
         </div>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <ChartSkeleton />
           <TableSkeleton rows={4} />
         </div>
@@ -251,49 +237,44 @@ export function Dashboard() {
     )
   }
 
-  const showErrorBanner = !!loadError
-
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold text-foreground tracking-tight">仪表盘</h1>
-        <p className="text-base font-medium text-foreground/70 mt-1">
+        <p className="mt-1 text-base font-medium text-foreground/70">
           {welcomeText ?? "欢迎回来，以下是您的销售概览。"}
         </p>
       </div>
 
-
-      {showErrorBanner ? (
+      {loadError ? (
         <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
           仪表盘部分数据暂时无法加载，请稍后重试。
         </div>
       ) : null}
 
-      {/* KPI Cards - responsive grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {DASHBOARD_CARDS.map((card) => (
-          <Card key={card.key} className="border-muted-foreground/10 shadow-sm overflow-hidden group hover:shadow-md transition-shadow">
+          <Card key={card.key} className="group overflow-hidden border-muted-foreground/10 shadow-sm transition-shadow hover:shadow-md">
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
-                <div className={`p-3 rounded-xl ${card.bgColor} shadow-inner transition-transform group-hover:scale-110`}>
-                  <card.icon className={`w-6 h-6 ${card.color}`} />
+                <div className={`rounded-xl p-3 shadow-inner transition-transform group-hover:scale-110 ${card.bgColor}`}>
+                  <card.icon className={`h-6 w-6 ${card.color}`} />
                 </div>
-                <Badge variant={getBadgeVariant(card)} className="flex items-center gap-1 font-bold px-2 py-0.5 rounded-full">
-                  {card.trend === "up" ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
+                <Badge variant={getBadgeVariant(card)} className="flex items-center gap-1 rounded-full px-2 py-0.5 font-bold">
+                  {card.trend === "up" ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />}
                   <span className="text-[10px] uppercase tracking-wider">{summary ? "实时" : "同步"}</span>
                 </Badge>
               </div>
               <div className="mt-5">
-                <p className="text-3xl font-bold text-foreground tracking-tight">{formatKpiValue(card, summary)}</p>
-                <p className="text-sm font-bold text-muted-foreground mt-1 uppercase tracking-widest">{card.title}</p>
+                <p className="text-3xl font-bold tracking-tight text-foreground">{formatKpiValue(card, summary)}</p>
+                <p className="mt-1 text-sm font-bold uppercase tracking-widest text-muted-foreground">{card.title}</p>
               </div>
             </CardContent>
           </Card>
         ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Sales Funnel */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card className="border-muted-foreground/10 shadow-sm">
           <CardHeader className="border-b border-muted/30 pb-4">
             <CardTitle className="text-lg font-bold tracking-tight">销售漏斗概览</CardTitle>
@@ -303,12 +284,10 @@ export function Dashboard() {
           </CardContent>
         </Card>
 
-        {/* Recent Deals */}
         <div className="h-full">
           <RecentDealsCard />
         </div>
       </div>
-
     </div>
   )
 }

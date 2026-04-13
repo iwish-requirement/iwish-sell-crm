@@ -47,6 +47,7 @@ export type MePermissions = {
   canManageContracts: boolean
   canImportLeads: boolean
   leadScopeType: "self" | "team" | "org" | "custom"
+  leadCreateScopeType: "self" | "team" | "org" | "custom"
 }
 
 
@@ -126,6 +127,7 @@ export function AppRoot() {
             canManageContracts: false,
             canImportLeads: false,
             leadScopeType: "self",
+            leadCreateScopeType: "self",
           })
 
           return
@@ -145,6 +147,7 @@ export function AppRoot() {
           canManageContracts: Boolean(value.canManageContracts),
           canImportLeads: Boolean(value.canImportLeads),
           leadScopeType: (value.leadScopeType as MePermissions["leadScopeType"]) ?? "self",
+          leadCreateScopeType: (value.leadCreateScopeType as MePermissions["leadCreateScopeType"]) ?? "self",
         })
 
       } catch (err) {
@@ -163,6 +166,7 @@ export function AppRoot() {
           canManageContracts: false,
           canImportLeads: false,
           leadScopeType: "self",
+          leadCreateScopeType: "self",
         })
 
       }
