@@ -8,9 +8,6 @@ export interface DashboardSummary {
   riskLeadCount: number
 }
 
-
-
-
 export interface DashboardFilterParams {
   teamId?: number
   ownerId?: string
@@ -27,6 +24,19 @@ export interface RecentDealSummary {
   closedAt: string | null
 }
 
+type SupabaseLikeError = {
+  code?: string | null
+  message?: string | null
+}
+
+function isMissingRelationError(error: SupabaseLikeError | null): boolean {
+  if (!error) {
+    return false
+  }
+
+  const message = `${error.message ?? ""}`.toLowerCase()
+  return error.code === "PGRST205" || error.code === "42P01" || message.includes("could not find the table")
+}
 
 export async function fetchDashboardSummary(
   params: DashboardFilterParams = {},
@@ -53,16 +63,8 @@ export async function fetchDashboardSummary(
     { data: businessRulesRpcResult, error: businessRulesError },
   ] = await Promise.all([
     query,
-    supabase
-      .from("settings")
-      .select("value")
-      .eq("key", "analytics.excluded_teams")
-      .maybeSingle(),
-    supabase
-      .from("settings")
-      .select("value")
-      .eq("key", "analytics.excluded_profiles")
-      .maybeSingle(),
+    supabase.from("settings").select("value").eq("key", "analytics.excluded_teams").maybeSingle(),
+    supabase.from("settings").select("value").eq("key", "analytics.excluded_profiles").maybeSingle(),
     supabase.rpc("rpc_get_pipeline_business_rules"),
   ])
 
@@ -76,23 +78,19 @@ export async function fetchDashboardSummary(
     console.error("Failed to load pipeline business rules via RPC for dashboard summary", businessRulesError)
   }
 
-
-
   const excludedTeamIds = new Set<number>(
-    teamExclusionRow && (teamExclusionRow as any).value &&
-    Array.isArray(((teamExclusionRow as any).value as any).team_ids)
-      ? (((teamExclusionRow as any).value as any).team_ids as any[]).filter(
-          (v: any) => typeof v === "number",
-        )
+    teamExclusionRow &&
+      (teamExclusionRow as any).value &&
+      Array.isArray(((teamExclusionRow as any).value as any).team_ids)
+      ? (((teamExclusionRow as any).value as any).team_ids as any[]).filter((v: any) => typeof v === "number")
       : [],
   )
 
   const excludedProfileIds = new Set<string>(
-    profileExclusionRow && (profileExclusionRow as any).value &&
-    Array.isArray(((profileExclusionRow as any).value as any).profile_ids)
-      ? (((profileExclusionRow as any).value as any).profile_ids as any[]).filter(
-          (v: any) => typeof v === "string",
-        )
+    profileExclusionRow &&
+      (profileExclusionRow as any).value &&
+      Array.isArray(((profileExclusionRow as any).value as any).profile_ids)
+      ? (((profileExclusionRow as any).value as any).profile_ids as any[]).filter((v: any) => typeof v === "string")
       : [],
   )
 
@@ -108,18 +106,19 @@ export async function fetchDashboardSummary(
     if (teamId != null && excludedTeamIds.has(teamId)) {
       return false
     }
+
     const ownerId = (lead.owner_id as string | null) ?? null
     if (ownerId && excludedProfileIds.has(ownerId)) {
       return false
     }
+
     return true
   })
-
 
   const now = new Date()
   const totalLeads = leads.length
 
-  // 默认预警/风险阈值：72 小时（3 天）预警，168 小时（7 天）风险
+  // 默认预警/风险阈值：72 小时预警，168 小时风险
   const DEFAULT_WARNING_HOURS = 72
   const DEFAULT_DANGER_HOURS = 168
 
@@ -139,7 +138,6 @@ export async function fetchDashboardSummary(
     }
   }
 
-
   let closedWon = 0
   let closedLost = 0
   let monthlyRevenue = 0
@@ -150,7 +148,6 @@ export async function fetchDashboardSummary(
   for (const lead of leads) {
     const status = lead.status ?? "open"
     const closeResult = lead.close_result ?? ""
-    const budget = lead.budget ?? 0
     const createdAt = lead.created_at ? new Date(lead.created_at) : null
     const lastContact = lead.last_contact_at ? new Date(lead.last_contact_at) : createdAt
 
@@ -164,7 +161,7 @@ export async function fetchDashboardSummary(
       }
     }
 
-    // 仪表盘“风险线索”：只统计在谈线索（open），成交/丢单都不计入
+    // 仪表盘“风险线索”仅统计在谈线索，成交/丢单不计入
     if (status === "open") {
       if (lastContact) {
         const diffHours = (now.getTime() - lastContact.getTime()) / (1000 * 60 * 60)
@@ -178,8 +175,9 @@ export async function fetchDashboardSummary(
     }
   }
 
-
-
+  if (warningHours < dangerHours && warningHours > 0) {
+    // 保留对业务规则的读取，后续如果仪表盘增加“预警线索”卡片可直接复用
+  }
 
   const denominator = closedWon + closedLost
   const winRate = denominator > 0 ? (closedWon / denominator) * 100 : 0
@@ -191,7 +189,9 @@ export async function fetchDashboardSummary(
     .lte("paid_at", now.toISOString())
 
   if (paymentsError) {
-    console.error("Failed to load dashboard payments summary", paymentsError)
+    if (!isMissingRelationError(paymentsError)) {
+      console.error("Failed to load dashboard payments summary", paymentsError)
+    }
   } else {
     const paymentRows = (payments ?? []) as { amount: number | null }[]
     for (const row of paymentRows) {
@@ -209,11 +209,7 @@ export async function fetchDashboardSummary(
   }
 }
 
-
-
 type LeadStageRow = Pick<LeadSecureRow, "id" | "team_id" | "owner_id" | "stage" | "status" | "close_result">
-
-
 
 export interface SalesFunnelCounts {
   byStage: Record<string, number>
@@ -224,10 +220,7 @@ export async function fetchSalesFunnelCounts(
 ): Promise<SalesFunnelCounts> {
   const supabase = getBrowserSupabaseClient()
 
-  let query = supabase
-    .from("leads_secure_view")
-    .select("id, team_id, owner_id, stage, status, close_result")
-
+  let query = supabase.from("leads_secure_view").select("id, team_id, owner_id, stage, status, close_result")
 
   if (params.teamId !== undefined) {
     query = query.eq("team_id", params.teamId)
@@ -243,16 +236,8 @@ export async function fetchSalesFunnelCounts(
     { data: profileExclusionRow, error: profileExclusionError },
   ] = await Promise.all([
     query,
-    supabase
-      .from("settings")
-      .select("value")
-      .eq("key", "analytics.excluded_teams")
-      .maybeSingle(),
-    supabase
-      .from("settings")
-      .select("value")
-      .eq("key", "analytics.excluded_profiles")
-      .maybeSingle(),
+    supabase.from("settings").select("value").eq("key", "analytics.excluded_teams").maybeSingle(),
+    supabase.from("settings").select("value").eq("key", "analytics.excluded_profiles").maybeSingle(),
   ])
 
   if (teamExclusionError && teamExclusionError.code !== "PGRST116") {
@@ -268,20 +253,18 @@ export async function fetchSalesFunnelCounts(
   }
 
   const excludedTeamIds = new Set<number>(
-    teamExclusionRow && (teamExclusionRow as any).value &&
-    Array.isArray(((teamExclusionRow as any).value as any).team_ids)
-      ? (((teamExclusionRow as any).value as any).team_ids as any[]).filter(
-          (v: any) => typeof v === "number",
-        )
+    teamExclusionRow &&
+      (teamExclusionRow as any).value &&
+      Array.isArray(((teamExclusionRow as any).value as any).team_ids)
+      ? (((teamExclusionRow as any).value as any).team_ids as any[]).filter((v: any) => typeof v === "number")
       : [],
   )
 
   const excludedProfileIds = new Set<string>(
-    profileExclusionRow && (profileExclusionRow as any).value &&
-    Array.isArray(((profileExclusionRow as any).value as any).profile_ids)
-      ? (((profileExclusionRow as any).value as any).profile_ids as any[]).filter(
-          (v: any) => typeof v === "string",
-        )
+    profileExclusionRow &&
+      (profileExclusionRow as any).value &&
+      Array.isArray(((profileExclusionRow as any).value as any).profile_ids)
+      ? (((profileExclusionRow as any).value as any).profile_ids as any[]).filter((v: any) => typeof v === "string")
       : [],
   )
 
@@ -292,14 +275,14 @@ export async function fetchSalesFunnelCounts(
     if (teamId != null && excludedTeamIds.has(teamId)) {
       return false
     }
+
     const ownerId = (lead.owner_id as string | null) ?? null
     if (ownerId && excludedProfileIds.has(ownerId)) {
       return false
     }
+
     return true
   })
-
-
 
   const byStage: Record<string, number> = {}
 
@@ -311,12 +294,7 @@ export async function fetchSalesFunnelCounts(
     }
 
     const rawStage = (lead.stage ?? "").trim()
-
-    let logicalStage = rawStage
-
-    if (!logicalStage) {
-      logicalStage = "L1"
-    }
+    let logicalStage = rawStage || "L1"
 
     if (
       status === "closed" &&

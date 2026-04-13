@@ -157,13 +157,19 @@ export async function assignLead(leadId: string, newOwnerId: string, reason?: st
 }
 
 
-export async function transferLead(leadId: string, newTeamId: number, newOwnerId: string): Promise<void> {
+export async function transferLead(
+  leadId: string,
+  newTeamId: number,
+  newOwnerId: string,
+  reason?: string | null,
+): Promise<void> {
   const supabase = getBrowserSupabaseClient()
 
   const { error } = await supabase.rpc("rpc_lead_transfer", {
     p_lead_id: leadId,
     p_new_team_id: newTeamId,
     p_new_owner: newOwnerId,
+    p_reason: reason ?? null,
   })
 
   if (error) {

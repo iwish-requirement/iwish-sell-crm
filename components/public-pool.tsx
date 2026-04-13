@@ -453,6 +453,20 @@ function summarizeImportSample(
   }
 }
 
+function isLikelyStandardPublicPoolTemplate(headers: string[], sampleRows: string[][]) {
+  const mapping = resolveImportColumnMapping(headers, sampleRows, null, { preferAi: false })
+
+  return (
+    mapping.company === 0 &&
+    mapping.website === 1 &&
+    mapping.contact === 2 &&
+    mapping.phone === 3 &&
+    mapping.wechat === 4 &&
+    mapping.sourceLabel === 5 &&
+    mapping.budget === 6
+  )
+}
+
 function formatImportConfidence(confidence: number | null | undefined) {
   if (typeof confidence !== "number" || !Number.isFinite(confidence)) {
     return "待判断"
@@ -609,6 +623,7 @@ export function PublicPool() {
   const [importAiInsight, setImportAiInsight] = useState<ImportAiInsight | null>(null)
   const [importAiError, setImportAiError] = useState<string | null>(null)
   const [importAiStatus, setImportAiStatus] = useState<ImportAiStatus>("idle")
+  const [importBypassedAi, setImportBypassedAi] = useState(false)
   const [isSubmittingImport, setIsSubmittingImport] = useState(false)
   const [importSourceGroups, setImportSourceGroups] = useState<ImportSourceGroupOption[]>([])
   const [importReviewRows, setImportReviewRows] = useState<ImportReviewDraftRow[] | null>(null)
@@ -1340,6 +1355,7 @@ export function PublicPool() {
     setImportAiInsight(null)
     setImportAiError(null)
     setImportAiStatus("idle")
+    setImportBypassedAi(false)
 
     let slowProgressTimer: ReturnType<typeof setInterval> | null = null
     let progress = 5
@@ -1403,6 +1419,7 @@ export function PublicPool() {
       const sampleRows = parsedResult?.sampleRows ?? []
       const previewSourceRows = parsedResult?.previewSourceRows ?? []
       const totalCount = Number(parsedResult?.totalCount ?? 0)
+      const isStandardTemplate = isLikelyStandardPublicPoolTemplate(headerRow, sampleRows)
 
       const resolvedColumnMapping = resolveImportColumnMapping(
         headerRow,
@@ -1452,8 +1469,22 @@ export function PublicPool() {
       setParsedImportRows(previewRows)
       setImportAiMapping(finalImportMapping)
       setImportAiError(null)
-      setImportAiInsight(null)
-      setImportAiStatus(headerRow.length > 0 && sampleRows.length > 0 ? "processing" : "failed")
+      setImportAiInsight(
+        isStandardTemplate
+          ? {
+              summary: "检测到公海标准模板，本次已按规则直接解析并可立即导入公海。",
+              warnings: ["标准模板已按固定列规则处理，本次未调用 AI。"],
+              overallConfidence: 1,
+              fieldConfidence: {},
+              aiEnhancedCount: 0,
+              reviewNeededCount: 0,
+            }
+          : null,
+      )
+      setImportAiStatus(
+        isStandardTemplate ? "completed" : headerRow.length > 0 && sampleRows.length > 0 ? "processing" : "failed",
+      )
+      setImportBypassedAi(isStandardTemplate)
 
 
 
@@ -1474,7 +1505,7 @@ export function PublicPool() {
         setImportProgress(finalProgress)
       }, 80)
 
-      if (headerRow.length > 0 && sampleRows.length > 0) {
+      if (!isStandardTemplate && headerRow.length > 0 && sampleRows.length > 0) {
         const runAiAnalysis = async () => {
           try {
             const aiAnalysis = await callImportAiProxyDirect({
@@ -1588,6 +1619,7 @@ export function PublicPool() {
     setImportAiInsight(null)
     setImportAiError(null)
     setImportAiStatus("idle")
+    setImportBypassedAi(false)
     setImportSourceGroups([])
     setImportReviewRows(null)
     setIsPreparingImportReview(false)
@@ -2668,8 +2700,8 @@ const getDaysInPoolBadge = (days: number) => {
       >
         <DialogContent className="w-[calc(100vw-1.5rem)] sm:max-w-3xl max-h-[90vh] flex flex-col">
           <DialogHeader>
-            <DialogTitle>导入线索</DialogTitle>
-            <DialogDescription>上传 Excel 或 CSV 文件批量导入线索数据</DialogDescription>
+            <DialogTitle>导入到公海池</DialogTitle>
+            <DialogDescription>支持标准模板直接导入公海，也支持非标准表格通过 AI 清洗后导入公海</DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-4">
@@ -2689,7 +2721,7 @@ const getDaysInPoolBadge = (days: number) => {
                 >
                   <FileSpreadsheet className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
                   <p className="text-sm font-medium text-foreground mb-1">拖拽文件到此处上传</p>
-                  <p className="text-xs text-muted-foreground mb-4">支持 .xlsx, .xls, .csv 格式</p>
+                  <p className="text-xs text-muted-foreground mb-4">支持 .xlsx、.xls、.csv 格式</p>
                   <label>
                     <input type="file" accept=".xlsx,.xls,.csv" onChange={handleFileSelect} className="hidden" />
                     <Button variant="outline" size="sm" asChild>
@@ -2702,7 +2734,7 @@ const getDaysInPoolBadge = (days: number) => {
                 <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
                   <div className="flex items-center gap-2">
                     <FileSpreadsheet className="w-4 h-4 text-muted-foreground" />
-                    <span className="text-sm text-muted-foreground">下载导入模板</span>
+                    <span className="text-sm text-muted-foreground">下载公海标准模板</span>
                   </div>
                   <Button variant="ghost" size="sm" asChild>
                     <a href="/public_pool_import_template.csv" download>
@@ -2741,7 +2773,9 @@ const getDaysInPoolBadge = (days: number) => {
                       {importStage === "uploading" && "正在上传文件并准备 AI 分析..."}
                       {importStage === "checking" && "AI 正在理解表格结构并检查冲突..."}
                       {importStage === "complete" &&
-                        (importAiStatus === "processing"
+                        (importBypassedAi
+                          ? "已识别为公海标准模板，当前按规则直导公海，无需等待 AI 分析"
+                          : importAiStatus === "processing"
                           ? "规则预览已生成，AI 正在后台分析，完成后才可开始导入"
                           : importAiInsight
                           ? "AI 预检查完成，导入过程将在后台执行"
@@ -2777,7 +2811,7 @@ const getDaysInPoolBadge = (days: number) => {
                           </div>
                           <div className="flex flex-wrap items-center gap-2 text-xs">
                             <Badge variant="secondary" className="bg-white/80 text-blue-900 border border-blue-200">
-                              整体置信度 {formatImportConfidence(importAiInsight.overallConfidence)}
+                              整体置信度：{formatImportConfidence(importAiInsight.overallConfidence)}
                             </Badge>
                             <Badge variant="secondary" className="bg-white/80 text-blue-900 border border-blue-200">
                               AI 预览识别 {importAiInsight.aiEnhancedCount} 行

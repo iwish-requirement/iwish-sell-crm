@@ -48,6 +48,7 @@ import { mapRpcError, type RpcErrorFriendly } from "@/lib/rpc-error-mapper"
 import { RpcErrorBanner } from "@/components/rpc-error-banner"
 import { updateLead, closeLead, transferLead } from "@/lib/services/leads"
 import { MePermissionsContext } from "@/components/app-root"
+import { LeadKanbanImportDialog } from "@/components/lead-kanban-import-dialog"
 
 interface Lead {
   id: string | number
@@ -96,7 +97,7 @@ interface Lead {
 
 interface Interaction {
   id: number
-  type: "call" | "wechat" | "visit"
+  type: "call" | "wechat" | "visit" | "system"
   content: string
   date: string
   user: string
@@ -546,6 +547,8 @@ function InteractionItem({ interaction }: { interaction: Interaction }) {
         return <MessageCircle className="w-4 h-4" />
       case "visit":
         return <MapPin className="w-4 h-4" />
+      case "system":
+        return <ArrowRight className="w-4 h-4" />
       default:
         return <Phone className="w-4 h-4" />
     }
@@ -629,6 +632,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
   const canAssignLeads = mePermissions?.canAssignLeads ?? false
   const canReturnToPool = mePermissions?.canReturnToPool ?? false
   const canDeleteLeads = mePermissions?.canDeleteLeads ?? false
+  const canImportLeads = mePermissions?.canImportLeads ?? false
   const leadScopeType = mePermissions?.leadScopeType ?? "self"
   const [currentProfile, setCurrentProfile] = useState<UserProfile | null>(null)
 
@@ -1556,10 +1560,12 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
 
   const handleAddLead = async () => {
+    const trimmedCompany = newLead.company.trim()
+    const trimmedWebsite = newLead.website.trim()
 
-    if (!newLead.website.trim() || (!newLead.phone.trim() && !(newLead.wechat ?? "").trim())) {
+    if ((!trimmedCompany && !trimmedWebsite) || (!newLead.phone.trim() && !(newLead.wechat ?? "").trim())) {
       toast.error("请填写必填字段", {
-        description: "公司网址，以及联系电话 / 微信至少填写一个",
+        description: "公司名称或网址至少填写一个，且联系电话 / 微信至少填写一个",
       })
       return
     }
@@ -1655,8 +1661,8 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       const payload: Record<string, unknown> = {
         team_id: profile.teamId,
         owner_id: ownerId,
-        name: newLead.company || newLead.website,
-        website: newLead.website.trim(),
+        name: trimmedCompany || trimmedWebsite,
+        website: trimmedWebsite || null,
         source: sourceLabel,
         stage: "L1",
         status: "open",
@@ -1823,7 +1829,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
         return
       }
 
-      const interactionsFromDb: Interaction[] =
+      const noteInteractions: Interaction[] =
         data?.map((row: any, index: number) => {
           const authorId = (row.author_id as string | null) ?? null
           const authorRep = authorId ? salesReps.find((rep) => rep.id === authorId) : undefined
@@ -1844,6 +1850,43 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
           }
         }) ?? []
 
+
+      let transferInteractions: Interaction[] = []
+      try {
+        const { data: activityRows, error: activityError } = await supabase.rpc("rpc_recent_activities", { p_limit: 100 })
+        if (activityError) {
+          console.error("Failed to load lead activities", activityError)
+        } else if (Array.isArray(activityRows)) {
+          transferInteractions = activityRows
+            .filter((row: any) => row?.target_type === "lead" && row?.target_id === leadId && row?.action === "transfer_lead")
+            .map((row: any, index: number) => {
+              const fromOwnerId = String(row?.before?.owner_id ?? "").trim()
+              const toOwnerId = String(row?.after?.owner_id ?? "").trim()
+              const fromOwner = salesReps.find((rep) => rep.id === fromOwnerId)?.name
+              const toOwner = salesReps.find((rep) => rep.id === toOwnerId)?.name
+              const content = [
+                toOwner ? `已转移给 ${toOwner}` : "线索已完成跨团队转移",
+                fromOwner ? `原负责人 ${fromOwner}` : "",
+                row?.reason ? `原因：${row.reason}` : "",
+              ]
+                .filter(Boolean)
+                .join("，")
+
+              return {
+                id: 100000 + index,
+                type: "visit",
+                content,
+                date: row.created_at ? new Date(row.created_at).toISOString().split("T")[0] : "",
+                user: String(row.actor_name ?? "系统"),
+                authorId: (row.actor_id as string | null) ?? undefined,
+              }
+            })
+        }
+      } catch (activityErr) {
+        console.error("Failed to load lead transfer activities", activityErr)
+      }
+
+      const interactionsFromDb: Interaction[] = [...noteInteractions, ...transferInteractions]
 
       setLeads((prevLeads) =>
         prevLeads.map((lead) =>
@@ -2676,12 +2719,21 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <div>
           <h1 className="text-3xl font-bold text-foreground tracking-tight">{isPublicPool ? "公海池" : "我的线索"}</h1>
           <p className="text-sm text-muted-foreground font-medium mt-1">{isPublicPool ? "可领取的公共线索池" : "高效管理您的销售线索与客户关系"}</p>
         </div>
-        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <div className="flex items-center gap-2">
+          {!isPublicPool && (
+            <LeadKanbanImportDialog
+              canImportLeads={canImportLeads}
+              salesReps={salesReps.map((rep) => ({ id: rep.id, name: rep.name, teamId: rep.teamId }))}
+              currentTeamId={currentProfile?.teamId ?? null}
+              onImported={retryLoad}
+            />
+          )}
+          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
             <Button size="lg" className="h-11 px-6 font-bold shadow-lg shadow-primary/20 transition-all hover:scale-[1.02] active:scale-[0.98]">
               <Plus className="w-5 h-5 mr-2 stroke-[2.5px]" />
@@ -3011,7 +3063,8 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
               </Button>
             </DialogFooter>
           </DialogContent>
-        </Dialog>
+          </Dialog>
+        </div>
       </div>
 
       {loadError && (
@@ -4387,7 +4440,12 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
                 try {
                   setIsReassigning(true)
-                  await transferLead(selectedLead.id, targetTeamIdNumber, transferTargetOwnerId)
+                  await transferLead(
+                    selectedLead.id,
+                    targetTeamIdNumber,
+                    transferTargetOwnerId,
+                    transferReason.trim() || null,
+                  )
 
                   const teamName = teams.find((t) => t.id === targetTeamIdNumber)?.name ?? "目标团队"
                   const ownerName =
