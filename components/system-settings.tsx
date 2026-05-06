@@ -3412,15 +3412,25 @@ function OrganizationTab() {
 
                     try {
                       setIsRejectingUser(true)
-                      const supabase = getBrowserSupabaseClient()
-
-                      const { error } = await supabase.rpc("rpc_auth_reject", {
-                        p_user_id: selectedPendingUser.id,
-                        p_reason: rejectReason,
+                      const response = await fetch("/api/auth/reject", {
+                        method: "POST",
+                        headers: {
+                          "Content-Type": "application/json",
+                        },
+                        body: JSON.stringify({
+                          userId: selectedPendingUser.id,
+                          reason: rejectReason,
+                        }),
                       })
 
-                      if (error) {
-                        const message = error.message ?? "驳回失败"
+                      const result = (await response.json().catch(() => ({}))) as {
+                        ok?: boolean
+                        error?: string
+                        detail?: string
+                      }
+
+                      if (!response.ok || !result.ok) {
+                        const message = result.error ?? result.detail ?? "驳回失败"
                         let friendly = "驳回失败，请稍后重试"
 
                         if (message.includes("ERR_NO_PERMISSION:auth.reject")) {
@@ -3429,6 +3439,10 @@ function OrganizationTab() {
                           friendly = "驳回原因必填，请检查后重新提交"
                         } else if (message.includes("ERR_INVALID_STATUS:only_pending_can_reject")) {
                           friendly = "只有待审核状态的用户可以被驳回，请刷新后重试"
+                        } else if (message.includes("ERR_SERVER_MISCONFIGURED")) {
+                          friendly = "服务端未配置 Supabase service role key，无法删除认证账号"
+                        } else if (message.includes("ERR_AUTH_DELETE_FAILED")) {
+                          friendly = "已驳回业务申请，但未能删除 Supabase Auth 用户，请联系管理员手动处理"
                         }
 
                         toast.error("驳回失败", { description: friendly })
