@@ -3419,10 +3419,8 @@ function OrganizationTab() {
                         p_reason: rejectReason,
                       })
 
-                      const result = { error: error?.message, detail: undefined as string | undefined }
-
                       if (error) {
-                        const message = result.error ?? result.detail ?? "驳回失败"
+                        const message = error.message ?? "驳回失败"
                         let friendly = "驳回失败，请稍后重试"
 
                         if (message.includes("ERR_NO_PERMISSION:auth.reject")) {
