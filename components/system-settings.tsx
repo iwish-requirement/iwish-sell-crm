@@ -3412,24 +3412,16 @@ function OrganizationTab() {
 
                     try {
                       setIsRejectingUser(true)
-                      const response = await fetch("/api/auth/reject", {
-                        method: "POST",
-                        headers: {
-                          "Content-Type": "application/json",
-                        },
-                        body: JSON.stringify({
-                          userId: selectedPendingUser.id,
-                          reason: rejectReason,
-                        }),
+                      const supabase = getBrowserSupabaseClient()
+
+                      const { error } = await supabase.rpc("rpc_auth_reject", {
+                        p_user_id: selectedPendingUser.id,
+                        p_reason: rejectReason,
                       })
 
-                      const result = (await response.json().catch(() => ({}))) as {
-                        ok?: boolean
-                        error?: string
-                        detail?: string
-                      }
+                      const result = { error: error?.message, detail: undefined as string | undefined }
 
-                      if (!response.ok || !result.ok) {
+                      if (error) {
                         const message = result.error ?? result.detail ?? "驳回失败"
                         let friendly = "驳回失败，请稍后重试"
 
