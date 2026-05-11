@@ -273,9 +273,9 @@ function ActivityTable({ users, mode }: { users: DailyActivityUserRow[]; mode: R
           按人员聚合今日线索录入、建联、拜访、跟进和逾期情况。
         </CardDescription>
       </CardHeader>
-      <CardContent className="overflow-x-auto p-0">
+      <CardContent className="max-h-[460px] overflow-auto p-0">
         <Table>
-          <TableHeader>
+          <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
               <TableHead className="min-w-[160px]">业务人员</TableHead>
               <TableHead className="text-right">新增线索</TableHead>
@@ -352,9 +352,9 @@ function CustomerDetailsTable({ rows }: { rows: DashboardCustomerDetailRow[] }) 
           <Badge variant="outline">最多展示 50 条</Badge>
         </div>
       </CardHeader>
-      <CardContent className="overflow-x-auto p-0">
+      <CardContent className="max-h-[560px] overflow-auto p-0">
         <Table>
-          <TableHeader>
+          <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
               <TableHead className="min-w-[220px]">客户/企业</TableHead>
               <TableHead>联系人</TableHead>

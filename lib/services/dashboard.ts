@@ -634,6 +634,49 @@ export async function fetchRoleDashboardActivity(
   const customerDetailsById = new Map<string, DashboardCustomerDetailRow>()
 
   const leadIds = leads.map((lead) => lead.id).filter(Boolean)
+  const leadById = new Map<string, LeadSecureRow>()
+  for (const lead of leads) {
+    leadById.set(lead.id, lead)
+  }
+
+  const addCustomerDetail = (lead: LeadSecureRow): DashboardCustomerDetailRow | null => {
+    const ownerKey = getLeadOwnerKey(lead)
+    const createdAt = lead.created_at ? new Date(lead.created_at) : null
+    const nextContactAt = lead.next_contact_at ? new Date(lead.next_contact_at) : null
+    const lastContactAt = lead.last_contact_at ? new Date(lead.last_contact_at) : createdAt
+    const status = lead.status ?? "open"
+    const ownerName = ownerKey ? usersById.get(ownerKey)?.name ?? ownerKey.slice(0, 8) : "未分配"
+    const existing = customerDetailsById.get(lead.id)
+    if (existing) return existing
+
+    const detail: DashboardCustomerDetailRow = {
+      id: lead.id,
+      companyName: lead.name || "未命名线索",
+      contactName: (lead as any).customer_name || "-",
+      ownerId: ownerKey,
+      ownerName,
+      stage: lead.stage || "-",
+      status: lead.status || "-",
+      grade: lead.customer_grade ?? null,
+      createdAt: lead.created_at ?? null,
+      lastContactAt: lead.last_contact_at ?? null,
+      nextContactAt: lead.next_contact_at ?? null,
+      contactActions: 0,
+      visits: 0,
+      followUps: 0,
+      isQualified: isQualifiedLead(lead),
+      isWon: isWonLead(lead),
+      isOverdue:
+        status === "open" &&
+        Boolean(
+          (nextContactAt && nextContactAt < now) ||
+            (!nextContactAt &&
+              (!lastContactAt || (now.getTime() - lastContactAt.getTime()) / (1000 * 60 * 60) >= dangerHours)),
+        ),
+    }
+    customerDetailsById.set(lead.id, detail)
+    return detail
+  }
 
   for (const lead of leads) {
     const ownerKey = getLeadOwnerKey(lead)
@@ -689,36 +732,10 @@ export async function fetchRoleDashboardActivity(
 
     const shouldShowDetail =
       (createdAt && createdAt >= rangeStart && createdAt < rangeEnd) ||
-      (updatedAt && updatedAt >= rangeStart && updatedAt < rangeEnd) ||
-      (nextContactAt && nextContactAt < now)
+      (nextContactAt && nextContactAt >= rangeStart && nextContactAt < rangeEnd)
 
     if (shouldShowDetail) {
-      const ownerName = ownerKey ? usersById.get(ownerKey)?.name ?? ownerKey.slice(0, 8) : "未分配"
-      customerDetailsById.set(lead.id, {
-        id: lead.id,
-        companyName: lead.name || "未命名线索",
-        contactName: (lead as any).customer_name || "-",
-        ownerId: ownerKey,
-        ownerName,
-        stage: lead.stage || "-",
-        status: lead.status || "-",
-        grade: lead.customer_grade ?? null,
-        createdAt: lead.created_at ?? null,
-        lastContactAt: lead.last_contact_at ?? null,
-        nextContactAt: lead.next_contact_at ?? null,
-        contactActions: 0,
-        visits: 0,
-        followUps: 0,
-        isQualified: isQualifiedLead(lead),
-        isWon: isWonLead(lead),
-        isOverdue:
-          status === "open" &&
-          Boolean(
-            (nextContactAt && nextContactAt < now) ||
-              (!nextContactAt &&
-                (!lastContactAt || (now.getTime() - lastContactAt.getTime()) / (1000 * 60 * 60) >= dangerHours)),
-          ),
-      })
+      addCustomerDetail(lead)
     }
   }
 
@@ -746,7 +763,9 @@ export async function fetchRoleDashboardActivity(
         const user = authorId ? usersById.get(authorId) : null
         const isContact = noteType === "call" || noteType === "wechat"
         const isVisit = noteType === "visit"
-        const detail = (note.lead_id as string | null) ? customerDetailsById.get(note.lead_id as string) : null
+        const noteLeadId = (note.lead_id as string | null) ?? null
+        const leadForNote = noteLeadId ? leadById.get(noteLeadId) : null
+        const detail = isInRange && leadForNote ? addCustomerDetail(leadForNote) : null
 
         if (isContact) {
           funnelContacted += 1
