@@ -7,6 +7,7 @@ import {
   CalendarClock,
   CheckCircle2,
   Clock,
+  ExternalLink,
   MessageCircle,
   PhoneCall,
   TrendingUp,
@@ -29,12 +30,14 @@ import { ChartSkeleton, KPICardSkeleton, TableSkeleton } from "@/components/skel
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { fetchCurrentUserProfile, fetchCurrentUserPublicProfile } from "@/lib/auth/profile"
 import {
   fetchDashboardSummary,
   fetchRoleDashboardActivity,
   type DailyActivityUserRow,
+  type DashboardCustomerDetailRow,
   type DashboardAlert,
   type DashboardSummary,
   type RoleDashboardActivity,
@@ -42,6 +45,7 @@ import {
 import { getBrowserSupabaseClient } from "@/lib/supabase/client"
 
 type RoleDashboardMode = "sales" | "manager" | "director"
+type TimeRangePreset = "today" | "yesterday" | "week" | "month" | "custom"
 
 interface KpiDefinition {
   key: keyof RoleDashboardActivity["totals"]
@@ -49,6 +53,11 @@ interface KpiDefinition {
   description: string
   icon: typeof Users
   tone: string
+}
+
+interface DashboardDateRange {
+  start: Date
+  end: Date
 }
 
 const MANAGER_KPIS: KpiDefinition[] = [
@@ -80,6 +89,55 @@ function formatCurrency(value: number): string {
     currency: "CNY",
     maximumFractionDigits: 0,
   }).format(value)
+}
+
+function startOfLocalDay(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate())
+}
+
+function addDays(date: Date, days: number): Date {
+  const next = new Date(date)
+  next.setDate(next.getDate() + days)
+  return next
+}
+
+function formatDateInput(date: Date): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, "0")
+  const day = String(date.getDate()).padStart(2, "0")
+  return `${year}-${month}-${day}`
+}
+
+function formatDateLabel(value: string | null | undefined): string {
+  if (!value) return "-"
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return "-"
+  return formatDateInput(date)
+}
+
+function getPresetRange(preset: TimeRangePreset): DashboardDateRange {
+  const now = new Date()
+  const today = startOfLocalDay(now)
+  if (preset === "yesterday") {
+    const start = addDays(today, -1)
+    return { start, end: today }
+  }
+  if (preset === "week") {
+    const day = today.getDay() || 7
+    const start = addDays(today, 1 - day)
+    return { start, end: addDays(today, 1) }
+  }
+  if (preset === "month") {
+    const start = new Date(today.getFullYear(), today.getMonth(), 1)
+    return { start, end: addDays(today, 1) }
+  }
+  return { start: today, end: addDays(today, 1) }
+}
+
+function getRangeLabel(range: DashboardDateRange): string {
+  const start = formatDateInput(range.start)
+  const endInclusive = formatDateInput(addDays(range.end, -1))
+  return start === endInclusive ? start : `${start} 至 ${endInclusive}`
 }
 
 function getModeLabel(mode: RoleDashboardMode): string {
@@ -126,6 +184,81 @@ function KpiGrid({
         )
       })}
     </div>
+  )
+}
+
+function TimeRangeControls({
+  preset,
+  range,
+  onPresetChange,
+  onCustomRangeChange,
+}: {
+  preset: TimeRangePreset
+  range: DashboardDateRange
+  onPresetChange: (preset: TimeRangePreset) => void
+  onCustomRangeChange: (range: DashboardDateRange) => void
+}) {
+  const presets: { key: TimeRangePreset; label: string }[] = [
+    { key: "today", label: "今日" },
+    { key: "yesterday", label: "昨日" },
+    { key: "week", label: "本周" },
+    { key: "month", label: "本月" },
+    { key: "custom", label: "自定义" },
+  ]
+
+  return (
+    <Card className="border-muted-foreground/10 shadow-sm">
+      <CardContent className="flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <p className="text-sm font-semibold text-foreground">时间维度</p>
+          <p className="text-xs text-muted-foreground">当前统计范围：{getRangeLabel(range)}</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {presets.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              onClick={() => onPresetChange(item.key)}
+              className={`h-9 rounded-md border px-3 text-sm font-medium transition-colors ${
+                preset === item.key
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-border bg-background text-foreground hover:bg-muted"
+              }`}
+            >
+              {item.label}
+            </button>
+          ))}
+          {preset === "custom" && (
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                type="date"
+                value={formatDateInput(range.start)}
+                onChange={(event) => {
+                  const nextStart = new Date(event.target.value)
+                  if (!Number.isNaN(nextStart.getTime())) {
+                    onCustomRangeChange({ start: nextStart, end: range.end <= nextStart ? addDays(nextStart, 1) : range.end })
+                  }
+                }}
+                className="h-9 w-[150px]"
+              />
+              <span className="text-xs text-muted-foreground">至</span>
+              <Input
+                type="date"
+                value={formatDateInput(addDays(range.end, -1))}
+                onChange={(event) => {
+                  const selected = new Date(event.target.value)
+                  if (!Number.isNaN(selected.getTime())) {
+                    const nextEnd = addDays(selected, 1)
+                    onCustomRangeChange({ start: nextEnd <= range.start ? addDays(nextEnd, -1) : range.start, end: nextEnd })
+                  }
+                }}
+                className="h-9 w-[150px]"
+              />
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 
@@ -197,6 +330,93 @@ function ActivityTable({ users, mode }: { users: DailyActivityUserRow[]; mode: R
                   </TableRow>
                 )
               })
+            )}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
+  )
+}
+
+function CustomerDetailsTable({ rows }: { rows: DashboardCustomerDetailRow[] }) {
+  return (
+    <Card className="border-muted-foreground/10 shadow-sm">
+      <CardHeader className="border-b border-muted/30">
+        <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+          <div>
+            <CardTitle className="text-lg">客户明细</CardTitle>
+            <CardDescription>
+              汇总数据下面可以直接看到具体客户，便于总经理从数据异常下钻到线索和负责人。
+            </CardDescription>
+          </div>
+          <Badge variant="outline">最多展示 50 条</Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="overflow-x-auto p-0">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="min-w-[220px]">客户/企业</TableHead>
+              <TableHead>联系人</TableHead>
+              <TableHead>负责人</TableHead>
+              <TableHead>阶段</TableHead>
+              <TableHead>级别</TableHead>
+              <TableHead className="text-right">建联</TableHead>
+              <TableHead className="text-right">拜访</TableHead>
+              <TableHead className="text-right">跟进</TableHead>
+              <TableHead>最近跟进</TableHead>
+              <TableHead>下次跟进</TableHead>
+              <TableHead>状态</TableHead>
+              <TableHead className="text-right">操作</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={12} className="py-8 text-center text-sm text-muted-foreground">
+                  当前时间范围内暂无可展示的客户明细
+                </TableCell>
+              </TableRow>
+            ) : (
+              rows.map((row) => (
+                <TableRow key={row.id}>
+                  <TableCell>
+                    <div className="max-w-[260px]">
+                      <p className="truncate font-semibold text-foreground">{row.companyName}</p>
+                      <p className="text-xs text-muted-foreground">创建：{formatDateLabel(row.createdAt)}</p>
+                    </div>
+                  </TableCell>
+                  <TableCell>{row.contactName || "-"}</TableCell>
+                  <TableCell>{row.ownerName}</TableCell>
+                  <TableCell>{row.stage}</TableCell>
+                  <TableCell>{row.grade ? <Badge variant="outline">{row.grade}</Badge> : "-"}</TableCell>
+                  <TableCell className="text-right font-medium">{row.contactActions}</TableCell>
+                  <TableCell className="text-right font-medium">{row.visits}</TableCell>
+                  <TableCell className="text-right font-medium">{row.followUps}</TableCell>
+                  <TableCell>{formatDateLabel(row.lastContactAt)}</TableCell>
+                  <TableCell>{formatDateLabel(row.nextContactAt)}</TableCell>
+                  <TableCell>
+                    {row.isOverdue ? (
+                      <Badge variant="destructive">逾期</Badge>
+                    ) : row.isWon ? (
+                      <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100">成交</Badge>
+                    ) : row.isQualified ? (
+                      <Badge className="bg-blue-100 text-blue-700 hover:bg-blue-100">有效</Badge>
+                    ) : (
+                      <Badge variant="secondary">跟进中</Badge>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <a
+                      href={`/leads/${row.id}`}
+                      className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
+                    >
+                      查看
+                      <ExternalLink className="h-3 w-3" />
+                    </a>
+                  </TableCell>
+                </TableRow>
+              ))
             )}
           </TableBody>
         </Table>
@@ -347,6 +567,8 @@ export function Dashboard() {
   const [activity, setActivity] = useState<RoleDashboardActivity | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [welcomeText, setWelcomeText] = useState<string | null>(null)
+  const [timePreset, setTimePreset] = useState<TimeRangePreset>("today")
+  const [dateRange, setDateRange] = useState<DashboardDateRange>(() => getPresetRange("today"))
   const mePermissions = useContext(MePermissionsContext)
 
   const mode: RoleDashboardMode = useMemo(() => {
@@ -377,7 +599,11 @@ export function Dashboard() {
 
         const [nextSummary, nextActivity] = await Promise.all([
           fetchDashboardSummary(params),
-          fetchRoleDashboardActivity(params),
+          fetchRoleDashboardActivity({
+            ...params,
+            startDate: dateRange.start.toISOString(),
+            endDate: dateRange.end.toISOString(),
+          }),
         ])
 
         if (!isMounted) return
@@ -397,7 +623,7 @@ export function Dashboard() {
     return () => {
       isMounted = false
     }
-  }, [mePermissions])
+  }, [mePermissions, dateRange])
 
   useEffect(() => {
     let isMounted = true
@@ -470,6 +696,21 @@ export function Dashboard() {
         </div>
       ) : null}
 
+      <TimeRangeControls
+        preset={timePreset}
+        range={dateRange}
+        onPresetChange={(preset) => {
+          setTimePreset(preset)
+          if (preset !== "custom") {
+            setDateRange(getPresetRange(preset))
+          }
+        }}
+        onCustomRangeChange={(range) => {
+          setTimePreset("custom")
+          setDateRange(range)
+        }}
+      />
+
       <KpiGrid activity={activity} mode={mode} />
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.45fr_0.55fr]">
@@ -481,6 +722,8 @@ export function Dashboard() {
         <TrendChart activity={activity} />
         <ProcessFunnel activity={activity} />
       </div>
+
+      <CustomerDetailsTable rows={activity?.customerDetails ?? []} />
 
       <LegacySummaryCard summary={summary} />
 

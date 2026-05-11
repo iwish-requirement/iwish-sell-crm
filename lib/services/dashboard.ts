@@ -13,6 +13,11 @@ export interface DashboardFilterParams {
   ownerId?: string
 }
 
+export interface DashboardActivityFilterParams extends DashboardFilterParams {
+  startDate?: string
+  endDate?: string
+}
+
 export interface DailyActivityUserRow {
   id: string
   name: string
@@ -41,6 +46,26 @@ export interface DashboardAlert {
   description: string
 }
 
+export interface DashboardCustomerDetailRow {
+  id: string
+  companyName: string
+  contactName: string
+  ownerId: string | null
+  ownerName: string
+  stage: string
+  status: string
+  grade: string | null
+  createdAt: string | null
+  lastContactAt: string | null
+  nextContactAt: string | null
+  contactActions: number
+  visits: number
+  followUps: number
+  isQualified: boolean
+  isWon: boolean
+  isOverdue: boolean
+}
+
 export interface RoleDashboardActivity {
   dateLabel: string
   totals: {
@@ -57,6 +82,7 @@ export interface RoleDashboardActivity {
   users: DailyActivityUserRow[]
   trends: DashboardTrendPoint[]
   alerts: DashboardAlert[]
+  customerDetails: DashboardCustomerDetailRow[]
   funnel: {
     newLeads: number
     contacted: number
@@ -148,6 +174,35 @@ function isWonLead(lead: Pick<LeadSecureRow, "stage" | "status" | "close_result"
 
 function getLeadOwnerKey(lead: Pick<LeadSecureRow, "owner_id" | "created_by">): string | null {
   return lead.owner_id ?? lead.created_by ?? null
+}
+
+function getDateRange(params: DashboardActivityFilterParams): {
+  rangeStart: Date
+  rangeEnd: Date
+  trendStart: Date
+  dateLabel: string
+} {
+  const now = new Date()
+  const todayStart = startOfLocalDay(now)
+  const fallbackStart = todayStart
+  const fallbackEnd = addDays(todayStart, 1)
+  const rawStart = params.startDate ? new Date(params.startDate) : fallbackStart
+  const rawEnd = params.endDate ? new Date(params.endDate) : fallbackEnd
+  const rangeStart = Number.isNaN(rawStart.getTime()) ? fallbackStart : rawStart
+  const rangeEnd = Number.isNaN(rawEnd.getTime()) || rawEnd <= rangeStart ? fallbackEnd : rawEnd
+  const diffDays = Math.max(1, Math.ceil((rangeEnd.getTime() - rangeStart.getTime()) / (24 * 60 * 60 * 1000)))
+  const trendDays = Math.min(Math.max(diffDays, 7), 31)
+  const trendStart = addDays(startOfLocalDay(rangeEnd), -trendDays)
+  const startLabel = toDateKey(rangeStart)
+  const endInclusive = addDays(startOfLocalDay(rangeEnd), -1)
+  const endLabel = toDateKey(endInclusive)
+
+  return {
+    rangeStart,
+    rangeEnd,
+    trendStart,
+    dateLabel: startLabel === endLabel ? startLabel : `${startLabel} 至 ${endLabel}`,
+  }
 }
 
 export async function fetchDashboardSummary(
@@ -431,13 +486,11 @@ export async function fetchSalesFunnelCounts(
 }
 
 export async function fetchRoleDashboardActivity(
-  params: DashboardFilterParams = {},
+  params: DashboardActivityFilterParams = {},
 ): Promise<RoleDashboardActivity> {
   const supabase = getBrowserSupabaseClient()
   const now = new Date()
-  const todayStart = startOfLocalDay(now)
-  const tomorrowStart = addDays(todayStart, 1)
-  const trendStart = addDays(todayStart, -6)
+  const { rangeStart, rangeEnd, trendStart, dateLabel } = getDateRange(params)
 
   const [
     { data: teamExclusionRow, error: teamExclusionError },
@@ -478,7 +531,7 @@ export async function fetchRoleDashboardActivity(
   let leadsQuery = supabase
     .from("leads_secure_view")
     .select(
-      "id, team_id, owner_id, created_by, name, stage, status, close_result, last_contact_at, next_contact_at, created_at, updated_at, customer_grade",
+      "id, team_id, owner_id, created_by, name, customer_name, stage, status, close_result, last_contact_at, next_contact_at, created_at, updated_at, customer_grade",
     )
     .neq("status", "pool")
     .limit(5000)
@@ -569,15 +622,16 @@ export async function fetchRoleDashboardActivity(
     trendMap.set(key, { date: key.slice(5), newLeads: 0, contactActions: 0, visits: 0 })
   }
 
-  let todayNewLeads = 0
+  let periodNewLeads = 0
   let qualifiedLeads = 0
   let wonLeads = 0
   let overdueLeads = 0
-  let pendingToday = 0
+  let pendingInRange = 0
   let newlyAssigned = 0
   let funnelContacted = 0
   let funnelVisited = 0
   let funnelInProgress = 0
+  const customerDetailsById = new Map<string, DashboardCustomerDetailRow>()
 
   const leadIds = leads.map((lead) => lead.id).filter(Boolean)
 
@@ -590,17 +644,17 @@ export async function fetchRoleDashboardActivity(
     const lastContactAt = lead.last_contact_at ? new Date(lead.last_contact_at) : createdAt
     const status = lead.status ?? "open"
 
-    if (createdAt && createdAt >= todayStart && createdAt < tomorrowStart) {
-      todayNewLeads += 1
+    if (createdAt && createdAt >= rangeStart && createdAt < rangeEnd) {
+      periodNewLeads += 1
       user && (user.newLeads += 1)
     }
 
-    if (createdAt && createdAt >= trendStart && createdAt < tomorrowStart) {
+    if (createdAt && createdAt >= trendStart && createdAt < rangeEnd) {
       const point = trendMap.get(toDateKey(startOfLocalDay(createdAt)))
       if (point) point.newLeads += 1
     }
 
-    if (updatedAt && updatedAt >= todayStart && updatedAt < tomorrowStart) {
+    if (updatedAt && updatedAt >= rangeStart && updatedAt < rangeEnd) {
       newlyAssigned += 1
     }
 
@@ -615,13 +669,13 @@ export async function fetchRoleDashboardActivity(
     }
 
     if (status === "open") {
-      const isDueToday = nextContactAt && nextContactAt >= todayStart && nextContactAt < tomorrowStart
+      const isDueInRange = nextContactAt && nextContactAt >= rangeStart && nextContactAt < rangeEnd
       const isNextContactOverdue = nextContactAt && nextContactAt < now
       const isRiskByAge =
         !nextContactAt &&
         (!lastContactAt || (now.getTime() - lastContactAt.getTime()) / (1000 * 60 * 60) >= dangerHours)
 
-      if (isDueToday) pendingToday += 1
+      if (isDueInRange) pendingInRange += 1
       if (isNextContactOverdue || isRiskByAge) {
         overdueLeads += 1
         user && (user.overdueLeads += 1)
@@ -632,6 +686,40 @@ export async function fetchRoleDashboardActivity(
         funnelInProgress += 1
       }
     }
+
+    const shouldShowDetail =
+      (createdAt && createdAt >= rangeStart && createdAt < rangeEnd) ||
+      (updatedAt && updatedAt >= rangeStart && updatedAt < rangeEnd) ||
+      (nextContactAt && nextContactAt < now)
+
+    if (shouldShowDetail) {
+      const ownerName = ownerKey ? usersById.get(ownerKey)?.name ?? ownerKey.slice(0, 8) : "未分配"
+      customerDetailsById.set(lead.id, {
+        id: lead.id,
+        companyName: lead.name || "未命名线索",
+        contactName: (lead as any).customer_name || "-",
+        ownerId: ownerKey,
+        ownerName,
+        stage: lead.stage || "-",
+        status: lead.status || "-",
+        grade: lead.customer_grade ?? null,
+        createdAt: lead.created_at ?? null,
+        lastContactAt: lead.last_contact_at ?? null,
+        nextContactAt: lead.next_contact_at ?? null,
+        contactActions: 0,
+        visits: 0,
+        followUps: 0,
+        isQualified: isQualifiedLead(lead),
+        isWon: isWonLead(lead),
+        isOverdue:
+          status === "open" &&
+          Boolean(
+            (nextContactAt && nextContactAt < now) ||
+              (!nextContactAt &&
+                (!lastContactAt || (now.getTime() - lastContactAt.getTime()) / (1000 * 60 * 60) >= dangerHours)),
+          ),
+      })
+    }
   }
 
   if (leadIds.length > 0) {
@@ -640,7 +728,7 @@ export async function fetchRoleDashboardActivity(
       .select("author_id, lead_id, note_type, created_at, is_deleted")
       .in("lead_id", leadIds)
       .gte("created_at", trendStart.toISOString())
-      .lte("created_at", tomorrowStart.toISOString())
+      .lte("created_at", rangeEnd.toISOString())
       .limit(5000)
 
     if (notesError) {
@@ -653,24 +741,32 @@ export async function fetchRoleDashboardActivity(
         const createdAt = note.created_at ? new Date(note.created_at as string) : null
         if (!createdAt) continue
 
-        const isToday = createdAt >= todayStart && createdAt < tomorrowStart
+        const isInRange = createdAt >= rangeStart && createdAt < rangeEnd
         const point = trendMap.get(toDateKey(startOfLocalDay(createdAt)))
         const user = authorId ? usersById.get(authorId) : null
         const isContact = noteType === "call" || noteType === "wechat"
         const isVisit = noteType === "visit"
+        const detail = (note.lead_id as string | null) ? customerDetailsById.get(note.lead_id as string) : null
 
         if (isContact) {
           funnelContacted += 1
           if (point) point.contactActions += 1
-          if (isToday) user && (user.contactActions += 1)
+          if (isInRange) {
+            user && (user.contactActions += 1)
+            if (detail) detail.contactActions += 1
+          }
         }
         if (isVisit) {
           funnelVisited += 1
           if (point) point.visits += 1
-          if (isToday) user && (user.visits += 1)
+          if (isInRange) {
+            user && (user.visits += 1)
+            if (detail) detail.visits += 1
+          }
         }
-        if (isToday && user) {
-          user.followUps += 1
+        if (isInRange) {
+          if (user) user.followUps += 1
+          if (detail) detail.followUps += 1
         }
       }
     }
@@ -689,14 +785,14 @@ export async function fetchRoleDashboardActivity(
       return acc
     },
     {
-      newLeads: todayNewLeads,
+      newLeads: periodNewLeads,
       contactActions: 0,
       visits: 0,
       followUps: 0,
       qualifiedLeads,
       wonLeads,
       overdueLeads,
-      pendingToday,
+      pendingToday: pendingInRange,
       newlyAssigned,
     },
   )
@@ -749,13 +845,21 @@ export async function fetchRoleDashboardActivity(
   }
 
   return {
-    dateLabel: toDateKey(todayStart),
+    dateLabel,
     totals,
     users,
     trends: Array.from(trendMap.values()),
     alerts: alerts.slice(0, 6),
+    customerDetails: Array.from(customerDetailsById.values())
+      .sort((a, b) => {
+        if (a.isOverdue !== b.isOverdue) return a.isOverdue ? -1 : 1
+        const aTime = a.lastContactAt ?? a.createdAt ?? ""
+        const bTime = b.lastContactAt ?? b.createdAt ?? ""
+        return bTime.localeCompare(aTime)
+      })
+      .slice(0, 50),
     funnel: {
-      newLeads: todayNewLeads,
+      newLeads: periodNewLeads,
       contacted: funnelContacted,
       visited: funnelVisited,
       inProgress: funnelInProgress,
