@@ -211,7 +211,7 @@ function TimeRangeControls({
       <CardContent className="flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <p className="text-sm font-semibold text-foreground">时间维度</p>
-          <p className="text-xs text-muted-foreground">当前统计范围：{getRangeLabel(range)}</p>
+          <p className="text-xs text-muted-foreground">统计范围：{getRangeLabel(range)}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {presets.map((item) => (
@@ -345,9 +345,7 @@ function CustomerDetailsTable({ rows }: { rows: DashboardCustomerDetailRow[] }) 
         <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
           <div>
             <CardTitle className="text-lg">客户明细</CardTitle>
-            <CardDescription>
-              汇总数据下面可以直接看到具体客户，便于总经理从数据异常下钻到线索和负责人。
-            </CardDescription>
+            <CardDescription>按当前时间范围汇总的客户与跟进明细。</CardDescription>
           </div>
           <Badge variant="outline">最多展示 50 条</Badge>
         </div>
@@ -433,7 +431,7 @@ function AlertsPanel({ alerts }: { alerts: DashboardAlert[] }) {
           <AlertTriangle className="h-4 w-4 text-amber-600" />
           需要关注
         </CardTitle>
-        <CardDescription>系统根据今日过程数据自动提示管理重点。</CardDescription>
+        <CardDescription>按当前统计范围识别的重点事项。</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3 p-4">
         {alerts.length === 0 ? (
@@ -508,7 +506,7 @@ function ProcessFunnel({ activity }: { activity: RoleDashboardActivity | null })
     <Card className="border-muted-foreground/10 shadow-sm">
       <CardHeader className="border-b border-muted/30">
         <CardTitle className="text-lg">过程漏斗</CardTitle>
-        <CardDescription>用于判断线索从录入到推进的过程转化。</CardDescription>
+        <CardDescription>线索录入、建联、拜访、跟进与成交分布。</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3 pt-5">
         {items.map((item) => (
@@ -634,11 +632,11 @@ export function Dashboard() {
         const publicProfile = await fetchCurrentUserPublicProfile(supabase)
         const displayName = publicProfile?.fullName || publicProfile?.email || "伙伴"
         if (isMounted) {
-          setWelcomeText(`${displayName}，这里是你的${getModeLabel(mode)}。`)
+          setWelcomeText(`${displayName} · ${getModeLabel(mode)}`)
         }
       } catch (err) {
         console.error("Unexpected error while building dashboard welcome text", err)
-        if (isMounted) setWelcomeText(`欢迎回来，这里是${getModeLabel(mode)}。`)
+        if (isMounted) setWelcomeText(getModeLabel(mode))
       }
     }
 
@@ -682,12 +680,14 @@ export function Dashboard() {
             <Badge>{getModeLabel(mode)}</Badge>
           </div>
           <p className="mt-1 text-base font-medium text-foreground/70">
-            {welcomeText ?? `欢迎回来，这里是${getModeLabel(mode)}。`}
+            {welcomeText ?? getModeLabel(mode)}
           </p>
         </div>
-        <p className="max-w-xl text-sm leading-relaxed text-muted-foreground">
-          数据口径：新增线索按创建时间统计，建联包含电话/微信，拜访取拜访记录，逾期优先按下次跟进时间判断。
-        </p>
+        <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+          <Badge variant="outline">新增：创建时间</Badge>
+          <Badge variant="outline">建联：电话/微信</Badge>
+          <Badge variant="outline">逾期：下次跟进优先</Badge>
+        </div>
       </div>
 
       {loadError ? (
@@ -731,21 +731,10 @@ export function Dashboard() {
         <Card className="border-muted-foreground/10 shadow-sm">
           <CardHeader className="border-b border-muted/30">
             <CardTitle className="text-lg">销售漏斗概览</CardTitle>
-            <CardDescription>保留原有阶段漏斗，便于和今日过程数据交叉判断。</CardDescription>
+            <CardDescription>当前线索阶段分布。</CardDescription>
           </CardHeader>
           <CardContent className="pt-6">
             <SalesFunnel />
-          </CardContent>
-        </Card>
-        <Card className="border-muted-foreground/10 shadow-sm">
-          <CardHeader className="border-b border-muted/30">
-            <CardTitle className="text-lg">工作台说明</CardTitle>
-            <CardDescription>不同角色进入仪表盘会看到不同的默认重点。</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3 pt-5 text-sm leading-relaxed text-muted-foreground">
-            <p>业务员视角强调今日待办、逾期和个人动作，帮助减少漏跟进。</p>
-            <p>主管视角强调成员每日过程数据，帮助发现人员和线索异常。</p>
-            <p>总经理视角强调全局过程、趋势和异常提醒，用于快速判断业务健康度。</p>
           </CardContent>
         </Card>
       </div>
