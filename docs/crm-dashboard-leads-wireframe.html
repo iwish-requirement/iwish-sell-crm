@@ -1,0 +1,652 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CRM 仪表盘与线索页优化线稿</title>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --ink: #18202f;
+      --muted: #667085;
+      --line: #d9dee8;
+      --soft: #eef2f7;
+      --brand: #2f6fed;
+      --good: #16a36a;
+      --warn: #d97706;
+      --bad: #dc2626;
+      --radius: 8px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+    }
+    .shell {
+      display: grid;
+      grid-template-columns: 220px 1fr;
+      min-height: 100vh;
+    }
+    aside {
+      background: #111827;
+      color: #d1d5db;
+      padding: 20px 14px;
+    }
+    .logo {
+      height: 42px;
+      border: 1px solid #374151;
+      border-radius: var(--radius);
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 22px;
+    }
+    .nav {
+      display: grid;
+      gap: 6px;
+    }
+    .nav div {
+      padding: 10px 12px;
+      border-radius: var(--radius);
+      font-size: 14px;
+    }
+    .nav .active {
+      background: var(--brand);
+      color: #fff;
+    }
+    main {
+      padding: 24px;
+      display: grid;
+      gap: 28px;
+    }
+    section {
+      display: grid;
+      gap: 14px;
+    }
+    h1, h2, h3, p { margin: 0; }
+    h1 { font-size: 26px; }
+    h2 { font-size: 20px; }
+    h3 { font-size: 15px; }
+    .hint {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    .screen {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--line);
+      background: #fbfcfe;
+    }
+    .tabs, .filters, .actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .tab, .pill, .btn, .input {
+      height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      display: inline-flex;
+      align-items: center;
+      padding: 0 10px;
+      font-size: 13px;
+      background: #fff;
+      color: var(--ink);
+    }
+    .tab.active, .btn.primary {
+      background: var(--brand);
+      color: #fff;
+      border-color: var(--brand);
+    }
+    .content {
+      padding: 18px;
+      display: grid;
+      gap: 16px;
+    }
+    .kpis {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 10px;
+    }
+    .kpi {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 12px;
+      min-height: 78px;
+      background: #fff;
+    }
+    .kpi strong {
+      display: block;
+      font-size: 24px;
+      margin-bottom: 6px;
+    }
+    .kpi span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1.35fr .65fr;
+      gap: 16px;
+    }
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+      overflow: hidden;
+    }
+    .panel-head {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      background: #fbfcfe;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th, td {
+      border-bottom: 1px solid var(--line);
+      padding: 10px 12px;
+      text-align: left;
+      white-space: nowrap;
+    }
+    th {
+      color: var(--muted);
+      font-weight: 600;
+      background: #f8fafc;
+    }
+    td.num, th.num { text-align: right; }
+    .status {
+      display: inline-flex;
+      align-items: center;
+      height: 24px;
+      padding: 0 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      border: 1px solid var(--line);
+    }
+    .status.good { color: var(--good); background: #ecfdf5; border-color: #bbf7d0; }
+    .status.warn { color: var(--warn); background: #fffbeb; border-color: #fde68a; }
+    .status.bad { color: var(--bad); background: #fef2f2; border-color: #fecaca; }
+    .chart {
+      height: 230px;
+      padding: 18px;
+      display: flex;
+      align-items: end;
+      gap: 14px;
+      border-top: 1px solid var(--line);
+    }
+    .bar {
+      flex: 1;
+      background: #dbeafe;
+      border: 1px solid #bfdbfe;
+      border-radius: 5px 5px 0 0;
+      min-width: 20px;
+      position: relative;
+    }
+    .bar::after {
+      content: attr(data-label);
+      position: absolute;
+      left: 50%;
+      bottom: -24px;
+      transform: translateX(-50%);
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .alerts {
+      display: grid;
+      gap: 8px;
+      padding: 12px;
+    }
+    .alert {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .alert.bad { border-color: #fecaca; background: #fff7f7; }
+    .alert.warn { border-color: #fde68a; background: #fffbeb; }
+    .lead-layout {
+      display: grid;
+      grid-template-columns: 1fr 380px;
+      min-height: 620px;
+    }
+    .lead-main {
+      border-right: 1px solid var(--line);
+      overflow: auto;
+    }
+    .drawer {
+      background: #fff;
+      display: grid;
+      grid-template-rows: auto auto 1fr auto;
+    }
+    .drawer-head {
+      padding: 16px;
+      border-bottom: 1px solid var(--line);
+    }
+    .drawer-body {
+      padding: 14px 16px;
+      display: grid;
+      gap: 14px;
+      overflow: auto;
+    }
+    .field-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .field {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 9px;
+      min-height: 52px;
+    }
+    .field span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 4px;
+    }
+    .quick-actions {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+    .quick-actions .btn {
+      justify-content: center;
+      height: 38px;
+    }
+    .timeline {
+      display: grid;
+      gap: 10px;
+    }
+    .event {
+      border-left: 3px solid var(--brand);
+      padding: 8px 10px;
+      background: #f8fafc;
+      border-radius: 0 6px 6px 0;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .drawer-foot {
+      padding: 12px 16px;
+      border-top: 1px solid var(--line);
+      display: grid;
+      gap: 8px;
+    }
+    .compare {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    .kanban {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      padding: 12px;
+    }
+    .column {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fafafa;
+      padding: 10px;
+      min-height: 240px;
+    }
+    .card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 10px;
+      background: #fff;
+      margin-top: 10px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .note {
+      border-left: 4px solid var(--brand);
+      background: #eff6ff;
+      padding: 12px 14px;
+      color: #1e3a8a;
+      border-radius: 0 8px 8px 0;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    @media (max-width: 1100px) {
+      .shell { grid-template-columns: 1fr; }
+      aside { display: none; }
+      .kpis { grid-template-columns: repeat(2, 1fr); }
+      .grid-2, .lead-layout, .compare { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside>
+      <div class="logo">Iwish CRM</div>
+      <div class="nav">
+        <div class="active">仪表盘</div>
+        <div>我的线索</div>
+        <div>公海池</div>
+        <div>成交中心</div>
+        <div>续费中心</div>
+        <div>数据分析</div>
+        <div>系统设置</div>
+      </div>
+    </aside>
+
+    <main>
+      <section>
+        <h1>CRM 仪表盘与线索页优化线稿</h1>
+        <p class="hint">这份线稿用于表达改动位置和信息结构，不代表最终视觉样式。核心变化：仪表盘按角色展示不同管理视角，线索页默认从卡片看板改为表格处理台。</p>
+      </section>
+
+      <section>
+        <h2>一、仪表盘：从通用概览改为角色化工作台</h2>
+        <p class="hint">当前系统已有“仪表盘”和“数据分析”。优化后，仪表盘负责今天的管理判断，数据分析继续负责周期复盘。</p>
+        <div class="screen">
+          <div class="top">
+            <div>
+              <h3>仪表盘 / 业务总经理视角</h3>
+              <p class="hint">默认展示今日，也可以切换昨日、本周、本月。</p>
+            </div>
+            <div class="tabs">
+              <div class="tab active">今日</div>
+              <div class="tab">本周</div>
+              <div class="tab">本月</div>
+              <div class="tab">自定义</div>
+            </div>
+          </div>
+          <div class="content">
+            <div class="kpis">
+              <div class="kpi"><strong>42</strong><span>今日新增线索</span></div>
+              <div class="kpi"><strong>31</strong><span>建联行动</span></div>
+              <div class="kpi"><strong>12</strong><span>拜访客户</span></div>
+              <div class="kpi"><strong>18</strong><span>有效线索</span></div>
+              <div class="kpi"><strong>6</strong><span>转商机/成交</span></div>
+              <div class="kpi"><strong>9</strong><span>逾期未跟进</span></div>
+            </div>
+
+            <div class="grid-2">
+              <div class="panel">
+                <div class="panel-head">
+                  <h3>业务人员每日动作表</h3>
+                  <div class="filters">
+                    <div class="pill">全部团队</div>
+                    <div class="pill">按逾期排序</div>
+                  </div>
+                </div>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>业务人员</th>
+                      <th class="num">新增线索</th>
+                      <th class="num">建联</th>
+                      <th class="num">拜访</th>
+                      <th class="num">跟进</th>
+                      <th class="num">有效</th>
+                      <th class="num">成交</th>
+                      <th class="num">逾期</th>
+                      <th>状态</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>张三</td><td class="num">12</td><td class="num">9</td><td class="num">3</td><td class="num">18</td><td class="num">6</td><td class="num">2</td><td class="num">1</td><td><span class="status good">正常</span></td>
+                    </tr>
+                    <tr>
+                      <td>李四</td><td class="num">0</td><td class="num">1</td><td class="num">0</td><td class="num">2</td><td class="num">0</td><td class="num">0</td><td class="num">6</td><td><span class="status bad">需关注</span></td>
+                    </tr>
+                    <tr>
+                      <td>王五</td><td class="num">8</td><td class="num">7</td><td class="num">2</td><td class="num">11</td><td class="num">4</td><td class="num">1</td><td class="num">2</td><td><span class="status warn">有风险</span></td>
+                    </tr>
+                    <tr>
+                      <td>赵六</td><td class="num">15</td><td class="num">14</td><td class="num">5</td><td class="num">20</td><td class="num">8</td><td class="num">3</td><td class="num">0</td><td><span class="status good">优秀</span></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div class="panel">
+                <div class="panel-head">
+                  <h3>需要关注</h3>
+                </div>
+                <div class="alerts">
+                  <div class="alert bad">李四今日无新增线索，且有 6 条逾期未跟进。</div>
+                  <div class="alert warn">A 级线索“某科技公司”超过 48 小时未跟进。</div>
+                  <div class="alert warn">公海池待分配 23 条，建议今天完成分配。</div>
+                  <div class="alert">点击任一提醒，可跳转到线索表格并带入筛选条件。</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="grid-2">
+              <div class="panel">
+                <div class="panel-head">
+                  <h3>最近 7 天过程趋势</h3>
+                  <div class="tabs">
+                    <div class="tab active">线索</div>
+                    <div class="tab">建联</div>
+                    <div class="tab">拜访</div>
+                  </div>
+                </div>
+                <div class="chart">
+                  <div class="bar" data-label="周一" style="height: 52%"></div>
+                  <div class="bar" data-label="周二" style="height: 64%"></div>
+                  <div class="bar" data-label="周三" style="height: 48%"></div>
+                  <div class="bar" data-label="周四" style="height: 72%"></div>
+                  <div class="bar" data-label="周五" style="height: 86%"></div>
+                  <div class="bar" data-label="周六" style="height: 42%"></div>
+                  <div class="bar" data-label="今天" style="height: 76%; background:#bfdbfe"></div>
+                </div>
+              </div>
+              <div class="panel">
+                <div class="panel-head">
+                  <h3>过程漏斗</h3>
+                </div>
+                <table>
+                  <tbody>
+                    <tr><td>新增线索</td><td class="num">142</td><td class="num">100%</td></tr>
+                    <tr><td>已建联</td><td class="num">96</td><td class="num">67.6%</td></tr>
+                    <tr><td>已拜访</td><td class="num">38</td><td class="num">39.6%</td></tr>
+                    <tr><td>跟进中</td><td class="num">27</td><td class="num">71.1%</td></tr>
+                    <tr><td>成交</td><td class="num">9</td><td class="num">33.3%</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>二、不同职务看到的仪表盘差异</h2>
+        <div class="screen">
+          <div class="content compare">
+            <div class="panel">
+              <div class="panel-head"><h3>业务员视角</h3></div>
+              <table>
+                <tbody>
+                  <tr><td>今日待跟进</td><td class="num">8</td></tr>
+                  <tr><td>逾期未跟进</td><td class="num">2</td></tr>
+                  <tr><td>新分配给我</td><td class="num">5</td></tr>
+                  <tr><td>今日已建联</td><td class="num">6</td></tr>
+                  <tr><td>今日已拜访</td><td class="num">1</td></tr>
+                </tbody>
+              </table>
+              <div class="note">业务员重点是“我今天要处理什么”，不是看全公司排名。</div>
+            </div>
+            <div class="panel">
+              <div class="panel-head"><h3>主管/总经理视角</h3></div>
+              <table>
+                <tbody>
+                  <tr><td>团队今日新增线索</td><td class="num">42</td></tr>
+                  <tr><td>今日无动作人员</td><td class="num">2</td></tr>
+                  <tr><td>高等级逾期线索</td><td class="num">4</td></tr>
+                  <tr><td>拜访目标完成率</td><td class="num">72%</td></tr>
+                  <tr><td>过程转化异常</td><td class="num">3 项</td></tr>
+                </tbody>
+              </table>
+              <div class="note">管理者重点是“团队哪里异常、该盯谁、该调整哪个环节”。</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>三、线索页：从阶段卡片改为表格处理台</h2>
+        <p class="hint">现有右侧详情抽屉保留。变化在于左侧主列表从卡片看板改成表格，提升信息密度和筛选对比效率。</p>
+        <div class="screen">
+          <div class="top">
+            <div>
+              <h3>我的线索 / 默认表格视图</h3>
+              <p class="hint">点击任意行后，右侧打开线索详情抽屉。</p>
+            </div>
+            <div class="actions">
+              <div class="btn primary">新增线索</div>
+              <div class="btn">导入</div>
+              <div class="btn">保存视图</div>
+            </div>
+          </div>
+          <div class="lead-layout">
+            <div class="lead-main">
+              <div class="content">
+                <div class="filters">
+                  <div class="input" style="width: 230px;">搜索公司、联系人、电话</div>
+                  <div class="pill">负责人：全部</div>
+                  <div class="pill">阶段：全部</div>
+                  <div class="pill">风险：需跟进</div>
+                  <div class="pill">来源：全部</div>
+                  <div class="pill">更多筛选</div>
+                </div>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>客户/企业</th>
+                      <th>联系人</th>
+                      <th>阶段</th>
+                      <th>来源</th>
+                      <th>级别</th>
+                      <th>负责人</th>
+                      <th>最近跟进</th>
+                      <th>下次跟进</th>
+                      <th>风险</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>某科技有限公司</td><td>陈总</td><td>L3 关键意向</td><td>官网表单</td><td>A</td><td>张三</td><td>今天</td><td>明天</td><td><span class="status good">正常</span></td><td>查看</td>
+                    </tr>
+                    <tr>
+                      <td>某服饰品牌</td><td>刘经理</td><td>L1 询盘</td><td>抖音</td><td>B</td><td>李四</td><td>5 天前</td><td>已逾期</td><td><span class="status bad">风险</span></td><td>跟进</td>
+                    </tr>
+                    <tr>
+                      <td>某制造企业</td><td>王总</td><td>L2 意向</td><td>转介绍</td><td>A</td><td>赵六</td><td>昨天</td><td>周五</td><td><span class="status warn">需跟进</span></td><td>查看</td>
+                    </tr>
+                    <tr>
+                      <td>某食品公司</td><td>周总</td><td>L4 谈判</td><td>线下活动</td><td>S</td><td>王五</td><td>今天</td><td>下周一</td><td><span class="status good">正常</span></td><td>推进</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="drawer">
+              <div class="drawer-head">
+                <h3>某科技有限公司</h3>
+                <p class="hint">L3 关键意向 / 负责人：张三 / A 级线索</p>
+              </div>
+              <div class="drawer-body">
+                <div class="field-grid">
+                  <div class="field"><span>联系人</span>陈总</div>
+                  <div class="field"><span>电话</span>138****1234</div>
+                  <div class="field"><span>来源</span>官网表单</div>
+                  <div class="field"><span>业务类型</span>品牌出海</div>
+                  <div class="field"><span>最近跟进</span>今天 10:30</div>
+                  <div class="field"><span>下次跟进</span>明天 14:00</div>
+                </div>
+
+                <div>
+                  <h3 style="margin-bottom:8px;">快捷动作</h3>
+                  <div class="quick-actions">
+                    <div class="btn">记录建联</div>
+                    <div class="btn">记录拜访</div>
+                    <div class="btn">记录跟进</div>
+                  </div>
+                </div>
+
+                <div>
+                  <h3 style="margin-bottom:8px;">互动时间线</h3>
+                  <div class="timeline">
+                    <div class="event">今天 10:30 电话建联：客户确认有品牌升级需求。</div>
+                    <div class="event">昨天 16:20 微信沟通：已发送案例资料。</div>
+                    <div class="event">5 月 8 日 系统：线索由公海分配给张三。</div>
+                  </div>
+                </div>
+              </div>
+              <div class="drawer-foot">
+                <div class="btn primary" style="justify-content:center;">推进到下一阶段</div>
+                <div class="btn" style="justify-content:center;">标记成交 / 丢单</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>四、当前卡片看板与优化后表格的差异</h2>
+        <div class="screen">
+          <div class="content compare">
+            <div class="panel">
+              <div class="panel-head"><h3>当前：阶段看板 + 卡片</h3></div>
+              <div class="kanban">
+                <div class="column">L1 询盘<div class="card">某服饰品牌<br>来源：抖音<br>负责人：李四</div></div>
+                <div class="column">L2 意向<div class="card">某制造企业<br>来源：转介绍<br>负责人：赵六</div></div>
+                <div class="column">L3 关键意向<div class="card">某科技有限公司<br>来源：官网<br>负责人：张三</div></div>
+                <div class="column">L4 谈判<div class="card">某食品公司<br>来源：活动<br>负责人：王五</div></div>
+              </div>
+              <div class="note">优势：阶段感强。问题：大量线索时对比效率低，管理者很难快速看负责人、风险、最近跟进、下次跟进。</div>
+            </div>
+            <div class="panel">
+              <div class="panel-head"><h3>优化后：表格 + 详情抽屉</h3></div>
+              <table>
+                <thead>
+                  <tr><th>客户</th><th>阶段</th><th>负责人</th><th>最近跟进</th><th>风险</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td>某科技</td><td>L3</td><td>张三</td><td>今天</td><td><span class="status good">正常</span></td></tr>
+                  <tr><td>某服饰</td><td>L1</td><td>李四</td><td>5 天前</td><td><span class="status bad">风险</span></td></tr>
+                  <tr><td>某制造</td><td>L2</td><td>赵六</td><td>昨天</td><td><span class="status warn">需跟进</span></td></tr>
+                  <tr><td>某食品</td><td>L4</td><td>王五</td><td>今天</td><td><span class="status good">正常</span></td></tr>
+                </tbody>
+              </table>
+              <div class="note">优势：信息密度高，适合筛选、排序、批量比较；点击行后仍然使用当前右侧详情抽屉处理单条线索。</div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>
