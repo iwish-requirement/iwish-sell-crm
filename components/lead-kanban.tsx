@@ -341,6 +341,9 @@ const FALLBACK_GRADES: GradeDefinition[] = [
 ]
 
 const PAGE_SIZE = 10
+const LEAD_QUERY_PAGE_SIZE = 1000
+const LEAD_SELECT_COLUMNS =
+  "id, team_id, owner_id, created_by, name, website, source, stage, status, close_result, close_reason, last_contact_at, created_at, updated_at, customer_name, customer_phone, customer_email, address, budget, internal_score, blacklist_reason, next_contact_at, wechat, customer_grade, source_level1, source_level2, tags, first_contact_at, locked_by, locked_until, protected_until, business_categories, business_types, responsibility_type, dev_method_key, referral_customer_name, referral_type_key, activity_name, source_department_key, source_locked_at"
 
 
 
@@ -910,6 +913,16 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
   useEffect(() => {
     let isMounted = true
+    const loadedPermissions = mePermissions
+
+    if (loadedPermissions === null) {
+      if (!hasLoadedOnceRef.current) {
+        setIsLoading(true)
+      }
+      return () => {
+        isMounted = false
+      }
+    }
 
     async function loadLeads() {
       // 只有第一次加载时才显示骨架屏，后续通过 Realtime/刷新在后台悄悄拉数据
@@ -920,19 +933,61 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
       try {
         const supabase = getBrowserSupabaseClient()
+        const profile = await fetchCurrentUserProfile(supabase)
+
+        if (!isMounted) {
+          return
+        }
+
+        setCurrentProfile(profile)
+
+        const scopeType = loadedPermissions?.leadScopeType ?? "self"
+        const buildLeadsQuery = () => {
+          let query = supabase
+            .from("leads_secure_view")
+            .select(LEAD_SELECT_COLUMNS)
+            .in("status", ["open", "closed"])
+
+          if (scopeType === "self" && profile?.id) {
+            query = query.eq("owner_id", profile.id)
+          } else if (scopeType === "team" && profile?.teamId != null) {
+            query = query.eq("team_id", profile.teamId)
+          }
+
+          return query.order("updated_at", { ascending: false })
+        }
+
+        if ((scopeType === "self" && !profile?.id) || (scopeType === "team" && profile?.teamId == null)) {
+          setLeads([])
+          return
+        }
+
+        const loadLeadRows = async () => {
+          const rows: any[] = []
+
+          for (let offset = 0; ; offset += LEAD_QUERY_PAGE_SIZE) {
+            const { data, error } = await buildLeadsQuery().range(offset, offset + LEAD_QUERY_PAGE_SIZE - 1)
+
+            if (error) {
+              return { data: null, error }
+            }
+
+            const page = data ?? []
+            rows.push(...page)
+
+            if (page.length < LEAD_QUERY_PAGE_SIZE) {
+              break
+            }
+          }
+
+          return { data: rows, error: null }
+        }
+
         const [
           { data, error },
           { data: businessRulesRpcResult, error: businessRulesError },
         ] = await Promise.all([
-          supabase
-            .from("leads_secure_view")
-            .select(
-              "id, team_id, owner_id, created_by, name, website, source, stage, status, close_result, close_reason, last_contact_at, created_at, updated_at, customer_name, customer_phone, customer_email, address, budget, internal_score, blacklist_reason, next_contact_at, wechat, customer_grade, source_level1, source_level2, tags, first_contact_at, locked_by, locked_until, protected_until, business_categories, business_types, responsibility_type, dev_method_key, referral_customer_name, referral_type_key, activity_name, source_department_key, source_locked_at",
-            )
-
-            .in("status", ["open", "closed"]) 
-            .order("updated_at", { ascending: false }),
-
+          loadLeadRows(),
           supabase.rpc("rpc_get_pipeline_business_rules"),
         ])
 
@@ -1071,7 +1126,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     return () => {
       isMounted = false
     }
-  }, [reloadToken, retryLoad])
+  }, [mePermissions, reloadToken, retryLoad])
 
   useEffect(() => {
     let isMounted = true
