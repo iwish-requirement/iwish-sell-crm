@@ -30,6 +30,7 @@ type ImportReviewRow = {
   sourceLabel: string
   sourceKey: string
   budget: string
+  category: string
   confidence: number | null
   issues: string[]
   aiEnhanced: boolean
@@ -209,14 +210,14 @@ async function callImportAiProxyDirect(input: {
 }) {
   const functionUrl = buildSupabaseFunctionUrl(input.supabaseUrl, IMPORT_AI_FUNCTION_PATH)
   const systemPrompt =
-    "You are a B2B CRM import normalization assistant. Normalize each messy spreadsheet row into exactly 7 fields: company, website, contact, phone, wechat, sourceLabel, budget." +
+    "You are a B2B CRM import normalization assistant. Normalize each messy spreadsheet row into exactly 8 fields: company, website, contact, phone, wechat, sourceLabel, budget, category." +
     "\nUse headers, row cells, and ruleHints together. ruleHints are deterministic extraction hints and should be kept when they are obviously correct." +
     "\nsourceLabel must be normalized to one of the allowed business labels whenever possible. If no allowed label matches, return an empty string." +
     "\nNever put a website, phone number, or WeChat ID into budget. budget should be a numeric amount only when it is clearly a budget." +
     "\nTreat every row independently. If a field is missing, return an empty string. Do not invent unavailable facts." +
     "\nReturn strict JSON only with a top-level key normalizedRows." +
     "\nEach normalizedRows item must be: { rowIndex, confidence, issues, normalized }." +
-    "\nnormalized must include all 7 fields as strings."
+    "\nnormalized must include all 8 fields as strings."
 
   const res = await fetch(functionUrl, {
     method: "POST",
@@ -350,6 +351,7 @@ async function buildPayloads(payload: Record<string, unknown> | undefined) {
     const wechat = mergedValues.wechat ?? ""
     const rawSourceLabel = mergedValues.sourceLabel ?? ""
     const budgetStr = mergedValues.budget ?? ""
+    const category = mergedValues.category ?? ""
     const sourceKey = normalizeStrictImportSourceKey(rawSourceLabel, sourceGroups)
     const sourceLabel = normalizeStrictImportSourceLabel(rawSourceLabel, sourceGroups)
 
@@ -383,6 +385,7 @@ async function buildPayloads(payload: Record<string, unknown> | undefined) {
       sourceLabel,
       sourceKey,
       budget: budgetStr,
+      category,
       confidence: aiRow?.confidence ?? null,
       issues,
       aiEnhanced: Boolean(aiRow),

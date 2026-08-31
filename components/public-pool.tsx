@@ -76,6 +76,7 @@ interface PoolLead {
   returnedAt: string
   returnedById: string | null
   importedById: string | null
+  categories: { id: number; name: string }[]
 }
 
 
@@ -164,6 +165,7 @@ const IMPORT_FIELD_LABELS = {
   wechat: "微信号",
   sourceLabel: "来源渠道",
   budget: "预算",
+  category: "品类",
 } satisfies Record<string, string>
 
 type ImportWorkerAction = "parse-file" | "build-payloads" | "reset-cache"
@@ -201,6 +203,7 @@ type ImportReviewDraftRow = {
   phone: string
   wechat: string
   sourceLabel: string
+  category: string
   sourceKey: string
   budget: string
   confidence: number | null
@@ -351,10 +354,10 @@ async function callImportAiProxyDirect(input: {
   const limitedPreviewRows = input.previewRows.slice(0, 4)
   const systemPrompt =
     "你是一个 B2B CRM 智能导入助手，负责在表头可能错误、内容可能串列、格式可能不规范的情况下，尽量把市场导入表理解为标准 CRM 线索数据。" +
-    "\n标准字段只有 7 个：company（公司名称）、website（网址）、contact（联系人）、phone（电话）、wechat（微信号）、sourceLabel（来源渠道）、budget（预算）。" +
+    "\n标准字段有 8 个：company（公司名称）、website（网址）、contact（联系人）、phone（电话）、wechat（微信号）、sourceLabel（来源渠道）、budget（预算）、category（品类）。" +
     "\n请优先根据整列语义、单元格内容模式和中文业务语境判断，而不是机械相信表头。" +
     "\n请严格输出 JSON，包含 columnMapping、fieldConfidence、overallConfidence、summary、warnings、normalizedRows。" +
-    "\nnormalizedRows 中每项格式必须是：{ rowIndex, confidence, issues, normalized }，normalized 必须包含 7 个标准字段。"
+    "\nnormalizedRows 中每项格式必须是：{ rowIndex, confidence, issues, normalized }，normalized 必须包含 8 个标准字段。"
 
   const res = await fetch(functionUrl, {
     method: "POST",
@@ -565,6 +568,7 @@ export function PublicPool() {
   const [claimingLeadId, setClaimingLeadId] = useState<string | null>(null)
   const [defaultBusinessTypeId, setDefaultBusinessTypeId] = useState<number | null>(null)
   const [defaultBusinessCategoryIds, setDefaultBusinessCategoryIds] = useState<number[]>([])
+  const [businessCategoryOptions, setBusinessCategoryOptions] = useState<{ id: number; name: string }[]>([])
 
   useEffect(() => {
     const supabase = getBrowserSupabaseClient()
@@ -580,6 +584,16 @@ export function PublicPool() {
           setDefaultBusinessTypeId(Number(data[0].id))
           setDefaultBusinessCategoryIds(data[0].category_id != null ? [Number(data[0].category_id)] : [])
         }
+        const { data: categories } = await supabase
+          .from("business_categories")
+          .select("id, name")
+          .eq("is_active", true)
+          .order("sort_order")
+        setBusinessCategoryOptions(
+          (categories ?? [])
+            .map((item: any) => ({ id: Number(item.id), name: String(item.name ?? "").trim() }))
+            .filter((item) => item.name),
+        )
       } catch (err) {
         console.error("Failed to load default business type for public pool", err)
       }
@@ -784,7 +798,7 @@ export function PublicPool() {
         const { data, error } = await supabase
           .from("leads_secure_view")
           .select(
-            "id, name, website, stage, status, source, customer_name, customer_phone, wechat, budget, updated_at, created_by, team_id, owner_id",
+            "id, name, website, stage, status, source, customer_name, customer_phone, wechat, budget, updated_at, created_by, team_id, owner_id, business_categories",
           )
 
           .eq("status", "pool")
@@ -890,6 +904,7 @@ export function PublicPool() {
                   : "",
               returnedById: reasonInfo?.returnedById ?? null,
               importedById: (row.created_by as string | null) ?? null,
+              categories: Array.isArray(row.business_categories) ? row.business_categories : [],
             }
           }) ?? []
 
@@ -1689,6 +1704,13 @@ export function PublicPool() {
             responsibility_type: primarySource,
             source_level1: primarySource,
             source_level2: row.sourceKey || null,
+            // Legacy public-pool spreadsheets do not contain taxonomy columns.
+            // Keep them importable by applying the configured default type/category.
+            business_type_ids: defaultBusinessTypeId ? [defaultBusinessTypeId] : [],
+            business_category_ids: (() => {
+              const matched = businessCategoryOptions.find((item) => item.name.trim() === row.category.trim())
+              return matched ? [matched.id] : defaultBusinessCategoryIds
+            })(),
           }
 
           if (budget !== null && !Number.isNaN(budget)) {
@@ -1698,7 +1720,7 @@ export function PublicPool() {
           return payload
         })
     },
-    [],
+    [businessCategoryOptions, defaultBusinessCategoryIds, defaultBusinessTypeId],
   )
 
   const handleConfirmImport = async () => {
@@ -2035,7 +2057,7 @@ const getDaysInPoolBadge = (days: number) => {
                       const { data, error: leadsError } = await supabase
                         .from("leads_secure_view")
                         .select(
-                          "name, website, customer_name, customer_phone, source, budget, stage, status, responsibility_type, source_level1, source_level2, activity_name, referral_customer_name",
+                          "name, website, customer_name, customer_phone, source, budget, stage, status, responsibility_type, source_level1, source_level2, activity_name, referral_customer_name, business_categories",
                         )
                         .eq("status", "pool")
 
@@ -2046,7 +2068,7 @@ const getDaysInPoolBadge = (days: number) => {
                         toast.error("导出失败", { description: "加载线索数据失败，请稍后重试" })
                       } else {
                         const rows = data ?? []
-                        const header = ["公司名称", "网址", "联系人", "电话", "来源", "预算", "阶段", "状态"]
+                        const header = ["公司名称", "网址", "联系人", "电话", "来源", "品类", "预算", "阶段", "状态"]
                         const csvLines = [
                           header.join(","),
                           ...rows.map((row: any) =>
@@ -2056,6 +2078,7 @@ const getDaysInPoolBadge = (days: number) => {
                               row.customer_name ?? "",
                               row.customer_phone ?? "",
                               row.source ?? "",
+                              Array.isArray(row.business_categories) ? row.business_categories.map((item: any) => item.name).join("、") : "",
                               row.budget ?? "",
                               row.stage ?? "",
                               row.status ?? "",
@@ -2134,7 +2157,7 @@ const getDaysInPoolBadge = (days: number) => {
                       const { data, error: leadsError } = await supabase
                         .from("leads_secure_view")
                         .select(
-                          "name, website, customer_name, customer_phone, wechat, source, budget, stage, status, responsibility_type, source_level1, source_level2",
+                          "name, website, customer_name, customer_phone, wechat, source, budget, stage, status, responsibility_type, source_level1, source_level2, business_categories",
                         )
                         .eq("status", "pool")
 
@@ -2144,7 +2167,7 @@ const getDaysInPoolBadge = (days: number) => {
                         toast.error("导出失败", { description: "加载线索数据失败，请稍后重试" })
                       } else {
                         const rows = data ?? []
-                        const header = ["公司名称", "网址", "联系人", "电话", "微信号", "来源渠道", "预算(元)"]
+                        const header = ["公司名称", "网址", "联系人", "电话", "微信号", "来源渠道", "品类", "预算(元)"]
 
                         const csvLines = [
                           header.join(","),
@@ -2156,6 +2179,7 @@ const getDaysInPoolBadge = (days: number) => {
                               row.customer_phone ?? "",
                               row.wechat ?? "",
                               getPublicPoolExportSourceLabel(row),
+                              Array.isArray(row.business_categories) ? row.business_categories.map((item: any) => item.name).join("、") : "",
                               row.budget ?? "",
                             ]
 
@@ -2281,6 +2305,7 @@ const getDaysInPoolBadge = (days: number) => {
                 <TableHead className="min-w-[120px] font-bold text-foreground">电话</TableHead>
                 <TableHead className="min-w-[110px] font-bold text-foreground">微信号</TableHead>
                 <TableHead className="min-w-[80px] font-bold text-foreground">来源</TableHead>
+                <TableHead className="min-w-[120px] font-bold text-foreground">品类</TableHead>
 
                 <TableHead className="min-w-[80px] font-bold text-foreground">预算</TableHead>
                 <TableHead className="min-w-[100px] font-bold text-foreground">最后阶段</TableHead>
@@ -2317,6 +2342,13 @@ const getDaysInPoolBadge = (days: number) => {
                   <TableCell>
 
                     <Badge variant="outline" className="text-xs font-medium border-muted-foreground/20">{lead.source}</Badge>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex flex-wrap gap-1">
+                      {lead.categories.length > 0 ? lead.categories.map((category) => (
+                        <Badge key={category.id} variant="outline" className="text-xs border-primary/30 text-primary">{category.name}</Badge>
+                      )) : <span className="text-xs text-muted-foreground">历史数据未填写</span>}
+                    </div>
                   </TableCell>
                   <TableCell className="text-sm font-bold text-primary">{lead.budget}</TableCell>
                   <TableCell>
@@ -2903,6 +2935,7 @@ const getDaysInPoolBadge = (days: number) => {
                                 <TableHead className="text-xs font-semibold text-foreground/80">电话</TableHead>
                                 <TableHead className="text-xs font-semibold text-foreground/80">微信号</TableHead>
                                 <TableHead className="text-xs font-semibold text-foreground/80">来源渠道</TableHead>
+                                <TableHead className="text-xs font-semibold text-foreground/80">品类</TableHead>
                                 <TableHead className="text-xs font-semibold text-foreground/80 text-right">预算(元)</TableHead>
                               </TableRow>
                             </TableHeader>
@@ -2950,6 +2983,7 @@ const getDaysInPoolBadge = (days: number) => {
                                   <TableCell className="text-xs font-mono align-top">{row.values[3] || "-"}</TableCell>
                                   <TableCell className="text-xs align-top">{row.values[4] || "-"}</TableCell>
                                   <TableCell className="text-xs align-top">{row.values[5] || "-"}</TableCell>
+                                  <TableCell className="text-xs align-top">{row.values[7] || "历史数据未填写"}</TableCell>
                                   <TableCell className="text-xs text-right align-top">{row.values[6] || "-"}</TableCell>
                                 </TableRow>
                               ))}
@@ -3028,6 +3062,7 @@ const getDaysInPoolBadge = (days: number) => {
                                 <TableHead className="text-xs">微信号</TableHead>
                                 <TableHead className="text-xs">一级来源</TableHead>
                                 <TableHead className="text-xs">二级来源</TableHead>
+                                <TableHead className="text-xs">品类</TableHead>
                                 <TableHead className="text-xs">预算</TableHead>
                                 <TableHead className="text-xs">问题提示</TableHead>
                               </TableRow>
@@ -3117,6 +3152,26 @@ const getDaysInPoolBadge = (days: number) => {
                                       </SelectContent>
                                     </Select>
                                   </TableCell>
+                                  <TableCell className="min-w-[140px] align-top">
+                                    <Select
+                                      value={row.category.trim() ? row.category : "__empty__"}
+                                      onValueChange={(value) =>
+                                        updateImportReviewRow(row.rowIndex, { category: value === "__empty__" ? "" : value })
+                                      }
+                                    >
+                                      <SelectTrigger className="h-8 text-xs">
+                                        <SelectValue placeholder="选择品类（可留空兼容旧模板）" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="__empty__">使用默认品类</SelectItem>
+                                        {businessCategoryOptions.map((option) => (
+                                          <SelectItem key={option.id} value={option.name}>
+                                            {option.name}
+                                          </SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                  </TableCell>
                                   <TableCell className="min-w-[100px] align-top">
                                     <Input
                                       value={row.budget}
@@ -3155,7 +3210,7 @@ const getDaysInPoolBadge = (days: number) => {
                               ))}
                               {visibleImportReviewRows.length === 0 && (
                                 <TableRow>
-                                  <TableCell colSpan={10} className="h-24 text-center text-sm text-muted-foreground">
+                                  <TableCell colSpan={11} className="h-24 text-center text-sm text-muted-foreground">
                                     当前没有待校准项。你可以取消“只看待校准项”来查看全部 AI 结果。
                                   </TableCell>
                                 </TableRow>

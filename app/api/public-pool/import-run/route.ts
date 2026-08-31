@@ -9,6 +9,12 @@ function normalizeCell(value: unknown): string {
   return String(value).trim()
 }
 
+function normalizeCategoryKey(value: unknown): string {
+  return normalizeCell(value)
+    .toLowerCase()
+    .replace(/[\s\-_—–/\\|,:：;；，。·•（）()【】\[\]<>《》'"`]/g, "")
+}
+
 export async function POST(req: NextRequest) {
   try {
     const contentType = req.headers.get("content-type") || ""
@@ -137,6 +143,26 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    // Legacy public-pool templates do not carry taxonomy columns. Use the first
+    // active type as a compatibility default so imports continue to work while
+    // new manual leads must explicitly choose their品类。
+    const { data: defaultType } = await supabase
+      .from("business_types")
+      .select("id, category_id")
+      .eq("is_active", true)
+      .order("sort_order")
+      .limit(1)
+      .maybeSingle()
+    const { data: categoryRows } = await supabase
+      .from("business_categories")
+      .select("id,name")
+      .eq("is_active", true)
+    const categoryByName = new Map(
+      (categoryRows ?? [])
+        .map((row: any) => [normalizeCategoryKey(row.name), Number(row.id)] as const)
+        .filter(([name, id]) => Boolean(name) && Number.isFinite(id)),
+    )
+
     let importedCount = 0
     let failedCount = 0
     let dbDuplicateCount = 0
@@ -188,6 +214,7 @@ export async function POST(req: NextRequest) {
       let wechat: string
       let sourceLabel: string
       let budgetStr: string
+      let categoryLabel = ""
 
       if (aiMapping && typeof aiMapping === "object" && aiMapping.columnMapping) {
         const cm = aiMapping.columnMapping as any
@@ -206,6 +233,7 @@ export async function POST(req: NextRequest) {
         wechat = pick("wechat")
         sourceLabel = pick("sourceLabel")
         budgetStr = pick("budget")
+        categoryLabel = pick("category")
       } else {
         // 回退到模板列顺序
         const safeCols = [...row]
@@ -217,6 +245,7 @@ export async function POST(req: NextRequest) {
         wechat = normalizeCell(safeCols[4])
         sourceLabel = normalizeCell(safeCols[5])
         budgetStr = normalizeCell(safeCols[6])
+        categoryLabel = normalizeCell(safeCols[7])
       }
 
 
@@ -272,6 +301,11 @@ export async function POST(req: NextRequest) {
         responsibility_type: primarySource,
         source_level1: primarySource,
         source_level2: secondarySourceKey,
+        business_type_ids: defaultType?.id ? [defaultType.id] : [],
+        business_category_ids: (() => {
+          const categoryId = categoryByName.get(normalizeCategoryKey(categoryLabel))
+          return categoryId != null ? [categoryId] : (defaultType?.category_id ? [defaultType.category_id] : [])
+        })(),
       }
 
       if (budget !== null && !Number.isNaN(budget)) {

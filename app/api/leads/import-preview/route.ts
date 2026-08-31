@@ -121,13 +121,10 @@ function buildPayloadRows(rows: CompanyResourceImportRow[]) {
     }))
 }
 
-function mergeBackendRowErrors(analysis: {
-  rows: CompanyResourceImportRow[]
-  duplicateCount: number
-  validCount: number
-  errorCount: number
-  missingHeaders: string[]
-}, backendErrors: BackendRowError[]) {
+function mergeBackendRowErrors(
+  analysis: ReturnType<typeof analyzeCompanyResourceRows>,
+  backendErrors: BackendRowError[],
+): ReturnType<typeof analyzeCompanyResourceRows> {
   if (backendErrors.length === 0) {
     return analysis
   }

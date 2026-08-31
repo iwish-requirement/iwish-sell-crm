@@ -1722,6 +1722,11 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       return
     }
 
+    if (!newLead.businessCategoryIds || newLead.businessCategoryIds.length === 0) {
+      toast.error("请选择品类", { description: "品类为必填项，请至少选择一个品类" })
+      return
+    }
+
     const trimmedPhone = newLead.phone.trim()
     const trimmedWechat = (newLead.wechat ?? "").trim()
     const trimmedBudget = newLead.budget.trim()
@@ -1769,6 +1774,8 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
             .filter((id): id is number => id != null),
         ),
       )
+      const selectedCategoryIds = newLead.businessCategoryIds.map((id) => Number(id)).filter((v) => Number.isFinite(v))
+      const categoryIds = Array.from(new Set([...selectedCategoryIds, ...resolvedCategoryIds]))
 
       const payload: Record<string, unknown> = {
         team_id: profile.teamId,
@@ -1796,7 +1803,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
         activity_name: newLead.activityName || null,
         source_department_key: newLead.sourceDepartmentKey || null,
         business_type_ids: selectedTypeIds,
-        business_category_ids: resolvedCategoryIds,
+        business_category_ids: categoryIds,
         tags:
 
 
@@ -1855,7 +1862,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
             const found = businessTypeMap.get(id)
             return found ? { id: found.id, name: found.name, categoryId: found.category_id } : { id, name: `类型 #${id}`, categoryId: -1 }
           }),
-          businessCategories: resolvedCategoryIds.map((cid) => {
+          businessCategories: categoryIds.map((cid) => {
             const found = businessCategories.find((c) => c.id === cid)
             return { id: cid, name: found?.name ?? `分类 #${cid}` }
           }),
@@ -3074,6 +3081,27 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
             <div className="space-y-3">
               <div className="flex items-center justify-between">
+                <Label>品类 *</Label>
+                <p className="text-xs text-muted-foreground">至少选择一个品类</p>
+              </div>
+              <div className="flex flex-wrap gap-2 rounded-md border border-muted-foreground/20 p-3">
+                {businessCategories.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">暂无品类，请先在设置中配置</p>
+                ) : businessCategories.map((category) => {
+                  const checked = newLead.businessCategoryIds.includes(String(category.id))
+                  return <label key={category.id} className="flex items-center gap-2 rounded-md border border-muted-foreground/20 px-3 py-2 hover:border-primary/40">
+                    <Checkbox checked={checked} onCheckedChange={(value) => setNewLead((prev) => {
+                      const next = new Set(prev.businessCategoryIds)
+                      if (value) next.add(String(category.id)); else next.delete(String(category.id))
+                      return { ...prev, businessCategoryIds: Array.from(next) }
+                    })} />
+                    <span className="text-sm">{category.name}</span>
+                  </label>
+                })}
+              </div>
+            </div>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
                 <Label>业务类型 *</Label>
                 <p className="text-xs text-muted-foreground">至少选择一个子类型</p>
               </div>
@@ -3100,12 +3128,14 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                                   onCheckedChange={(value) => {
                                     setNewLead((prev) => {
                                       const next = new Set(prev.businessTypeIds)
+                                      const nextCategories = new Set(prev.businessCategoryIds)
                                       if (value) {
                                         next.add(String(type.id))
+                                        nextCategories.add(String(type.category_id))
                                       } else {
                                         next.delete(String(type.id))
                                       }
-                                      return { ...prev, businessTypeIds: Array.from(next) }
+                                      return { ...prev, businessTypeIds: Array.from(next), businessCategoryIds: Array.from(nextCategories) }
                                     })
                                   }}
                                 />

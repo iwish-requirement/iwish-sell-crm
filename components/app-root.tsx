@@ -12,6 +12,7 @@ import { PublicPool } from "@/components/public-pool"
 import { AuditLog } from "@/components/audit-log"
 import { DealCenter } from "@/components/deal-center"
 import { RenewalCenter } from "@/components/renewal-center"
+import { AllocationCenter } from "@/components/allocation-center"
 import { ProfileCenter } from "@/components/profile-center"
 
 import { toast } from "sonner"
@@ -26,6 +27,7 @@ export type AppView =
   | "pool"
   | "deals"
   | "renewals"
+  | "allocations"
   | "analytics"
   | "settings"
   | "audit"
@@ -45,6 +47,8 @@ export type MePermissions = {
   canViewPublicPool: boolean
   canReadContracts: boolean
   canManageContracts: boolean
+  canReadAllocations: boolean
+  canManageAllocations: boolean
   canImportLeads: boolean
   leadScopeType: "self" | "team" | "org" | "custom"
   leadCreateScopeType: "self" | "team" | "org" | "custom"
@@ -71,6 +75,10 @@ function getViewFromPathname(pathname: string): AppView {
 
   if (pathname.startsWith("/renewals")) {
     return "renewals"
+  }
+
+  if (pathname.startsWith("/allocations")) {
+    return "allocations"
   }
 
   if (pathname.startsWith("/reports")) {
@@ -125,6 +133,8 @@ export function AppRoot() {
             canViewPublicPool: false,
             canReadContracts: false,
             canManageContracts: false,
+            canReadAllocations: false,
+            canManageAllocations: false,
             canImportLeads: false,
             leadScopeType: "self",
             leadCreateScopeType: "self",
@@ -145,6 +155,8 @@ export function AppRoot() {
           canViewPublicPool: Boolean(value.canViewPublicPool),
           canReadContracts: Boolean(value.canReadContracts),
           canManageContracts: Boolean(value.canManageContracts),
+          canReadAllocations: Boolean(value.canReadAllocations),
+          canManageAllocations: Boolean(value.canManageAllocations),
           canImportLeads: Boolean(value.canImportLeads),
           leadScopeType: (value.leadScopeType as MePermissions["leadScopeType"]) ?? "self",
           leadCreateScopeType: (value.leadCreateScopeType as MePermissions["leadCreateScopeType"]) ?? "self",
@@ -164,6 +176,8 @@ export function AppRoot() {
           canViewPublicPool: false,
           canReadContracts: false,
           canManageContracts: false,
+          canReadAllocations: false,
+          canManageAllocations: false,
           canImportLeads: false,
           leadScopeType: "self",
           leadCreateScopeType: "self",
@@ -229,6 +243,7 @@ export function AppRoot() {
             {activeView === "pool" && <PublicPool />}
             {activeView === "deals" && <DealCenter />}
             {activeView === "renewals" && <RenewalCenter />}
+            {activeView === "allocations" && <AllocationCenter />}
             {activeView === "analytics" && <AnalyticsDashboard />}
 
             {activeView === "settings" && <SystemSettings />}

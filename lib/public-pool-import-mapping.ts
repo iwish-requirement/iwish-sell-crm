@@ -1,4 +1,4 @@
-export type ImportFieldKey = "company" | "website" | "contact" | "phone" | "wechat" | "sourceLabel" | "budget"
+export type ImportFieldKey = "company" | "website" | "contact" | "phone" | "wechat" | "sourceLabel" | "budget" | "category"
 
 export type ImportColumnMapping = Partial<Record<ImportFieldKey, number | null>>
 export type ImportFieldValueMap = Partial<Record<ImportFieldKey, string | null>>
@@ -29,7 +29,7 @@ export type ImportAiNormalizedRow = {
   normalized: ImportFieldValueMap
 }
 
-export const IMPORT_FIELD_KEYS: ImportFieldKey[] = ["company", "website", "contact", "phone", "wechat", "sourceLabel", "budget"]
+export const IMPORT_FIELD_KEYS: ImportFieldKey[] = ["company", "website", "contact", "phone", "wechat", "sourceLabel", "budget", "category"]
 
 const IMPORT_FIELD_HEADER_ALIASES: Record<ImportFieldKey, string[]> = {
   company: ["公司名称", "企业名称", "客户名称", "公司", "企业", "公司名", "客户公司", "商家名称", "店铺名称"],
@@ -39,6 +39,7 @@ const IMPORT_FIELD_HEADER_ALIASES: Record<ImportFieldKey, string[]> = {
   wechat: ["微信", "微信号", "wechat", "vx", "wechatid"],
   sourceLabel: ["来源渠道", "渠道", "来源", "二级来源", "来源类型", "获客渠道", "source", "sourcelabel"],
   budget: ["预算", "预算元", "预算金额", "金额", "项目预算", "费用预算", "budget"],
+  category: ["品类", "业务分类", "产品品类", "category"],
 }
 
 function normalizeText(value: unknown): string {
@@ -363,6 +364,7 @@ export function deriveImportFieldValues(
   const mappedWechat = pickImportCell(row, columnMapping, "wechat", 4)
   const mappedSourceLabel = pickImportCell(row, columnMapping, "sourceLabel", 5)
   const mappedBudget = pickImportCell(row, columnMapping, "budget", 6)
+  const mappedCategory = pickImportCell(row, columnMapping, "category", 7)
 
   const website =
     extractWebsite(mappedWebsite) ||
@@ -394,6 +396,7 @@ export function deriveImportFieldValues(
     wechat,
     sourceLabel,
     budget,
+    category: sanitizeImportFieldValue(mappedCategory),
   })
 }
 

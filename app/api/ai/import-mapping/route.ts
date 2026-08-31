@@ -521,10 +521,10 @@ export async function POST(req: NextRequest) {
 
     const systemPrompt =
       "你是一个 B2B CRM 智能导入助手，负责在表头可能错误、内容可能串列、格式可能不规范的情况下，尽量把市场导入表理解为标准 CRM 线索数据。" +
-      "\n标准字段只有 7 个：company（公司名称）、website（网址）、contact（联系人）、phone（电话）、wechat（微信号）、sourceLabel（来源渠道）、budget（预算）。" +
+      "\n标准字段有 8 个：company（公司名称）、website（网址）、contact（联系人）、phone（电话）、wechat（微信号）、sourceLabel（来源渠道）、budget（预算）、category（品类）。" +
       "\n你必须优先根据整列语义、单元格内容模式、中文业务语境进行判断，而不是机械相信表头。" +
       "\n请输出：1）字段到列的映射 columnMapping；2）每个字段的置信度 fieldConfidence（0~1）；3）整体置信度 overallConfidence（0~1）；4）一句 summary；5）warnings 数组；6）对 previewRows 中每一行给出标准化 normalizedRows。" +
-      "\nnormalizedRows 中每项格式必须是：{ rowIndex, confidence, issues, normalized }，其中 normalized 必须包含 7 个标准字段；若无法判断可填空字符串。" +
+      "\nnormalizedRows 中每项格式必须是：{ rowIndex, confidence, issues, normalized }，其中 normalized 必须包含 8 个标准字段；若无法判断可填空字符串。" +
       "\nissues 用简短中文描述问题，例如：\"预算疑似写在网址列\"、\"来源根据内容推断\"、\"电话缺失\"。" +
       "\n如果某个字段没有把握，columnMapping 返回 null，但 normalizedRows 仍要尽量基于语义做标准化。" +
       "\n严格输出 JSON，不要输出解释、Markdown 或代码块。"

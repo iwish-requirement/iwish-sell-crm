@@ -43,6 +43,7 @@ interface DealRow {
   ownerId: string | null
   teamId: number | null
   ownerName: string | null
+  allocationStatus: string | null
 }
 
 interface TeamOption {
@@ -270,6 +271,7 @@ export function DealCenter() {
             ownerId: (row.owner_id as string | null) ?? null,
             teamId: (row.team_id as number | null) ?? null,
             ownerName: null,
+            allocationStatus: row.allocation_status ?? "pending",
           }
         })
 
@@ -779,6 +781,7 @@ export function DealCenter() {
                     <TableHead className="whitespace-nowrap text-xs font-semibold">来源</TableHead>
                     <TableHead className="whitespace-nowrap text-xs font-semibold">负责人</TableHead>
                     <TableHead className="whitespace-nowrap text-right text-xs font-semibold">成交金额</TableHead>
+                    <TableHead className="whitespace-nowrap text-xs font-semibold">项目组状态</TableHead>
                   </TableRow>
 
                 </TableHeader>
@@ -817,6 +820,11 @@ export function DealCenter() {
                       </TableCell>
                       <TableCell className="text-right whitespace-nowrap text-primary font-bold">
                         {deal.budgetLabel}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap">
+                        <Badge variant={deal.allocationStatus === "assigned" ? "default" : "secondary"}>
+                          {deal.allocationStatus === "assigned" ? "已分配项目组" : "待分配项目组"}
+                        </Badge>
                       </TableCell>
 
 

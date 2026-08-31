@@ -154,6 +154,13 @@ export async function GET(req: NextRequest) {
         return categoryName ? `${categoryName} / ${name}` : name
       })
       .filter(Boolean)
+    const businessCategoryNames = Array.from(
+      new Set(
+        ((businessTypesResult.data ?? []) as any[])
+          .map((row) => String((row.business_categories as any)?.name ?? "").trim())
+          .filter(Boolean),
+      ),
+    )
 
     const currentTeamId = (profile as any)?.team_id != null ? Number((profile as any).team_id) : null
     const createScopeType =
@@ -180,9 +187,9 @@ export async function GET(req: NextRequest) {
       ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""],
     ]
     const templateSheet = XLSX.utils.aoa_to_sheet(templateRows)
-    setColumnWidths(templateSheet, [24, 28, 16, 16, 18, 18, 18, 18, 18, 22, 18, 20, 14, 24, 14, 24, 16])
+    setColumnWidths(templateSheet, [24, 28, 16, 16, 18, 18, 18, 18, 18, 22, 18, 20, 14, 24, 18, 14, 24, 16])
     templateSheet["!freeze"] = { xSplit: 0, ySplit: 1 }
-    templateSheet["!autofilter"] = { ref: `A1:Q1` }
+    templateSheet["!autofilter"] = { ref: `A1:R1` }
 
     const optionMaxRows = Math.max(
       COMPANY_RESOURCE_RESPONSIBILITY_TYPES.length,
@@ -191,12 +198,13 @@ export async function GET(req: NextRequest) {
       COMPANY_RESOURCE_DEV_METHODS.length,
       COMPANY_RESOURCE_REFERRAL_TYPES.length,
       businessTypeNames.length,
+      businessCategoryNames.length,
       grades.length,
       ownerNames.length,
       1,
     )
     const optionRows: Array<Array<string>> = [
-      ["责任归因", "二级来源", "来源责任部门", "开发方式", "转介绍类型", "业务类型", "客户级别", "负责人"],
+      ["责任归因", "二级来源", "来源责任部门", "开发方式", "转介绍类型", "业务类型", "品类", "客户级别", "负责人"],
     ]
     for (let i = 0; i < optionMaxRows; i += 1) {
       optionRows.push([
@@ -206,12 +214,13 @@ export async function GET(req: NextRequest) {
         COMPANY_RESOURCE_DEV_METHODS[i]?.label ?? "",
         COMPANY_RESOURCE_REFERRAL_TYPES[i]?.label ?? "",
         businessTypeNames[i] ?? "",
+        businessCategoryNames[i] ?? "",
         grades[i]?.key ?? "",
         ownerNames[i] ?? "",
       ])
     }
     const optionSheet = XLSX.utils.aoa_to_sheet(optionRows)
-    setColumnWidths(optionSheet, [18, 24, 18, 18, 18, 28, 12, 18])
+    setColumnWidths(optionSheet, [18, 24, 18, 18, 18, 28, 18, 12, 18])
 
     const guideRows = [
       ["字段", "说明"],
@@ -228,6 +237,7 @@ export async function GET(req: NextRequest) {
       ["活动名称", "可选。"],
       ["预算", "可选，填写纯数字即可，例如 500000；也支持万、亿、k、m。"],
       ["业务类型", "必填。请填写“一级分类 / 业务类型”的完整名称，例如“B2B / Google广告”。"],
+      ["品类", "必填。新模板请从下拉选项中选择至少一个品类；旧模板可留空，系统会根据业务类型自动推导。"],
       ["客户级别", "可选，选项来自系统设置。"],
       ["标签", "可选。多个标签请用“、”“，”或英文逗号分隔。"],
       ["负责人", "当顶部选择“按文件内负责人分配”时，本列必填；统一负责人模式下可留空。"],
