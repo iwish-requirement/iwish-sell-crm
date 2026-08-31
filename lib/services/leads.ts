@@ -40,6 +40,7 @@ export interface LeadSecureRow {
   activity_name?: string | null
   source_department_key?: string | null
   source_locked_at?: string | null
+  allocation_status?: "not_required" | "pending" | "assigned" | string | null
 }
 
 
@@ -61,7 +62,7 @@ export async function fetchLeadsSecureView(params: LeadSecureQueryParams = {}): 
   let query = supabase
     .from("leads_secure_view")
     .select(
-      "id, team_id, owner_id, created_by, name, source, stage, status, close_result, close_reason, last_contact_at, created_at, updated_at, customer_name, customer_phone, customer_email, address, budget, internal_score, blacklist_reason, next_contact_at, wechat, customer_grade, source_level1, source_level2, tags, first_contact_at, locked_by, locked_until, protected_until, business_categories, business_types, responsibility_type, dev_method_key, referral_customer_name, referral_type_key, activity_name, source_department_key, source_locked_at",
+      "id, team_id, owner_id, created_by, name, source, stage, status, close_result, close_reason, last_contact_at, created_at, updated_at, customer_name, customer_phone, customer_email, address, budget, internal_score, blacklist_reason, next_contact_at, wechat, customer_grade, source_level1, source_level2, tags, first_contact_at, locked_by, locked_until, protected_until, business_categories, business_types, responsibility_type, dev_method_key, referral_customer_name, referral_type_key, activity_name, source_department_key, source_locked_at, allocation_status",
     )
 
 

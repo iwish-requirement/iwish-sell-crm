@@ -3,7 +3,7 @@
 import React, { useContext, useState } from "react"
 import Image from "next/image"
 import { usePathname, useRouter } from "next/navigation"
-import { LayoutDashboard, Users, Globe, Settings, Sparkles, BarChart3, Menu, DollarSign, RefreshCcw } from "lucide-react"
+import { LayoutDashboard, Users, Globe, Settings, Sparkles, BarChart3, Menu, DollarSign, RefreshCcw, Boxes } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -11,13 +11,14 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 import { MePermissionsContext } from "@/components/app-root"
 
 
-type NavItemId = "dashboard" | "leads" | "pool" | "deals" | "renewals" | "analytics" | "settings" | "audit"
+type NavItemId = "dashboard" | "leads" | "pool" | "deals" | "renewals" | "allocations" | "analytics" | "settings" | "audit"
 
 const navItems: { id: NavItemId; label: string; icon: typeof LayoutDashboard; href: string }[] = [
   { id: "dashboard", label: "仪表盘", icon: LayoutDashboard, href: "/dashboard" },
   { id: "leads", label: "我的线索", icon: Users, href: "/leads" },
   { id: "pool", label: "公海池", icon: Globe, href: "/pool" },
   { id: "deals", label: "成交中心", icon: DollarSign, href: "/deals" },
+  { id: "allocations", label: "分配中心", icon: Boxes, href: "/allocations" },
   { id: "renewals", label: "续费中心", icon: RefreshCcw, href: "/renewals" },
   { id: "analytics", label: "数据分析", icon: BarChart3, href: "/reports" },
   { id: "audit", label: "审计中心", icon: Sparkles, href: "/audit" },
@@ -39,6 +40,10 @@ function getActiveViewFromPathname(pathname: string): NavItemId {
 
   if (pathname.startsWith("/renewals")) {
     return "renewals"
+  }
+
+  if (pathname.startsWith("/allocations")) {
+    return "allocations"
   }
 
   if (pathname.startsWith("/reports")) {
@@ -70,6 +75,7 @@ function SidebarContent({ activeView, onNavigate, onItemClick }: SidebarContentP
   const canViewAudit = mePermissions?.canViewAudit ?? false
   const canViewSettings = mePermissions?.canViewSettings ?? false
   const canViewDealsAndRenewals = mePermissions?.canReadContracts ?? false
+  const canViewAllocations = Boolean((mePermissions as any)?.canReadAllocations)
   const isPermissionsLoading = mePermissions === null
 
   const visibleNavItems = navItems.filter((item) => {
@@ -79,6 +85,7 @@ function SidebarContent({ activeView, onNavigate, onItemClick }: SidebarContentP
     if (item.id === "settings") return canViewSettings
     if (item.id === "deals") return canViewDealsAndRenewals
     if (item.id === "renewals") return canViewDealsAndRenewals
+    if (item.id === "allocations") return canViewAllocations
     return true
   })
 

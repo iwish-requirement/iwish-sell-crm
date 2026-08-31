@@ -36,6 +36,7 @@ export type CompanyResourceImportRow = {
   businessTypeNames: string[]
   businessTypeIds: number[]
   businessCategoryIds: number[]
+  businessCategoryNames: string[]
   grade: string
   tags: string[]
   ownerId: string | null
@@ -113,6 +114,8 @@ export const COMPANY_RESOURCE_TEMPLATE_HEADERS = [
   "活动名称",
   "预算",
   "业务类型",
+  // 新字段：老模板可以不提供，系统会根据业务类型自动推导品类。
+  "品类",
   "客户级别",
   "标签",
   "负责人",
@@ -376,7 +379,7 @@ function withDefinedFields(base: Record<string, unknown>) {
 export function validateCompanyResourceTemplateHeaders(headers: string[]) {
   const normalizedHeaders = headers.map(normalizeHeader)
   const missingHeaders = COMPANY_RESOURCE_TEMPLATE_HEADERS.filter(
-    (header) => !normalizedHeaders.includes(normalizeHeader(header)),
+    (header) => header !== "品类" && !normalizedHeaders.includes(normalizeHeader(header)),
   )
 
   return {
@@ -439,6 +442,7 @@ export function analyzeCompanyResourceRows(input: {
     const activityName = getCell("活动名称")
     const budget = extractBudget(getCell("预算"))
     const businessTypeInput = getCell("业务类型")
+    const categoryInput = getCell("品类")
     const grade = getCell("客户级别")
     const tags = splitMultiValue(getCell("标签"))
     const ownerText = getCell("负责人")
@@ -456,6 +460,17 @@ export function analyzeCompanyResourceRows(input: {
 
     const businessTypeNames = splitMultiValue(businessTypeInput)
     const matchedBusinessTypes: TeamImportBusinessType[] = []
+    const categoryByName = new Map<string, number>()
+    const categoryNameById = new Map<number, string>()
+    for (const item of input.businessTypes) {
+      if (item.categoryId == null) continue
+      const names = [item.categoryName ?? ""]
+      for (const name of names) {
+        const normalized = normalizeLooseText(name)
+        if (normalized) categoryByName.set(normalized, item.categoryId)
+        if (name.trim()) categoryNameById.set(item.categoryId, name.trim())
+      }
+    }
 
     for (const item of businessTypeNames) {
       const normalized = normalizeLooseText(item)
@@ -507,6 +522,12 @@ export function analyzeCompanyResourceRows(input: {
       errors.push("业务类型不能为空，且至少匹配一个系统中的业务类型")
     }
 
+    const explicitCategoryIds = splitMultiValue(categoryInput).flatMap((item) => {
+      const categoryId = categoryByName.get(normalizeLooseText(item))
+      if (!categoryId) errors.push(`品类“${item}”未匹配到系统中的有效品类`)
+      return categoryId ? [categoryId] : []
+    })
+
     if (input.assignmentMode === "uniform_owner") {
       if (!uniformOwner) {
         errors.push("未找到统一负责人，请重新选择")
@@ -557,8 +578,12 @@ export function analyzeCompanyResourceRows(input: {
 
     const businessTypeIds = Array.from(new Set(matchedBusinessTypes.map((item) => item.id)))
     const businessCategoryIds = Array.from(
-      new Set(matchedBusinessTypes.map((item) => item.categoryId).filter((value): value is number => value != null)),
+      new Set([
+        ...explicitCategoryIds,
+        ...matchedBusinessTypes.map((item) => item.categoryId).filter((value): value is number => value != null),
+      ]),
     )
+    const businessCategoryNames = businessCategoryIds.map((id) => categoryNameById.get(id)).filter((name): name is string => Boolean(name))
 
     const responsibilityType = responsibilityOption?.key ?? ""
     const sourceKey = responsibilityType === "company_resource" ? sourceOption?.key ?? "" : ""
@@ -620,6 +645,7 @@ export function analyzeCompanyResourceRows(input: {
       ),
       businessTypeIds,
       businessCategoryIds,
+      businessCategoryNames,
       grade,
       tags,
       ownerId,

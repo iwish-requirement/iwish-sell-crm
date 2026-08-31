@@ -37,6 +37,7 @@ type PreviewRow = {
   phone: string
   wechat: string
   sourceLabel: string
+  businessCategoryNames?: string[]
   budget: string
   ownerName: string
   duplicate: boolean
@@ -221,7 +222,7 @@ export function LeadKanbanImportDialog({
         <DialogHeader>
           <DialogTitle>导入到线索看板</DialogTitle>
           <DialogDescription>
-            模板字段已对齐当前新增线索表单；可统一指定负责人，也可按文件内负责人分配给团队成员。
+            模板字段已对齐当前新增线索表单；品类为新字段，旧模板可继续使用，系统会根据业务类型自动推导。
           </DialogDescription>
         </DialogHeader>
 
@@ -351,6 +352,7 @@ export function LeadKanbanImportDialog({
                         <TableHead>联系人</TableHead>
                         <TableHead>电话</TableHead>
                         <TableHead>来源</TableHead>
+                        <TableHead>品类</TableHead>
                         <TableHead>负责人</TableHead>
                         <TableHead>状态</TableHead>
                       </TableRow>
@@ -366,6 +368,7 @@ export function LeadKanbanImportDialog({
                           <TableCell>{row.contact || "-"}</TableCell>
                           <TableCell>{row.phone || row.wechat || "-"}</TableCell>
                           <TableCell>{row.sourceLabel || "-"}</TableCell>
+                          <TableCell>{row.businessCategoryNames?.join("、") || "-"}</TableCell>
                           <TableCell>{row.ownerName || "-"}</TableCell>
                           <TableCell>
                             {row.canImport ? (

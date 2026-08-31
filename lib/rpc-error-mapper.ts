@@ -193,6 +193,26 @@ export function mapRpcError(
       }
     }
 
+    if (code === "allocation_required_fields") {
+      return {
+        kind: "validation",
+        title: "分配信息不完整",
+        description: "请选择部门/项目组和项目负责人后再保存。",
+        canRetry: false,
+        rawMessage,
+      }
+    }
+
+    if (code === "allocation_requires_won_deal") {
+      return {
+        kind: "validation",
+        title: "仅成交客户可分配",
+        description: "只有成交中心中的成交客户才能进入项目组分配。",
+        canRetry: false,
+        rawMessage,
+      }
+    }
+
     return {
 
       kind: "validation",
