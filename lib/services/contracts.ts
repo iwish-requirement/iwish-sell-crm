@@ -134,27 +134,34 @@ export interface RenewalContractListItem {
 }
 
 
-export async function fetchRenewalContracts(horizonDays = 90, expiredWindowDays = 30): Promise<RenewalContractListItem[]> {
+export async function fetchRenewalContracts(
+  horizonDays: number | null = 90,
+  expiredWindowDays: number | null = 30,
+): Promise<RenewalContractListItem[]> {
   const supabase = getBrowserSupabaseClient()
 
   const today = new Date()
   const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate())
-  const minDate = new Date(startOfToday.getTime() - expiredWindowDays * 24 * 60 * 60 * 1000)
-  const maxDate = new Date(startOfToday.getTime() + horizonDays * 24 * 60 * 60 * 1000)
 
-  const minDateStr = minDate.toISOString().slice(0, 10)
-  const maxDateStr = maxDate.toISOString().slice(0, 10)
-
-  const { data, error } = await supabase
+  let query = supabase
     // Use the table RLS directly while the scoped view migration rolls out.
     .from("contracts")
     .select(
       "id, lead_id, contract_number, title, amount, currency, signed_at, start_date, end_date, is_renewal, original_contract_id, status, created_by, created_at, updated_at",
     )
     .not("end_date", "is", null)
-    .gte("end_date", minDateStr)
-    .lte("end_date", maxDateStr)
-    .limit(1000)
+
+  if (expiredWindowDays != null) {
+    const minDate = new Date(startOfToday.getTime() - expiredWindowDays * 24 * 60 * 60 * 1000)
+    query = query.gte("end_date", minDate.toISOString().slice(0, 10))
+  }
+
+  if (horizonDays != null) {
+    const maxDate = new Date(startOfToday.getTime() + horizonDays * 24 * 60 * 60 * 1000)
+    query = query.lte("end_date", maxDate.toISOString().slice(0, 10))
+  }
+
+  const { data, error } = await query.limit(1000)
 
 
   if (error) {

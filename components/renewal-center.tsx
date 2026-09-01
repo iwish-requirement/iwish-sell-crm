@@ -22,6 +22,7 @@ const TIME_FILTER_OPTIONS = [
   { value: "30d", label: "未来 30 天" },
   { value: "60d", label: "未来 60 天" },
   { value: "90d", label: "未来 90 天" },
+  { value: "all", label: "全部时间" },
 ] as const
 
 function formatServiceStatus(item: RenewalContractListItem): string {
@@ -77,9 +78,10 @@ export function RenewalCenter() {
       setIsLoading(true)
       setLoadError(null)
 
+      const isAllTime = timeFilter === "all"
       const horizon = timeFilter === "30d" ? 30 : timeFilter === "60d" ? 60 : 90
 
-      fetchRenewalContracts(horizon, 30)
+      fetchRenewalContracts(isAllTime ? null : horizon, isAllTime ? null : 30)
         .then((data) => {
           if (!isMounted) return
           setItems(data)
