@@ -21,6 +21,8 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Textarea } from "@/components/ui/textarea"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 
 import {
   Plus,
@@ -36,6 +38,8 @@ import {
   Search,
   Filter,
   Clock,
+  LayoutGrid,
+  List,
 } from "lucide-react"
 
 import { toast } from "sonner"
@@ -341,6 +345,7 @@ const FALLBACK_GRADES: GradeDefinition[] = [
 ]
 
 const PAGE_SIZE = 10
+const TABLE_PAGE_SIZE = 25
 const LEAD_QUERY_PAGE_SIZE = 1000
 const LEAD_SELECT_COLUMNS =
   "id, team_id, owner_id, created_by, name, website, source, stage, status, close_result, close_reason, last_contact_at, created_at, updated_at, customer_name, customer_phone, customer_email, address, budget, internal_score, blacklist_reason, next_contact_at, wechat, customer_grade, source_level1, source_level2, tags, first_contact_at, locked_by, locked_until, protected_until, business_categories, business_types, responsibility_type, dev_method_key, referral_customer_name, referral_type_key, activity_name, source_department_key, source_locked_at"
@@ -599,6 +604,57 @@ function InteractionItem({ interaction }: { interaction: Interaction }) {
   )
 }
 
+function formatDateLabel(value: string | null | undefined): string {
+  if (!value) return "-"
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return "-"
+  return date.toISOString().split("T")[0]
+}
+
+function getLeadTitle(lead: Lead): string {
+  const company = (lead.company ?? "").trim()
+  const website = (lead.website ?? "").trim()
+  return company || website || "未命名线索"
+}
+
+function getLeadRiskState(
+  lead: Lead,
+  riskConfig: { warningHours: number; dangerHours: number },
+): "normal" | "warning" | "danger" {
+  if (lead.status === "closed" || lead.stage === "Won") return "normal"
+
+  const now = Date.now()
+  const nextContactAt = lead.nextContactAt ? new Date(lead.nextContactAt) : null
+  if (nextContactAt && nextContactAt.getTime() < now) {
+    return "danger"
+  }
+
+  const lastContactAt = lead.lastContactAt ? new Date(lead.lastContactAt) : lead.createdAt ? new Date(lead.createdAt) : null
+  if (!lastContactAt || Number.isNaN(lastContactAt.getTime())) return "danger"
+
+  const diffHours = (now - lastContactAt.getTime()) / (1000 * 60 * 60)
+  if (diffHours >= riskConfig.dangerHours) return "danger"
+  if (diffHours >= riskConfig.warningHours) return "warning"
+  return "normal"
+}
+
+function LeadRiskBadge({
+  lead,
+  riskConfig,
+}: {
+  lead: Lead
+  riskConfig: { warningHours: number; dangerHours: number }
+}) {
+  const state = getLeadRiskState(lead, riskConfig)
+  if (state === "danger") {
+    return <Badge variant="destructive">风险</Badge>
+  }
+  if (state === "warning") {
+    return <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-100">需跟进</Badge>
+  }
+  return <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100">正常</Badge>
+}
+
 
 export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean }) {
   const [leads, setLeads] = useState<Lead[]>([])
@@ -702,6 +758,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
   const [gradeFilter, setGradeFilter] = useState<string>("all")
   const [tagFilter, setTagFilter] = useState<string>("")
   const [sortOption, setSortOption] = useState<string>("recent")
+  const [displayMode, setDisplayMode] = useState<"table" | "kanban">("table")
 
   const [currentPage, setCurrentPage] = useState(1)
 
@@ -2761,8 +2818,11 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
   }
   const maxStageCount = Object.values(stageCountsById).reduce((max, count) => Math.max(max, count), 0)
 
-  const totalPages = Math.max(1, Math.ceil(maxStageCount / PAGE_SIZE))
+  const tableTotalPages = Math.max(1, Math.ceil(totalLeads / TABLE_PAGE_SIZE))
+  const kanbanTotalPages = Math.max(1, Math.ceil(maxStageCount / PAGE_SIZE))
+  const totalPages = displayMode === "table" ? tableTotalPages : kanbanTotalPages
   const currentPageSafe = Math.min(currentPage, totalPages)
+  const tableLeads = sortedLeads.slice((currentPageSafe - 1) * TABLE_PAGE_SIZE, currentPageSafe * TABLE_PAGE_SIZE)
 
 
   if (isLoading) {
@@ -3509,6 +3569,32 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
       </div>
 
+      {!isPublicPool && (
+        <div className="flex flex-col gap-3 rounded-lg border border-muted/40 bg-card p-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className="text-sm font-semibold text-foreground">线索处理视图</p>
+            <p className="text-xs text-muted-foreground">
+              表格适合筛选、排序和横向对比；看板适合查看阶段分布。
+            </p>
+          </div>
+          <Tabs value={displayMode} onValueChange={(value) => {
+            setDisplayMode(value as "table" | "kanban")
+            setCurrentPage(1)
+          }}>
+            <TabsList>
+              <TabsTrigger value="table" className="gap-1.5">
+                <List className="h-3.5 w-3.5" />
+                表格
+              </TabsTrigger>
+              <TabsTrigger value="kanban" className="gap-1.5">
+                <LayoutGrid className="h-3.5 w-3.5" />
+                看板
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
+      )}
+
       {/* Risk Alert（仅统计未成交线索） */}
 
       {(() => {
@@ -3565,49 +3651,146 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
         )
       })()}
 
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-        {stages.map((stage) => {
-          const allStageLeads = sortedLeads.filter((lead) => lead.stage === stage.id)
-          const startIndex = (currentPageSafe - 1) * PAGE_SIZE
-          const endIndex = Math.min(startIndex + PAGE_SIZE, allStageLeads.length)
-          const stageLeads = allStageLeads.slice(startIndex, endIndex)
-          const stageTotalCount = allStageLeads.length
-          const stageConfig = getStageConfig(stage.id)
-          return (
-            <div key={stage.id} className="space-y-4">
-              <div className="flex items-center justify-between px-1">
-                <div className="flex items-center gap-2">
-                  <StatusDot stage={stage.id} />
-                  <h3 className="font-bold text-sm text-foreground uppercase tracking-wider">{stage.label}</h3>
-                </div>
-                <Badge variant="secondary" className="text-xs font-bold rounded-full px-2 h-5 min-w-[20px] flex items-center justify-center">
-                  {stageTotalCount}
-                </Badge>
-              </div>
-              <div className="space-y-4 min-h-[200px] md:min-h-[400px] p-2 rounded-xl border border-muted/20">
-                {stageLeads.map((lead) => {
-                  const ownerRep = lead.ownerId ? salesReps.find((rep) => rep.id === lead.ownerId) : undefined
-                  const ownerLabel = ownerRep ? ownerRep.name : null
-
-                  return (
-                    <LeadCard
-                      key={lead.id}
-                      lead={lead}
-                      onClick={() => handleLeadClick(lead)}
-                      riskConfig={riskConfigRef.current}
-                      sourceLevel1Label={resolveSourceLevel1Label(lead.sourceLevel1)}
-                      sourceLevel2Label={resolveSourceLevel2Label(lead.sourceLevel1, lead.sourceLevel2)}
-                      ownerLabel={ownerLabel}
-                    />
-                  )
-                })}
-
-
-              </div>
+      {displayMode === "table" && !isPublicPool ? (
+        <div className="rounded-xl border border-muted/30 bg-card shadow-sm">
+          <div className="flex flex-col gap-2 border-b border-muted/30 p-4 md:flex-row md:items-center md:justify-between">
+            <div>
+              <h3 className="text-base font-bold text-foreground">线索表格</h3>
+              <p className="text-xs text-muted-foreground">
+                点击任意行查看右侧详情，快速记录建联、拜访和跟进。
+              </p>
             </div>
-          )
-        })}
-      </div>
+            <Badge variant="outline">共 {totalLeads} 条</Badge>
+          </div>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="min-w-[220px]">客户/企业</TableHead>
+                  <TableHead>联系人</TableHead>
+                  <TableHead>联系方式</TableHead>
+                  <TableHead>阶段</TableHead>
+                  <TableHead>来源</TableHead>
+                  <TableHead>业务类型</TableHead>
+                  <TableHead>级别</TableHead>
+                  <TableHead>负责人</TableHead>
+                  <TableHead>最近跟进</TableHead>
+                  <TableHead>下次跟进</TableHead>
+                  <TableHead>风险</TableHead>
+                  <TableHead>创建时间</TableHead>
+                  <TableHead className="text-right">操作</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {tableLeads.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={13} className="py-10 text-center text-sm text-muted-foreground">
+                      当前筛选条件下暂无线索
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  tableLeads.map((lead) => {
+                    const ownerRep = lead.ownerId ? salesReps.find((rep) => rep.id === lead.ownerId) : undefined
+                    const sourceLevel1Label = resolveSourceLevel1Label(lead.sourceLevel1)
+                    const sourceLevel2Label = resolveSourceLevel2Label(lead.sourceLevel1, lead.sourceLevel2)
+                    const sourceLabel = [sourceLevel1Label, sourceLevel2Label].filter(Boolean).join(" / ") || lead.source || "-"
+                    const businessTypeLabel = lead.businessTypes?.map((item) => item.name).join("、") || "-"
+                    const contactLabel = [lead.phone, lead.wechat].filter(Boolean).join(" / ") || "-"
+                    const stageLabel = stages.find((stage) => stage.id === lead.stage)?.label ?? lead.stage
+
+                    return (
+                      <TableRow
+                        key={lead.id}
+                        className="cursor-pointer hover:bg-muted/30"
+                        onClick={() => handleLeadClick(lead)}
+                      >
+                        <TableCell>
+                          <div className="max-w-[260px]">
+                            <p className="truncate font-semibold text-foreground">{getLeadTitle(lead)}</p>
+                            {lead.website ? (
+                              <p className="truncate text-xs text-muted-foreground">{lead.website}</p>
+                            ) : null}
+                          </div>
+                        </TableCell>
+                        <TableCell className="font-medium">{lead.contact || "-"}</TableCell>
+                        <TableCell className="max-w-[180px] truncate">{contactLabel}</TableCell>
+                        <TableCell>
+                          <StatusBadge stage={lead.stage} />
+                          <span className="sr-only">{stageLabel}</span>
+                        </TableCell>
+                        <TableCell className="max-w-[200px] truncate">{sourceLabel}</TableCell>
+                        <TableCell className="max-w-[180px] truncate">{businessTypeLabel}</TableCell>
+                        <TableCell>{lead.grade ? <Badge variant="outline">{lead.grade}</Badge> : "-"}</TableCell>
+                        <TableCell>{ownerRep?.name ?? "-"}</TableCell>
+                        <TableCell>{formatDateLabel(lead.lastContactAt || lead.createdAt)}</TableCell>
+                        <TableCell>{formatDateLabel(lead.nextContactAt)}</TableCell>
+                        <TableCell>
+                          <LeadRiskBadge lead={lead} riskConfig={riskConfigRef.current} />
+                        </TableCell>
+                        <TableCell>{formatDateLabel(lead.createdAt)}</TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              handleLeadClick(lead)
+                            }}
+                          >
+                            查看
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+          {stages.map((stage) => {
+            const allStageLeads = sortedLeads.filter((lead) => lead.stage === stage.id)
+            const startIndex = (currentPageSafe - 1) * PAGE_SIZE
+            const endIndex = Math.min(startIndex + PAGE_SIZE, allStageLeads.length)
+            const stageLeads = allStageLeads.slice(startIndex, endIndex)
+            const stageTotalCount = allStageLeads.length
+            const stageConfig = getStageConfig(stage.id)
+            return (
+              <div key={stage.id} className="space-y-4">
+                <div className="flex items-center justify-between px-1">
+                  <div className="flex items-center gap-2">
+                    <StatusDot stage={stage.id} />
+                    <h3 className="font-bold text-sm text-foreground uppercase tracking-wider">{stage.label}</h3>
+                  </div>
+                  <Badge variant="secondary" className="text-xs font-bold rounded-full px-2 h-5 min-w-[20px] flex items-center justify-center">
+                    {stageTotalCount}
+                  </Badge>
+                </div>
+                <div className="space-y-4 min-h-[200px] md:min-h-[400px] p-2 rounded-xl border border-muted/20">
+                  {stageLeads.map((lead) => {
+                    const ownerRep = lead.ownerId ? salesReps.find((rep) => rep.id === lead.ownerId) : undefined
+                    const ownerLabel = ownerRep ? ownerRep.name : null
+
+                    return (
+                      <LeadCard
+                        key={lead.id}
+                        lead={lead}
+                        onClick={() => handleLeadClick(lead)}
+                        riskConfig={riskConfigRef.current}
+                        sourceLevel1Label={resolveSourceLevel1Label(lead.sourceLevel1)}
+                        sourceLevel2Label={resolveSourceLevel2Label(lead.sourceLevel1, lead.sourceLevel2)}
+                        ownerLabel={ownerLabel}
+                      />
+                    )
+                  })}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
 
 
       {totalLeads > 0 && (
@@ -4333,10 +4516,47 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                 {selectedLead?.status === "open" && (
                   <div id="lead-followup-section" className="space-y-3">
 
-                  <h4 className="text-sm font-semibold text-foreground">记录跟进</h4>
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <h4 className="text-sm font-semibold text-foreground">记录客户动作</h4>
+                      <p className="text-xs text-muted-foreground">建联、拜访和普通跟进都会沉淀到仪表盘过程数据。</p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <Button
+                      type="button"
+                      variant={followUp.type === "call" ? "default" : "outline"}
+                      size="sm"
+                      className="gap-1.5"
+                      onClick={() => setFollowUp((prev) => ({ ...prev, type: "call" }))}
+                    >
+                      <Phone className="h-3.5 w-3.5" />
+                      建联
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={followUp.type === "visit" ? "default" : "outline"}
+                      size="sm"
+                      className="gap-1.5"
+                      onClick={() => setFollowUp((prev) => ({ ...prev, type: "visit" }))}
+                    >
+                      <MapPin className="h-3.5 w-3.5" />
+                      拜访
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={followUp.type === "wechat" ? "default" : "outline"}
+                      size="sm"
+                      className="gap-1.5"
+                      onClick={() => setFollowUp((prev) => ({ ...prev, type: "wechat" }))}
+                    >
+                      <MessageCircle className="h-3.5 w-3.5" />
+                      跟进
+                    </Button>
+                  </div>
 
                   <Textarea
-                    placeholder="输入跟进内容..."
+                    placeholder="输入动作内容，例如：已电话建联，客户确认下周安排拜访..."
                     value={followUp.content}
                     onChange={(e) => setFollowUp({ ...followUp, content: e.target.value })}
                     className="min-h-[80px]"
