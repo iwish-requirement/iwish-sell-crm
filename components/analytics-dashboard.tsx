@@ -68,8 +68,8 @@ type SourceRoiItem = {
   revenuePerLead: number
 }
 
-type ProductTypeItem = {
-  id: number
+type ProductCategoryItem = {
+  id: string
   name: string
   leads: number
 }
@@ -113,7 +113,7 @@ export function AnalyticsDashboard() {
   const [sourceConversionData, setSourceConversionData] = useState<SourceConversionItem[]>([])
   const [sourceRoiData, setSourceRoiData] = useState<SourceRoiItem[]>([])
   const [teamData, setTeamData] = useState<TeamLeaderboardRow[]>([])
-  const [productTypeData, setProductTypeData] = useState<ProductTypeItem[]>([])
+  const [productTypeData, setProductTypeData] = useState<ProductCategoryItem[]>([])
   const [poolLeadsCount, setPoolLeadsCount] = useState<number | null>(null)
 
   const [currentProfile, setCurrentProfile] = useState<UserProfile | null>(null)
@@ -222,7 +222,7 @@ export function AnalyticsDashboard() {
         let query = supabase
           .from("leads_secure_view")
           .select(
-            "id, team_id, owner_id, created_by, source, stage, status, close_result, budget, created_at, business_types",
+            "id, team_id, owner_id, created_by, source, stage, status, close_result, budget, created_at, product_category",
           )
 
 
@@ -470,20 +470,19 @@ export function AnalyticsDashboard() {
         return
       }
 
-      const productTypeMap = new Map<number, { id: number; name: string; leads: number }>()
+      // 客户产品品类是自由文本，不能使用 business_types（例如 DTC/B2B）代替。
+      // 对历史记录的空值单独计入“历史数据未填写”，保证仪表盘总数可追溯。
+      const productTypeMap = new Map<string, ProductCategoryItem>()
       for (const lead of filteredLeads) {
-        const types = (lead.business_types ?? []) as { id: number; name: string; category_id: number }[]
-        if (!Array.isArray(types) || types.length === 0) continue
-
-        const seenTypeIds = new Set<number>()
-        for (const t of types) {
-          if (typeof t.id !== "number") continue
-          if (seenTypeIds.has(t.id)) continue
-          seenTypeIds.add(t.id)
-          const current = productTypeMap.get(t.id) ?? { id: t.id, name: t.name ?? `类型 #${t.id}`, leads: 0 }
-          current.leads += 1
-          productTypeMap.set(t.id, current)
+        const productCategory = typeof lead.product_category === "string" ? lead.product_category.trim() : ""
+        const key = productCategory || "__missing__"
+        const current = productTypeMap.get(key) ?? {
+          id: key,
+          name: productCategory || "历史数据未填写",
+          leads: 0,
         }
+        current.leads += 1
+        productTypeMap.set(key, current)
       }
 
       const stageOrder = ["L1", "L2", "L3", "L4", "Won"]
@@ -812,7 +811,7 @@ export function AnalyticsDashboard() {
 
       nextTeamData.sort((a, b) => b.value - a.value || b.won - a.won || b.leads - a.leads)
 
-      const nextProductTypeData: ProductTypeItem[] = Array.from(productTypeMap.values()).sort(
+      const nextProductTypeData: ProductCategoryItem[] = Array.from(productTypeMap.values()).sort(
         (a, b) => b.leads - a.leads,
       )
 
@@ -935,7 +934,7 @@ export function AnalyticsDashboard() {
         ])
       })
     } else if (dataType === "product-type") {
-      rows.push(["产品/业务类型", "线索数"])
+      rows.push(["客户产品品类", "线索数"])
       productTypeData.forEach((item) => {
         rows.push([item.name, String(item.leads)])
       })
@@ -1481,12 +1480,12 @@ export function AnalyticsDashboard() {
         </CardContent>
       </Card>
 
-      {/* Product Type Distribution */}
+      {/* Customer Product Category Distribution */}
       <Card className="border-muted-foreground/10 shadow-sm">
         <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 gap-2 border-b border-muted/30">
           <div>
-            <CardTitle className="text-lg font-bold tracking-tight">客户产品/业务类型分布</CardTitle>
-            <CardDescription className="text-sm font-medium">按线索关联的业务类型统计客户主要做的产品方向</CardDescription>
+            <CardTitle className="text-lg font-bold tracking-tight">客户产品品类分布</CardTitle>
+            <CardDescription className="text-sm font-medium">按客户实际销售的产品品类统计线索数量</CardDescription>
           </div>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -1506,7 +1505,7 @@ export function AnalyticsDashboard() {
           <Table>
             <TableHeader className="bg-muted/30">
               <TableRow className="hover:bg-transparent">
-                <TableHead className="font-bold text-foreground py-3">产品/业务类型</TableHead>
+                <TableHead className="font-bold text-foreground py-3">客户产品品类</TableHead>
                 <TableHead className="text-right font-bold text-foreground">线索数</TableHead>
               </TableRow>
             </TableHeader>
@@ -1514,7 +1513,7 @@ export function AnalyticsDashboard() {
               {productTypeData.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={2} className="text-center text-sm text-muted-foreground py-6">
-                    当前筛选条件下暂无可统计的产品类型数据
+                    当前筛选条件下暂无可统计的客户产品品类数据
                   </TableCell>
                 </TableRow>
               ) : (
