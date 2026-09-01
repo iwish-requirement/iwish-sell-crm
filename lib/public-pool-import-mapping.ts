@@ -39,7 +39,8 @@ const IMPORT_FIELD_HEADER_ALIASES: Record<ImportFieldKey, string[]> = {
   wechat: ["微信", "微信号", "wechat", "vx", "wechatid"],
   sourceLabel: ["来源渠道", "渠道", "来源", "二级来源", "来源类型", "获客渠道", "source", "sourcelabel"],
   budget: ["预算", "预算元", "预算金额", "金额", "项目预算", "费用预算", "budget"],
-  category: ["品类", "业务分类", "产品品类", "category"],
+  // “品类”指客户实际销售的产品品类；业务分类（如 DTC/B2B）属于内部业务类型，不能写入该字段。
+  category: ["品类", "产品品类", "客户产品品类", "category"],
 }
 
 function normalizeText(value: unknown): string {

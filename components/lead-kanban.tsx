@@ -498,11 +498,9 @@ function LeadCard({
             <Badge variant="outline" className="text-xs font-medium border-primary/30 text-primary">
               {lead.productCategory}
             </Badge>
-          ) : lead.businessCategories?.map((cat) => (
-            <Badge key={`cat-${cat.id}`} variant="outline" className="text-xs font-medium border-primary/30 text-primary">
-              {cat.name}
-            </Badge>
-          ))}
+          ) : (
+            <span className="text-xs text-muted-foreground">品类未填写</span>
+          )}
           {lead.businessTypes?.map((bt) => (
             <Badge key={`type-${bt.id}`} variant="secondary" className="text-xs font-medium">
               {bt.name}
@@ -4402,8 +4400,6 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                       />
                     ) : selectedLead.productCategory ? (
                       <p className="text-sm font-medium">{selectedLead.productCategory}</p>
-                    ) : selectedLead.businessCategories && selectedLead.businessCategories.length > 0 ? (
-                      <p className="text-sm font-medium text-muted-foreground">{selectedLead.businessCategories.map((c) => c.name).join("、")}</p>
                     ) : (
                       <p className="text-sm text-muted-foreground font-medium">历史数据未填写</p>
                     )}

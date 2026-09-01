@@ -369,7 +369,7 @@ export function LeadKanbanImportDialog({
                           <TableCell>{row.contact || "-"}</TableCell>
                           <TableCell>{row.phone || row.wechat || "-"}</TableCell>
                           <TableCell>{row.sourceLabel || "-"}</TableCell>
-                          <TableCell>{row.productCategory || row.businessCategoryNames?.join("、") || "-"}</TableCell>
+                          <TableCell>{row.productCategory || "-"}</TableCell>
                           <TableCell>{row.ownerName || "-"}</TableCell>
                           <TableCell>
                             {row.canImport ? (

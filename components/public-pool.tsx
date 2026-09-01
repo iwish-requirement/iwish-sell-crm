@@ -77,7 +77,6 @@ interface PoolLead {
   returnedAt: string
   returnedById: string | null
   importedById: string | null
-  categories: { id: number; name: string }[]
 }
 
 
@@ -354,8 +353,9 @@ async function callImportAiProxyDirect(input: {
   const limitedSampleRows = input.sampleRows.slice(0, 4)
   const limitedPreviewRows = input.previewRows.slice(0, 4)
   const systemPrompt =
-    "你是一个 B2B CRM 智能导入助手，负责在表头可能错误、内容可能串列、格式可能不规范的情况下，尽量把市场导入表理解为标准 CRM 线索数据。" +
-    "\n标准字段有 8 个：company（公司名称）、website（网址）、contact（联系人）、phone（电话）、wechat（微信号）、sourceLabel（来源渠道）、budget（预算）、category（品类）。" +
+    "你是一个 CRM 智能导入助手，负责在表头可能错误、内容可能串列、格式可能不规范的情况下，尽量把市场导入表理解为标准 CRM 线索数据。" +
+    "\n标准字段有 8 个：company（公司名称）、website（网址）、contact（联系人）、phone（电话）、wechat（微信号）、sourceLabel（来源渠道）、budget（预算）、category（客户实际销售的产品品类）。" +
+    "\ncategory 必须是客户产品品类自由文本，例如家居、服装、宠物用品；不要把内部业务类型（例如 DTC、B2B）填入 category。" +
     "\n请优先根据整列语义、单元格内容模式和中文业务语境判断，而不是机械相信表头。" +
     "\n请严格输出 JSON，包含 columnMapping、fieldConfidence、overallConfidence、summary、warnings、normalizedRows。" +
     "\nnormalizedRows 中每项格式必须是：{ rowIndex, confidence, issues, normalized }，normalized 必须包含 8 个标准字段。"
@@ -788,7 +788,7 @@ export function PublicPool() {
         const { data, error } = await supabase
           .from("leads_secure_view")
           .select(
-            "id, name, website, stage, status, source, customer_name, customer_phone, wechat, product_category, budget, updated_at, created_by, team_id, owner_id, business_categories",
+            "id, name, website, stage, status, source, customer_name, customer_phone, wechat, product_category, budget, updated_at, created_by, team_id, owner_id",
           )
 
           .eq("status", "pool")
@@ -895,7 +895,6 @@ export function PublicPool() {
                   : "",
               returnedById: reasonInfo?.returnedById ?? null,
               importedById: (row.created_by as string | null) ?? null,
-              categories: Array.isArray(row.business_categories) ? row.business_categories : [],
             }
           }) ?? []
 
@@ -2046,7 +2045,7 @@ const getDaysInPoolBadge = (days: number) => {
                       const { data, error: leadsError } = await supabase
                         .from("leads_secure_view")
                         .select(
-                          "name, website, customer_name, customer_phone, source, product_category, budget, stage, status, responsibility_type, source_level1, source_level2, activity_name, referral_customer_name, business_categories",
+                          "name, website, customer_name, customer_phone, source, product_category, budget, stage, status, responsibility_type, source_level1, source_level2, activity_name, referral_customer_name",
                         )
                         .eq("status", "pool")
 
@@ -2067,7 +2066,7 @@ const getDaysInPoolBadge = (days: number) => {
                               row.customer_name ?? "",
                               row.customer_phone ?? "",
                               row.source ?? "",
-                              row.product_category ?? (Array.isArray(row.business_categories) ? row.business_categories.map((item: any) => item.name).join("、") : ""),
+                              row.product_category ?? "",
                               row.budget ?? "",
                               row.stage ?? "",
                               row.status ?? "",
@@ -2146,7 +2145,7 @@ const getDaysInPoolBadge = (days: number) => {
                       const { data, error: leadsError } = await supabase
                         .from("leads_secure_view")
                         .select(
-                          "name, website, customer_name, customer_phone, wechat, source, product_category, budget, stage, status, responsibility_type, source_level1, source_level2, business_categories",
+                          "name, website, customer_name, customer_phone, wechat, source, product_category, budget, stage, status, responsibility_type, source_level1, source_level2",
                         )
                         .eq("status", "pool")
 
@@ -2168,7 +2167,7 @@ const getDaysInPoolBadge = (days: number) => {
                               row.customer_phone ?? "",
                               row.wechat ?? "",
                               getPublicPoolExportSourceLabel(row),
-                              row.product_category ?? (Array.isArray(row.business_categories) ? row.business_categories.map((item: any) => item.name).join("、") : ""),
+                              row.product_category ?? "",
                               row.budget ?? "",
                             ]
 
@@ -2334,7 +2333,7 @@ const getDaysInPoolBadge = (days: number) => {
                   </TableCell>
                   <TableCell>
                     <div className="flex flex-wrap gap-1">
-                      {lead.productCategory || (lead.categories.length > 0 ? lead.categories.map((category) => category.name).join("、") : "") || <span className="text-xs text-muted-foreground">历史数据未填写</span>}
+                      {lead.productCategory || <span className="text-xs text-muted-foreground">历史数据未填写</span>}
                     </div>
                   </TableCell>
                   <TableCell className="text-sm font-bold text-primary">{lead.budget}</TableCell>
