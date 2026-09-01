@@ -4,6 +4,14 @@
   "name": "iwish-sell-crm",
   "compatibility_date": "2024-09-23",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "vars": {
+    "APP_PUBLIC_URL": "https://sell.iwishweb.com",
+    "NEXT_PUBLIC_SYSTEM_KEY": "crm",
+    "NODE_VERSION": "24",
+    "WECOM_GATEWAY_BASE_URL": "https://requirement.iwishweb.com",
+    "WECOM_GATEWAY_SYSTEM_KEY": "crm",
+    "WECOM_MESSAGE_PREFIX": "【销售线索系统】"
+  },
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"
