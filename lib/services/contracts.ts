@@ -191,8 +191,11 @@ export async function fetchRenewalContracts(horizonDays = 90, expiredWindowDays 
       daysToEnd = Math.floor(diffMs / (24 * 60 * 60 * 1000))
     }
 
-    const customerName = (lead?.customer_name as string | null) ?? null
-    const companyName = (lead?.name as string | null) ?? customerName
+    const customerNameRaw = typeof lead?.customer_name === "string" ? lead.customer_name.trim() : ""
+    const companyNameRaw = typeof lead?.name === "string" ? lead.name.trim() : ""
+    const placeholderNames = new Set(["未命名线索", "未命名客户", "未填写公司名称"])
+    const customerName = customerNameRaw && !placeholderNames.has(customerNameRaw) ? customerNameRaw : null
+    const companyName = companyNameRaw && !placeholderNames.has(companyNameRaw) ? companyNameRaw : customerName
     const ownerId = (lead?.owner_id as string | null) ?? null
     const teamId = (lead?.team_id as number | null) ?? null
 
