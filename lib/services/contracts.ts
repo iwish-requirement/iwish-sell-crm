@@ -26,7 +26,10 @@ export async function fetchContractByLeadId(leadId: string): Promise<ContractRow
   const supabase = getBrowserSupabaseClient()
 
   const { data, error } = await supabase
-    .from("contracts_secure_view")
+    // Read the base table so Postgres RLS enforces the linked-lead scope.
+    // The legacy view did not carry that scope and could return contracts whose
+    // lead identity was not readable to the current user.
+    .from("contracts")
     .select(
       "id, lead_id, contract_number, title, amount, currency, signed_at, start_date, end_date, is_renewal, original_contract_id, status, created_by, created_at, updated_at",
     )
@@ -143,7 +146,8 @@ export async function fetchRenewalContracts(horizonDays = 90, expiredWindowDays 
   const maxDateStr = maxDate.toISOString().slice(0, 10)
 
   const { data, error } = await supabase
-    .from("contracts_secure_view")
+    // Use the table RLS directly while the scoped view migration rolls out.
+    .from("contracts")
     .select(
       "id, lead_id, contract_number, title, amount, currency, signed_at, start_date, end_date, is_renewal, original_contract_id, status, created_by, created_at, updated_at",
     )
