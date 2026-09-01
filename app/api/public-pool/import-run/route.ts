@@ -8,12 +8,6 @@ function normalizeCell(value: unknown): string {
   return String(value).trim()
 }
 
-function normalizeCategoryKey(value: unknown): string {
-  return normalizeCell(value)
-    .toLowerCase()
-    .replace(/[\s\-_—–/\\|,:：;；，。·•（）()【】\[\]<>《》'"`]/g, "")
-}
-
 export async function POST(req: NextRequest) {
   try {
     const contentType = req.headers.get("content-type") || ""
@@ -152,16 +146,6 @@ export async function POST(req: NextRequest) {
       .order("sort_order")
       .limit(1)
       .maybeSingle()
-    const { data: categoryRows } = await supabase
-      .from("business_categories")
-      .select("id,name")
-      .eq("is_active", true)
-    const categoryByName = new Map(
-      (categoryRows ?? [])
-        .map((row: any) => [normalizeCategoryKey(row.name), Number(row.id)] as const)
-        .filter(([name, id]) => Boolean(name) && Number.isFinite(id)),
-    )
-
     let importedCount = 0
     let failedCount = 0
     let dbDuplicateCount = 0
@@ -297,14 +281,12 @@ export async function POST(req: NextRequest) {
         customer_name: contact || "未填写联系人",
         customer_phone: phone || null,
         wechat: wechat || null,
+        product_category: categoryLabel.trim() || null,
         responsibility_type: primarySource,
         source_level1: primarySource,
         source_level2: secondarySourceKey,
         business_type_ids: defaultType?.id ? [defaultType.id] : [],
-        business_category_ids: (() => {
-          const categoryId = categoryByName.get(normalizeCategoryKey(categoryLabel))
-          return categoryId != null ? [categoryId] : (defaultType?.category_id ? [defaultType.category_id] : [])
-        })(),
+        business_category_ids: defaultType?.category_id ? [defaultType.category_id] : [],
       }
 
       if (budget !== null && !Number.isNaN(budget)) {

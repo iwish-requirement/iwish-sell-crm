@@ -38,6 +38,7 @@ type PreviewRow = {
   wechat: string
   sourceLabel: string
   businessCategoryNames?: string[]
+  productCategory?: string
   budget: string
   ownerName: string
   duplicate: boolean
@@ -222,7 +223,7 @@ export function LeadKanbanImportDialog({
         <DialogHeader>
           <DialogTitle>导入到线索看板</DialogTitle>
           <DialogDescription>
-            模板字段已对齐当前新增线索表单；品类为新字段，旧模板可继续使用，系统会根据业务类型自动推导。
+            模板字段已对齐当前新增线索表单；品类是客户产品品类，可自由填写，旧模板可继续使用。
           </DialogDescription>
         </DialogHeader>
 
@@ -368,7 +369,7 @@ export function LeadKanbanImportDialog({
                           <TableCell>{row.contact || "-"}</TableCell>
                           <TableCell>{row.phone || row.wechat || "-"}</TableCell>
                           <TableCell>{row.sourceLabel || "-"}</TableCell>
-                          <TableCell>{row.businessCategoryNames?.join("、") || "-"}</TableCell>
+                          <TableCell>{row.productCategory || row.businessCategoryNames?.join("、") || "-"}</TableCell>
                           <TableCell>{row.ownerName || "-"}</TableCell>
                           <TableCell>
                             {row.canImport ? (

@@ -33,6 +33,7 @@ export type CompanyResourceImportRow = {
   referralTypeLabel: string
   activityName: string
   budget: string
+  productCategory: string
   businessTypeNames: string[]
   businessTypeIds: number[]
   businessCategoryIds: number[]
@@ -114,7 +115,7 @@ export const COMPANY_RESOURCE_TEMPLATE_HEADERS = [
   "活动名称",
   "预算",
   "业务类型",
-  // 新字段：老模板可以不提供，系统会根据业务类型自动推导品类。
+  // 客户产品品类为自由文本；旧模板可以不提供。
   "品类",
   "客户级别",
   "标签",
@@ -460,14 +461,11 @@ export function analyzeCompanyResourceRows(input: {
 
     const businessTypeNames = splitMultiValue(businessTypeInput)
     const matchedBusinessTypes: TeamImportBusinessType[] = []
-    const categoryByName = new Map<string, number>()
     const categoryNameById = new Map<number, string>()
     for (const item of input.businessTypes) {
       if (item.categoryId == null) continue
       const names = [item.categoryName ?? ""]
       for (const name of names) {
-        const normalized = normalizeLooseText(name)
-        if (normalized) categoryByName.set(normalized, item.categoryId)
         if (name.trim()) categoryNameById.set(item.categoryId, name.trim())
       }
     }
@@ -522,11 +520,7 @@ export function analyzeCompanyResourceRows(input: {
       errors.push("业务类型不能为空，且至少匹配一个系统中的业务类型")
     }
 
-    const explicitCategoryIds = splitMultiValue(categoryInput).flatMap((item) => {
-      const categoryId = categoryByName.get(normalizeLooseText(item))
-      if (!categoryId) errors.push(`品类“${item}”未匹配到系统中的有效品类`)
-      return categoryId ? [categoryId] : []
-    })
+    const productCategory = categoryInput.trim()
 
     if (input.assignmentMode === "uniform_owner") {
       if (!uniformOwner) {
@@ -579,7 +573,6 @@ export function analyzeCompanyResourceRows(input: {
     const businessTypeIds = Array.from(new Set(matchedBusinessTypes.map((item) => item.id)))
     const businessCategoryIds = Array.from(
       new Set([
-        ...explicitCategoryIds,
         ...matchedBusinessTypes.map((item) => item.categoryId).filter((value): value is number => value != null),
       ]),
     )
@@ -601,6 +594,7 @@ export function analyzeCompanyResourceRows(input: {
             customer_name: contact || "新联系人",
             customer_phone: phone || undefined,
             wechat: wechat || undefined,
+            product_category: productCategory || undefined,
             budget: budget ? Number(budget) : undefined,
             customer_grade: grade || undefined,
             source_level1: responsibilityType,
@@ -627,6 +621,7 @@ export function analyzeCompanyResourceRows(input: {
       contact,
       phone,
       wechat,
+      productCategory,
       responsibilityType,
       responsibilityLabel: responsibilityOption?.label ?? "",
       sourceLabel: responsibilityType === "company_resource" ? secondarySourceInput : sourceLabel,

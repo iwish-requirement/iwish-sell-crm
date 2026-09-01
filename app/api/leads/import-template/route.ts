@@ -153,13 +153,8 @@ export async function GET(req: NextRequest) {
         return categoryName ? `${categoryName} / ${name}` : name
       })
       .filter(Boolean)
-    const businessCategoryNames = Array.from(
-      new Set(
-        ((businessTypesResult.data ?? []) as any[])
-          .map((row) => String((row.business_categories as any)?.name ?? "").trim())
-          .filter(Boolean),
-      ),
-    )
+    // 客户产品品类是自由文本，不生成受控选项列表。
+    const businessCategoryNames: string[] = []
 
     const currentTeamId = (profile as any)?.team_id != null ? Number((profile as any).team_id) : null
     const createScopeType =
@@ -236,7 +231,7 @@ export async function GET(req: NextRequest) {
       ["活动名称", "可选。"],
       ["预算", "可选，填写纯数字即可，例如 500000；也支持万、亿、k、m。"],
       ["业务类型", "必填。请填写“一级分类 / 业务类型”的完整名称，例如“B2B / Google广告”。"],
-      ["品类", "必填。新模板请从下拉选项中选择至少一个品类；旧模板可留空，系统会根据业务类型自动推导。"],
+      ["品类", "客户产品品类，自由填写；旧模板可留空以兼容历史数据。"],
       ["客户级别", "可选，选项来自系统设置。"],
       ["标签", "可选。多个标签请用“、”“，”或英文逗号分隔。"],
       ["负责人", "当顶部选择“按文件内负责人分配”时，本列必填；统一负责人模式下可留空。"],

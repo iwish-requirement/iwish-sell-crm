@@ -58,6 +58,7 @@ interface Lead {
   id: string | number
   company: string
   website?: string
+  productCategory?: string | null
   contact: string
   phone: string
   wechat: string
@@ -348,7 +349,7 @@ const PAGE_SIZE = 10
 const TABLE_PAGE_SIZE = 25
 const LEAD_QUERY_PAGE_SIZE = 1000
 const LEAD_SELECT_COLUMNS =
-  "id, team_id, owner_id, created_by, name, website, source, stage, status, close_result, close_reason, last_contact_at, created_at, updated_at, customer_name, customer_phone, customer_email, address, budget, internal_score, blacklist_reason, next_contact_at, wechat, customer_grade, source_level1, source_level2, tags, first_contact_at, locked_by, locked_until, protected_until, business_categories, business_types, responsibility_type, dev_method_key, referral_customer_name, referral_type_key, activity_name, source_department_key, source_locked_at"
+  "id, team_id, owner_id, created_by, name, website, source, stage, status, close_result, close_reason, last_contact_at, created_at, updated_at, customer_name, product_category, customer_phone, customer_email, address, budget, internal_score, blacklist_reason, next_contact_at, wechat, customer_grade, source_level1, source_level2, tags, first_contact_at, locked_by, locked_until, protected_until, business_categories, business_types, responsibility_type, dev_method_key, referral_customer_name, referral_type_key, activity_name, source_department_key, source_locked_at"
 
 
 
@@ -493,7 +494,11 @@ function LeadCard({
           <Badge variant="outline" className="text-sm font-normal">
             {lead.budget}
           </Badge>
-          {lead.businessCategories?.map((cat) => (
+          {lead.productCategory ? (
+            <Badge variant="outline" className="text-xs font-medium border-primary/30 text-primary">
+              {lead.productCategory}
+            </Badge>
+          ) : lead.businessCategories?.map((cat) => (
             <Badge key={`cat-${cat.id}`} variant="outline" className="text-xs font-medium border-primary/30 text-primary">
               {cat.name}
             </Badge>
@@ -662,6 +667,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
   const [newLead, setNewLead] = useState({
     company: "",
     website: "",
+    productCategory: "",
     contact: "",
     phone: "",
     wechat: "",
@@ -730,6 +736,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
   const [editLead, setEditLead] = useState({
     company: "",
     website: "",
+    productCategory: "",
     contact: "",
     phone: "",
     wechat: "",
@@ -1109,6 +1116,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                 id: row.id,
                 company: row.name ?? "未命名线索",
                 website: (row as any).website ?? "",
+                productCategory: (row as any).product_category ?? null,
                 contact: row.customer_name ?? "未填写联系人",
                 phone: row.customer_phone ?? "",
                 wechat: (row.wechat as string | null) ?? "",
@@ -1722,8 +1730,8 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       return
     }
 
-    if (!newLead.businessCategoryIds || newLead.businessCategoryIds.length === 0) {
-      toast.error("请选择品类", { description: "品类为必填项，请至少选择一个品类" })
+    if (!newLead.productCategory.trim()) {
+      toast.error("请填写客户产品品类", { description: "客户产品品类为必填项，例如：家居、服装、宠物用品" })
       return
     }
 
@@ -1782,6 +1790,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
         owner_id: ownerId,
         name: trimmedCompany || trimmedWebsite,
         website: trimmedWebsite || null,
+        product_category: newLead.productCategory.trim(),
         source: sourceLabel,
         stage: "L1",
         status: "open",
@@ -1850,6 +1859,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
           id: createdId,
           company: newLead.company,
           website: newLead.website.trim(),
+          productCategory: newLead.productCategory.trim(),
           contact: newLead.contact || "新联系人",
           phone: trimmedPhone,
           wechat: trimmedWechat,
@@ -1887,6 +1897,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       setNewLead({
         company: "",
         website: "",
+        productCategory: "",
         contact: "",
         phone: "",
         wechat: "",
@@ -2036,6 +2047,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     setEditLead({
       company: lead.company,
       website: lead.website ?? "",
+      productCategory: lead.productCategory ?? "",
       contact: lead.contact,
       phone: lead.phone,
       wechat: lead.wechat,
@@ -2290,6 +2302,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     setEditLead({
       company: selectedLead.company,
       website: selectedLead.website ?? "",
+      productCategory: selectedLead.productCategory ?? "",
       contact: selectedLead.contact,
       phone: selectedLead.phone,
       wechat: selectedLead.wechat,
@@ -2319,6 +2332,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     setEditLead({
       company: selectedLead.company,
       website: selectedLead.website ?? "",
+      productCategory: selectedLead.productCategory ?? "",
       contact: selectedLead.contact,
       phone: selectedLead.phone,
       wechat: selectedLead.wechat,
@@ -2496,6 +2510,12 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       patch.business_category_ids = resolvedCategoryIdsForEdit
     }
 
+    const nextProductCategory = editLead.productCategory.trim()
+    const previousProductCategory = selectedLead.productCategory ?? ""
+    if (nextProductCategory !== previousProductCategory) {
+      patch.product_category = nextProductCategory || null
+    }
+
     const nextResponsibility = editLead.responsibilityType.trim()
     const prevResponsibility = selectedLead.responsibilityType ?? ""
 
@@ -2591,6 +2611,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
             ? {
                 ...l,
                 company: editLead.company.trim(),
+                productCategory: nextProductCategory || null,
                 contact: editLead.contact.trim() || l.contact,
                 phone: editLead.phone.trim(),
                 wechat: editLead.wechat.trim() || l.wechat,
@@ -2612,6 +2633,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
               ...prev,
               company: editLead.company.trim(),
               website: editLead.website.trim() || prev.website,
+              productCategory: nextProductCategory || null,
               contact: editLead.contact.trim() || prev.contact,
               phone: editLead.phone.trim(),
               wechat: editLead.wechat.trim() || prev.wechat,
@@ -3079,26 +3101,16 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
             </div>
 
 
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <Label>品类 *</Label>
-                <p className="text-xs text-muted-foreground">至少选择一个品类</p>
-              </div>
-              <div className="flex flex-wrap gap-2 rounded-md border border-muted-foreground/20 p-3">
-                {businessCategories.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">暂无品类，请先在设置中配置</p>
-                ) : businessCategories.map((category) => {
-                  const checked = newLead.businessCategoryIds.includes(String(category.id))
-                  return <label key={category.id} className="flex items-center gap-2 rounded-md border border-muted-foreground/20 px-3 py-2 hover:border-primary/40">
-                    <Checkbox checked={checked} onCheckedChange={(value) => setNewLead((prev) => {
-                      const next = new Set(prev.businessCategoryIds)
-                      if (value) next.add(String(category.id)); else next.delete(String(category.id))
-                      return { ...prev, businessCategoryIds: Array.from(next) }
-                    })} />
-                    <span className="text-sm">{category.name}</span>
-                  </label>
-                })}
-              </div>
+            <div className="space-y-2">
+              <Label htmlFor="product-category">客户产品品类 *</Label>
+              <Input
+                id="product-category"
+                value={newLead.productCategory}
+                onChange={(e) => setNewLead((prev) => ({ ...prev, productCategory: e.target.value }))}
+                placeholder="填写客户实际销售的产品品类，例如：家居、服装、宠物用品"
+                required
+              />
+              <p className="text-xs text-muted-foreground">自由填写客户产品品类，不受系统业务分类选项限制</p>
             </div>
             <div className="space-y-3">
               <div className="flex items-center justify-between">
@@ -4379,6 +4391,23 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                     )}
                   </div>
 
+                  <div className="space-y-1.5 col-span-2">
+                    <p className="text-sm font-semibold text-muted-foreground">客户产品品类</p>
+                    {isEditing ? (
+                      <Input
+                        value={editLead.productCategory}
+                        onChange={(e) => setEditLead({ ...editLead, productCategory: e.target.value })}
+                        className="h-9 text-sm"
+                        placeholder="填写客户实际销售的产品品类"
+                      />
+                    ) : selectedLead.productCategory ? (
+                      <p className="text-sm font-medium">{selectedLead.productCategory}</p>
+                    ) : selectedLead.businessCategories && selectedLead.businessCategories.length > 0 ? (
+                      <p className="text-sm font-medium text-muted-foreground">{selectedLead.businessCategories.map((c) => c.name).join("、")}</p>
+                    ) : (
+                      <p className="text-sm text-muted-foreground font-medium">历史数据未填写</p>
+                    )}
+                  </div>
                   <div className="space-y-1.5 col-span-2">
                     <p className="text-sm font-semibold text-muted-foreground">业务类型</p>
                     {isEditing ? (

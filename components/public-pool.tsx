@@ -68,6 +68,7 @@ interface PoolLead {
   contact: string
   phone: string
   wechat: string
+  productCategory: string
   source: string
   budget: string
   lastStage: string
@@ -568,7 +569,6 @@ export function PublicPool() {
   const [claimingLeadId, setClaimingLeadId] = useState<string | null>(null)
   const [defaultBusinessTypeId, setDefaultBusinessTypeId] = useState<number | null>(null)
   const [defaultBusinessCategoryIds, setDefaultBusinessCategoryIds] = useState<number[]>([])
-  const [businessCategoryOptions, setBusinessCategoryOptions] = useState<{ id: number; name: string }[]>([])
 
   useEffect(() => {
     const supabase = getBrowserSupabaseClient()
@@ -584,16 +584,6 @@ export function PublicPool() {
           setDefaultBusinessTypeId(Number(data[0].id))
           setDefaultBusinessCategoryIds(data[0].category_id != null ? [Number(data[0].category_id)] : [])
         }
-        const { data: categories } = await supabase
-          .from("business_categories")
-          .select("id, name")
-          .eq("is_active", true)
-          .order("sort_order")
-        setBusinessCategoryOptions(
-          (categories ?? [])
-            .map((item: any) => ({ id: Number(item.id), name: String(item.name ?? "").trim() }))
-            .filter((item) => item.name),
-        )
       } catch (err) {
         console.error("Failed to load default business type for public pool", err)
       }
@@ -798,7 +788,7 @@ export function PublicPool() {
         const { data, error } = await supabase
           .from("leads_secure_view")
           .select(
-            "id, name, website, stage, status, source, customer_name, customer_phone, wechat, budget, updated_at, created_by, team_id, owner_id, business_categories",
+            "id, name, website, stage, status, source, customer_name, customer_phone, wechat, product_category, budget, updated_at, created_by, team_id, owner_id, business_categories",
           )
 
           .eq("status", "pool")
@@ -888,6 +878,7 @@ export function PublicPool() {
               contact: (row.customer_name as string) ?? "未填写联系人",
               phone: (row.customer_phone as string) ?? "",
               wechat: ((row as any).wechat as string | null) ?? "",
+              productCategory: String((row as any).product_category ?? ""),
               source: formatPublicPoolSourceLabel(row as any),
 
 
@@ -1701,16 +1692,14 @@ export function PublicPool() {
             customer_name: row.contact || "Unknown Contact",
             customer_phone: row.phone || null,
             wechat: row.wechat || null,
+            product_category: row.category.trim() || null,
             responsibility_type: primarySource,
             source_level1: primarySource,
             source_level2: row.sourceKey || null,
             // Legacy public-pool spreadsheets do not contain taxonomy columns.
             // Keep them importable by applying the configured default type/category.
             business_type_ids: defaultBusinessTypeId ? [defaultBusinessTypeId] : [],
-            business_category_ids: (() => {
-              const matched = businessCategoryOptions.find((item) => item.name.trim() === row.category.trim())
-              return matched ? [matched.id] : defaultBusinessCategoryIds
-            })(),
+            business_category_ids: defaultBusinessCategoryIds,
           }
 
           if (budget !== null && !Number.isNaN(budget)) {
@@ -1720,7 +1709,7 @@ export function PublicPool() {
           return payload
         })
     },
-    [businessCategoryOptions, defaultBusinessCategoryIds, defaultBusinessTypeId],
+    [defaultBusinessCategoryIds, defaultBusinessTypeId],
   )
 
   const handleConfirmImport = async () => {
@@ -2057,7 +2046,7 @@ const getDaysInPoolBadge = (days: number) => {
                       const { data, error: leadsError } = await supabase
                         .from("leads_secure_view")
                         .select(
-                          "name, website, customer_name, customer_phone, source, budget, stage, status, responsibility_type, source_level1, source_level2, activity_name, referral_customer_name, business_categories",
+                          "name, website, customer_name, customer_phone, source, product_category, budget, stage, status, responsibility_type, source_level1, source_level2, activity_name, referral_customer_name, business_categories",
                         )
                         .eq("status", "pool")
 
@@ -2078,7 +2067,7 @@ const getDaysInPoolBadge = (days: number) => {
                               row.customer_name ?? "",
                               row.customer_phone ?? "",
                               row.source ?? "",
-                              Array.isArray(row.business_categories) ? row.business_categories.map((item: any) => item.name).join("、") : "",
+                              row.product_category ?? (Array.isArray(row.business_categories) ? row.business_categories.map((item: any) => item.name).join("、") : ""),
                               row.budget ?? "",
                               row.stage ?? "",
                               row.status ?? "",
@@ -2157,7 +2146,7 @@ const getDaysInPoolBadge = (days: number) => {
                       const { data, error: leadsError } = await supabase
                         .from("leads_secure_view")
                         .select(
-                          "name, website, customer_name, customer_phone, wechat, source, budget, stage, status, responsibility_type, source_level1, source_level2, business_categories",
+                          "name, website, customer_name, customer_phone, wechat, source, product_category, budget, stage, status, responsibility_type, source_level1, source_level2, business_categories",
                         )
                         .eq("status", "pool")
 
@@ -2179,7 +2168,7 @@ const getDaysInPoolBadge = (days: number) => {
                               row.customer_phone ?? "",
                               row.wechat ?? "",
                               getPublicPoolExportSourceLabel(row),
-                              Array.isArray(row.business_categories) ? row.business_categories.map((item: any) => item.name).join("、") : "",
+                              row.product_category ?? (Array.isArray(row.business_categories) ? row.business_categories.map((item: any) => item.name).join("、") : ""),
                               row.budget ?? "",
                             ]
 
@@ -2345,9 +2334,7 @@ const getDaysInPoolBadge = (days: number) => {
                   </TableCell>
                   <TableCell>
                     <div className="flex flex-wrap gap-1">
-                      {lead.categories.length > 0 ? lead.categories.map((category) => (
-                        <Badge key={category.id} variant="outline" className="text-xs border-primary/30 text-primary">{category.name}</Badge>
-                      )) : <span className="text-xs text-muted-foreground">历史数据未填写</span>}
+                      {lead.productCategory || (lead.categories.length > 0 ? lead.categories.map((category) => category.name).join("、") : "") || <span className="text-xs text-muted-foreground">历史数据未填写</span>}
                     </div>
                   </TableCell>
                   <TableCell className="text-sm font-bold text-primary">{lead.budget}</TableCell>
@@ -3152,25 +3139,13 @@ const getDaysInPoolBadge = (days: number) => {
                                       </SelectContent>
                                     </Select>
                                   </TableCell>
-                                  <TableCell className="min-w-[140px] align-top">
-                                    <Select
-                                      value={row.category.trim() ? row.category : "__empty__"}
-                                      onValueChange={(value) =>
-                                        updateImportReviewRow(row.rowIndex, { category: value === "__empty__" ? "" : value })
-                                      }
-                                    >
-                                      <SelectTrigger className="h-8 text-xs">
-                                        <SelectValue placeholder="选择品类（可留空兼容旧模板）" />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        <SelectItem value="__empty__">使用默认品类</SelectItem>
-                                        {businessCategoryOptions.map((option) => (
-                                          <SelectItem key={option.id} value={option.name}>
-                                            {option.name}
-                                          </SelectItem>
-                                        ))}
-                                      </SelectContent>
-                                    </Select>
+                                  <TableCell className="min-w-[180px] align-top">
+                                    <Input
+                                      value={row.category}
+                                      onChange={(event) => updateImportReviewRow(row.rowIndex, { category: event.target.value })}
+                                      className="h-8 text-xs"
+                                      placeholder="客户产品品类（可留空兼容旧模板）"
+                                    />
                                   </TableCell>
                                   <TableCell className="min-w-[100px] align-top">
                                     <Input
