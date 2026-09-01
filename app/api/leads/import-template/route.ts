@@ -10,7 +10,6 @@ import {
 } from "@/lib/lead-import/shared/company-resource-template"
 import { createRouteHandlerClient } from "@/lib/supabase/server"
 
-export const runtime = "edge"
 
 type SourceGroupSetting = {
   key: string

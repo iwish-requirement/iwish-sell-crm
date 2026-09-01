@@ -10,7 +10,6 @@ import {
   type ImportFieldValueMap,
 } from "@/lib/public-pool-import-mapping"
 
-export const runtime = "edge"
 
 const DEFAULT_OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 const DEFAULT_OPENROUTER_MODEL = (

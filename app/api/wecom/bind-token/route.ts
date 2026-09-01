@@ -3,7 +3,6 @@ import { NextRequest, NextResponse } from "next/server"
 import { createRouteHandlerClient } from "@/lib/supabase/server"
 
 
-export const runtime = "edge"
 
 
 type RequestBody = {

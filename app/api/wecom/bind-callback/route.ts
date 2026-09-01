@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server"
 
 import { createAdminSupabaseClient } from "@/lib/supabase/admin"
 
-export const runtime = "edge"
 
 
 type RequestBody = {

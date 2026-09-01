@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server"
 
 import { createRouteHandlerClient } from "@/lib/supabase/server"
 
-export const runtime = "edge"
 
 function getGatewayBaseUrl(): string {
   const raw = (process.env.WECOM_GATEWAY_BASE_URL ?? "https://requirement.iwishweb.com").trim()

@@ -3,7 +3,6 @@ import { NextRequest, NextResponse } from "next/server"
 import { createAdminSupabaseClient } from "@/lib/supabase/admin"
 import { sendWecomGatewayText, buildPublicUrl } from "@/lib/wecom/gateway"
 
-export const runtime = "edge"
 
 function getJobToken(): string {
   return (process.env.RENEWAL_WECHAT_JOB_TOKEN ?? process.env.WECOM_RENEWAL_JOB_TOKEN ?? "").trim()

@@ -11,7 +11,6 @@ import {
 import { mapLeadImportErrorMessage } from "@/lib/lead-import/shared/import-error-messages"
 import { createRouteHandlerClient } from "@/lib/supabase/server"
 
-export const runtime = "edge"
 
 type BackendRowError = {
   rowIndex: number
