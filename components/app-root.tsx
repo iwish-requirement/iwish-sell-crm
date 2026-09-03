@@ -17,6 +17,8 @@ import { ProfileCenter } from "@/components/profile-center"
 
 import { toast } from "sonner"
 import { getBrowserSupabaseClient } from "@/lib/supabase/client"
+import { fetchCurrentUserPublicProfile } from "@/lib/auth/profile"
+import { allocationCenterNavigationEnabled, isAllocationCenterBetaUser } from "@/lib/feature-flags"
 import { APP_VERSION } from "@/lib/app-version"
 
 
@@ -49,6 +51,7 @@ export type MePermissions = {
   canManageContracts: boolean
   canReadAllocations: boolean
   canManageAllocations: boolean
+  canAccessAllocationCenter: boolean
   canImportLeads: boolean
   leadScopeType: "self" | "team" | "org" | "custom"
   leadCreateScopeType: "self" | "team" | "org" | "custom"
@@ -116,7 +119,10 @@ export function AppRoot() {
     async function loadPermissions() {
       try {
         const supabase = getBrowserSupabaseClient()
-        const { data, error } = await supabase.rpc("rpc_me_permissions")
+        const [{ data, error }, publicProfile] = await Promise.all([
+          supabase.rpc("rpc_me_permissions"),
+          fetchCurrentUserPublicProfile(supabase),
+        ])
 
         if (!isMounted) return
 
@@ -135,6 +141,7 @@ export function AppRoot() {
             canManageContracts: false,
             canReadAllocations: false,
             canManageAllocations: false,
+            canAccessAllocationCenter: false,
             canImportLeads: false,
             leadScopeType: "self",
             leadCreateScopeType: "self",
@@ -144,6 +151,8 @@ export function AppRoot() {
         }
 
         const value = (data as any) ?? {}
+        const canReadAllocations = Boolean(value.canReadAllocations)
+        const isAllocationBetaUser = isAllocationCenterBetaUser(publicProfile)
         setMePermissions({
           canAssignLeads: Boolean(value.canAssignLeads),
           canReturnToPool: Boolean(value.canReturnToPool),
@@ -155,8 +164,11 @@ export function AppRoot() {
           canViewPublicPool: Boolean(value.canViewPublicPool),
           canReadContracts: Boolean(value.canReadContracts),
           canManageContracts: Boolean(value.canManageContracts),
-          canReadAllocations: Boolean(value.canReadAllocations),
+          canReadAllocations,
           canManageAllocations: Boolean(value.canManageAllocations),
+          // The beta identity still must hold the normal allocations.read
+          // permission. This flag only gates UI exposure during rollout.
+          canAccessAllocationCenter: canReadAllocations && (allocationCenterNavigationEnabled || isAllocationBetaUser),
           canImportLeads: Boolean(value.canImportLeads),
           leadScopeType: (value.leadScopeType as MePermissions["leadScopeType"]) ?? "self",
           leadCreateScopeType: (value.leadCreateScopeType as MePermissions["leadCreateScopeType"]) ?? "self",
@@ -178,6 +190,7 @@ export function AppRoot() {
           canManageContracts: false,
           canReadAllocations: false,
           canManageAllocations: false,
+          canAccessAllocationCenter: false,
           canImportLeads: false,
           leadScopeType: "self",
           leadCreateScopeType: "self",
@@ -243,7 +256,12 @@ export function AppRoot() {
             {activeView === "pool" && <PublicPool />}
             {activeView === "deals" && <DealCenter />}
             {activeView === "renewals" && <RenewalCenter />}
-            {activeView === "allocations" && <AllocationCenter />}
+            {activeView === "allocations" && (mePermissions?.canAccessAllocationCenter ? <AllocationCenter /> : (
+              <div className="space-y-2">
+                <h1 className="text-2xl font-bold text-foreground">分配中心</h1>
+                <p className="text-sm text-muted-foreground">分配中心正在进行灰度测试，当前账号暂不可访问。</p>
+              </div>
+            ))}
             {activeView === "analytics" && <AnalyticsDashboard />}
 
             {activeView === "settings" && <SystemSettings />}

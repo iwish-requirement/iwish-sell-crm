@@ -60,6 +60,11 @@ const TIME_FILTER_OPTIONS = [
   { value: "all", label: "全部时间" },
 ] as const
 
+function normalizeCurrency(value: string | null | undefined): string {
+  const currency = (value ?? "").trim().toUpperCase()
+  return /^[A-Z]{3}$/.test(currency) ? currency : "CNY"
+}
+
 export function DealCenter() {
   const mePermissions = useContext(MePermissionsContext)
   const [currentProfile, setCurrentProfile] = useState<UserProfile | null>(null)
@@ -438,7 +443,14 @@ export function DealCenter() {
       }
 
       setIsContractLoading(true)
-      const contract = await fetchContractByLeadId(selectedDeal.id)
+      let contract: ContractRow | null = null
+      try {
+        contract = await fetchContractByLeadId(selectedDeal.id)
+      } catch (error) {
+        // A missing/temporarily unavailable contract must not take down the
+        // whole client route. The detail view can still show the deal data.
+        console.error("Failed to load contract for selected deal", error)
+      }
       if (!isMounted) return
       setSelectedContract(contract)
       setIsContractLoading(false)
@@ -981,7 +993,7 @@ export function DealCenter() {
                         <p className="font-bold text-primary">
                           {new Intl.NumberFormat("zh-CN", {
                             style: "currency",
-                            currency: selectedContract.currency || "CNY",
+                            currency: normalizeCurrency(selectedContract.currency),
                             maximumFractionDigits: 0,
                           }).format(selectedContract.amount || 0)}
                         </p>
@@ -1063,7 +1075,7 @@ export function DealCenter() {
                               <TableCell className="text-right whitespace-nowrap text-foreground font-semibold">
                                 {new Intl.NumberFormat("zh-CN", {
                                   style: "currency",
-                                  currency: payment.currency || "CNY",
+                                  currency: normalizeCurrency(payment.currency),
                                   maximumFractionDigits: 0,
                                 }).format(payment.amount || 0)}
                               </TableCell>
@@ -1331,7 +1343,7 @@ export function DealCenter() {
 
                   addContractPayment(selectedContract.id, {
                     amount,
-                    currency: selectedContract.currency || "CNY",
+                    currency: normalizeCurrency(selectedContract.currency),
                     paidAt: paidAtIso,
                     method: paymentMethodInput || undefined,
                     note: paymentNoteInput || undefined,

@@ -4,6 +4,13 @@
   "name": "iwish-sell-crm",
   "compatibility_date": "2024-09-23",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "routes": [
+    {
+      "pattern": "sell.iwishweb.com",
+      "custom_domain": true,
+      "zone_name": "iwishweb.com"
+    }
+  ],
   "vars": {
     "APP_PUBLIC_URL": "https://sell.iwishweb.com",
     "NEXT_PUBLIC_SYSTEM_KEY": "crm",

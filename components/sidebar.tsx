@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { MePermissionsContext } from "@/components/app-root"
+import { allocationCenterNavigationEnabled } from "@/lib/feature-flags"
 
 
 type NavItemId = "dashboard" | "leads" | "pool" | "deals" | "renewals" | "allocations" | "analytics" | "settings" | "audit"
@@ -75,7 +76,9 @@ function SidebarContent({ activeView, onNavigate, onItemClick }: SidebarContentP
   const canViewAudit = mePermissions?.canViewAudit ?? false
   const canViewSettings = mePermissions?.canViewSettings ?? false
   const canViewDealsAndRenewals = mePermissions?.canReadContracts ?? false
-  const canViewAllocations = Boolean((mePermissions as any)?.canReadAllocations)
+  // Navigation stays hidden while allocation center is in beta. The beta
+  // account can still open /allocations directly through AppRoot.
+  const canViewAllocations = allocationCenterNavigationEnabled && Boolean(mePermissions?.canAccessAllocationCenter)
   const isPermissionsLoading = mePermissions === null
 
   const visibleNavItems = navItems.filter((item) => {
