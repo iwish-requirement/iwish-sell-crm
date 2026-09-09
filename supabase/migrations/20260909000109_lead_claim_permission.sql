@@ -23,6 +23,8 @@ declare
   v_before jsonb;
   v_team_id int;
   v_previously_returned boolean := false;
+  v_prevent_previous_owner_reclaim boolean := false;
+  v_settings jsonb;
 begin
   if not iwish.has_permission(v_actor, 'leads.claim') then
     raise exception 'ERR_NO_PERMISSION:leads.claim';
@@ -36,6 +38,9 @@ begin
     raise exception 'ERR_INVALID_STATUS:only_pool_leads_can_be_claimed';
   end if;
 
+  select value into v_settings from public.settings where key = 'pipeline.business_rules';
+  v_prevent_previous_owner_reclaim := coalesce((v_settings->>'prevent_previous_owner_reclaim')::boolean, false);
+
   select exists (
     select 1 from public.audit_logs al
     where al.target_type = 'lead'
@@ -43,7 +48,7 @@ begin
       and al.action = 'return_lead_to_pool'
       and al.before->>'owner_id' = v_actor::text
   ) into v_previously_returned;
-  if v_previously_returned then
+  if v_prevent_previous_owner_reclaim and v_previously_returned then
     raise exception 'ERR_INVALID_STATUS:previous_owner_cannot_claim_after_return';
   end if;
 

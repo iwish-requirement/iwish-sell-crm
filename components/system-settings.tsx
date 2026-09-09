@@ -731,6 +731,7 @@ export function SystemSettings() {
 // Business Rules Tab
 function BusinessRulesTab() {
   const [publicPoolDays, setPublicPoolDays] = useState("30")
+  const [preventPreviousOwnerReclaim, setPreventPreviousOwnerReclaim] = useState(false)
   const [warningHours, setWarningHours] = useState("72")
   const [dangerHours, setDangerHours] = useState("168")
   const [isLoading, setIsLoading] = useState(true)
@@ -787,6 +788,9 @@ function BusinessRulesTab() {
           }
           if (pipelineValue.danger_hours != null) {
             setDangerHours(String(pipelineValue.danger_hours))
+          }
+          if (typeof pipelineValue.prevent_previous_owner_reclaim === "boolean") {
+            setPreventPreviousOwnerReclaim(pipelineValue.prevent_previous_owner_reclaim)
           }
         }
 
@@ -854,6 +858,7 @@ function BusinessRulesTab() {
                 public_pool_days: poolDays,
                 warning_hours: warnHours,
                 danger_hours: dangerHoursValue,
+                prevent_previous_owner_reclaim: preventPreviousOwnerReclaim,
               },
             },
             {
@@ -934,6 +939,21 @@ function BusinessRulesTab() {
                       <span className="text-sm text-muted-foreground">天</span>
                     </div>
                     <p className="text-xs text-muted-foreground">超过此天数未跟进的线索将自动进入公海池</p>
+                  </div>
+                  <Separator />
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="space-y-1">
+                      <Label htmlFor="preventPreviousOwnerReclaim">禁止原负责人再次认领</Label>
+                      <p className="text-xs text-muted-foreground">
+                        开启后，销售退回公海的线索不能由原负责人再次认领。默认关闭。
+                      </p>
+                    </div>
+                    <Switch
+                      id="preventPreviousOwnerReclaim"
+                      checked={preventPreviousOwnerReclaim}
+                      onCheckedChange={setPreventPreviousOwnerReclaim}
+                      disabled={isLoading || isSaving}
+                    />
                   </div>
                   <Separator />
                   <div className="space-y-2">
