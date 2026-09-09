@@ -40,6 +40,7 @@ export type AppView =
 
 export type MePermissions = {
   canAssignLeads: boolean
+  canClaimLeads: boolean
   canReturnToPool: boolean
   canDeleteLeads: boolean
   canTransferLeads: boolean
@@ -130,6 +131,7 @@ export function AppRoot() {
           console.error("Failed to load current user permissions", error)
           setMePermissions({
             canAssignLeads: false,
+            canClaimLeads: false,
             canReturnToPool: false,
             canDeleteLeads: false,
             canTransferLeads: false,
@@ -155,6 +157,7 @@ export function AppRoot() {
         const isAllocationBetaUser = isAllocationCenterBetaUser(publicProfile)
         setMePermissions({
           canAssignLeads: Boolean(value.canAssignLeads),
+          canClaimLeads: Boolean(value.canClaimLeads),
           canReturnToPool: Boolean(value.canReturnToPool),
           canDeleteLeads: Boolean(value.canDeleteLeads),
           canTransferLeads: Boolean(value.canTransferLeads),
@@ -179,6 +182,7 @@ export function AppRoot() {
         if (!isMounted) return
         setMePermissions({
           canAssignLeads: false,
+          canClaimLeads: false,
           canReturnToPool: false,
           canDeleteLeads: false,
           canTransferLeads: false,

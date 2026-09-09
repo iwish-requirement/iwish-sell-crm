@@ -560,6 +560,7 @@ export function PublicPool() {
   const [leads, setLeads] = useState<PoolLead[]>([])
   const mePermissions = React.useContext(MePermissionsContext)
   const canAssignLeads = mePermissions?.canAssignLeads ?? false
+  const canClaimLeads = mePermissions?.canClaimLeads ?? false
   const canDeleteLeads = mePermissions?.canDeleteLeads ?? false
   const canViewPublicPool = mePermissions?.canViewPublicPool ?? false
   const canImportLeads = mePermissions?.canImportLeads ?? false
@@ -1979,9 +1980,9 @@ const getDaysInPoolBadge = (days: number) => {
           )}
           <Button
             variant="outline"
-            disabled={selectedLeads.length === 0 || !canAssignLeads}
+            disabled={selectedLeads.length === 0 || !canClaimLeads}
             onClick={async () => {
-              if (!canAssignLeads) {
+              if (!canClaimLeads) {
                 toast.error("没有认领线索的权限", {
                   description:
                     "请联系管理员在系统设置 → 角色权限中开启“线索分配/认领”相关权限。",
@@ -2365,7 +2366,7 @@ const getDaysInPoolBadge = (days: number) => {
                       <DropdownMenuContent align="end">
                         <DropdownMenuItem
                           onClick={() => {
-                            if (!canAssignLeads) {
+                            if (!canClaimLeads) {
                               toast.error("没有认领线索的权限", {
                                 description:
                                   "请联系管理员在系统设置 → 角色权限中开启“线索分配/认领”相关权限。",

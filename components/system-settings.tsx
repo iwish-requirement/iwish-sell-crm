@@ -108,6 +108,7 @@ interface RolePermissionFlags {
   exportData: boolean
   importLeads: boolean
   assignLeads: boolean
+  claimLeads?: boolean
   deleteLeads: boolean
   returnToPool: boolean
   manageLeadNotes: boolean
@@ -485,6 +486,7 @@ const PERMISSION_KEY_MAP = {
   exportData: ["leads.export", "reports.export"] as const,
   importLeads: ["leads.import"] as const,
   assignLeads: ["leads.assign"] as const,
+  claimLeads: ["leads.claim"] as const,
   deleteLeads: ["leads.delete"] as const,
   returnToPool: ["leads.pool.return"] as const,
   manageLeadNotes: [
@@ -570,6 +572,12 @@ const PERMISSION_MATRIX_ROWS: PermissionMatrixRowConfig[] = [
     groupId: "operation",
     label: "分配线索",
     description: "允许将线索分配给其他销售，通常适用于主管及以上角色。",
+  },
+  {
+    key: "claimLeads",
+    groupId: "operation",
+    label: "认领公海线索",
+    description: "允许从公海池认领线索到自己名下。",
   },
   {
     key: "importLeads",
@@ -3748,6 +3756,7 @@ function PermissionsTab() {
             exportData: deriveFlag(roleId, "exportData"),
             importLeads: deriveFlag(roleId, "importLeads"),
             assignLeads: deriveFlag(roleId, "assignLeads"),
+            claimLeads: deriveFlag(roleId, "claimLeads"),
             deleteLeads: deriveFlag(roleId, "deleteLeads"),
             returnToPool: deriveFlag(roleId, "returnToPool"),
             manageLeadNotes: deriveFlag(roleId, "manageLeadNotes"),
@@ -3946,6 +3955,7 @@ function PermissionsTab() {
       pushToggle("exportData", editingRole.permissions.exportData, "org")
       pushToggle("importLeads", editingRole.permissions.importLeads, "org")
       pushToggle("assignLeads", editingRole.permissions.assignLeads)
+      pushToggle("claimLeads", Boolean(editingRole.permissions.claimLeads))
       pushToggle("deleteLeads", editingRole.permissions.deleteLeads, "org")
       pushToggle("returnToPool", editingRole.permissions.returnToPool)
       pushToggle("manageLeadNotes", editingRole.permissions.manageLeadNotes)
@@ -4004,6 +4014,7 @@ function PermissionsTab() {
             exportData: deriveFlagFromPerms("exportData"),
             importLeads: deriveFlagFromPerms("importLeads"),
             assignLeads: deriveFlagFromPerms("assignLeads"),
+            claimLeads: deriveFlagFromPerms("claimLeads"),
             deleteLeads: deriveFlagFromPerms("deleteLeads"),
             returnToPool: deriveFlagFromPerms("returnToPool"),
             manageLeadNotes: deriveFlagFromPerms("manageLeadNotes"),
