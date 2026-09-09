@@ -3681,6 +3681,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                   <TableHead>联系方式</TableHead>
                   <TableHead>阶段</TableHead>
                   <TableHead>来源</TableHead>
+                  <TableHead>品类</TableHead>
                   <TableHead>业务类型</TableHead>
                   <TableHead>级别</TableHead>
                   <TableHead>负责人</TableHead>
@@ -3694,7 +3695,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
               <TableBody>
                 {tableLeads.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={13} className="py-10 text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={14} className="py-10 text-center text-sm text-muted-foreground">
                       当前筛选条件下暂无线索
                     </TableCell>
                   </TableRow>
@@ -3729,6 +3730,9 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                           <span className="sr-only">{stageLabel}</span>
                         </TableCell>
                         <TableCell className="max-w-[200px] truncate">{sourceLabel}</TableCell>
+                        <TableCell className="max-w-[180px] truncate">
+                          {lead.productCategory || <span className="text-muted-foreground">历史数据未填写</span>}
+                        </TableCell>
                         <TableCell className="max-w-[180px] truncate">{businessTypeLabel}</TableCell>
                         <TableCell>{lead.grade ? <Badge variant="outline">{lead.grade}</Badge> : "-"}</TableCell>
                         <TableCell>{ownerRep?.name ?? "-"}</TableCell>
