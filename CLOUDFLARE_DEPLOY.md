@@ -25,7 +25,7 @@
 
 ## 将生产域名切到 Worker
 
-当前 `wrangler.jsonc` 暂不声明 `sell.iwishweb.com`，以便在 Pages 仍占用该域名时先通过 Worker 的 `workers.dev` 地址完成部署和验证。正式切换前，需要先在 Pages 项目中移除同名自定义域名、清理冲突的 DNS 记录，并确保 `iwishweb.com` Zone 对当前 Cloudflare 账号可见；完成后再把 Worker Custom Domain 配置加回并部署。Windows 本机的 OpenNext 符号链接构建可能失败。
+`wrangler.jsonc` 已声明 `sell.iwishweb.com` 为 Worker Custom Domain。正式切换前需要先在 Pages 项目中移除同名自定义域名、清理冲突的 DNS 记录，并确保 `iwishweb.com` Zone 对当前 Cloudflare 账号可见；完成后通过 Workers Git 集成部署。Windows 本机的 OpenNext 符号链接构建可能失败。
 
 ## 本地验证
 
