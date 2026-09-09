@@ -238,6 +238,16 @@ export function mapRpcError(
       }
     }
 
+    if (code === "previous_owner_cannot_claim_after_return") {
+      return {
+        kind: "invalid_status",
+        title: "不能重复认领该线索",
+        description: "这条线索曾由当前负责人退回公海，原负责人不能再次认领。",
+        canRetry: false,
+        rawMessage,
+      }
+    }
+
     return {
       kind: "invalid_status",
       title: "状态不允许",
