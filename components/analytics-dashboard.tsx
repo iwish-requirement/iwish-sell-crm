@@ -98,6 +98,61 @@ const ALL_TEAMS_OPTION: TeamOption = {
   name: "全部团队",
 }
 
+const ANALYTICS_STAGE_ORDER = [
+  "uncontacted",
+  "connected",
+  "online_communication",
+  "offline_visit",
+  "proposal_quotation",
+  "proposal_negotiation",
+  "intent_confirmed",
+  "contract_review",
+  "won",
+] as const
+
+const ANALYTICS_STAGE_LABELS: Record<(typeof ANALYTICS_STAGE_ORDER)[number], { stage: string; fullName: string }> = {
+  uncontacted: { stage: "未建联", fullName: "未建联" },
+  connected: { stage: "已建联", fullName: "已建联" },
+  online_communication: { stage: "线上/电话沟通", fullName: "线上/电话沟通" },
+  offline_visit: { stage: "线下拜访", fullName: "线下拜访" },
+  proposal_quotation: { stage: "方案及报价", fullName: "方案及报价" },
+  proposal_negotiation: { stage: "方案谈判", fullName: "方案谈判" },
+  intent_confirmed: { stage: "合作意向已确认", fullName: "合作意向已确认" },
+  contract_review: { stage: "审合同/合同推进", fullName: "审合同/合同推进" },
+  won: { stage: "成交", fullName: "成交" },
+}
+
+const ANALYTICS_LEGACY_STAGE_MAP: Record<string, (typeof ANALYTICS_STAGE_ORDER)[number]> = {
+  L1: "uncontacted",
+  L2: "connected",
+  L3: "proposal_quotation",
+  L4: "proposal_negotiation",
+  Won: "won",
+  成交: "won",
+  new: "uncontacted",
+}
+
+function getAnalyticsFollowUpStage(lead: Pick<LeadSecureRow, "stage" | "follow_up_stage" | "status" | "close_result">) {
+  const rawFollowUpStage = (lead.follow_up_stage ?? "").trim()
+  const rawLegacyStage = (lead.stage ?? "").trim()
+  const followUpStage = ANALYTICS_STAGE_ORDER.includes(rawFollowUpStage as (typeof ANALYTICS_STAGE_ORDER)[number])
+    ? (rawFollowUpStage as (typeof ANALYTICS_STAGE_ORDER)[number])
+    : null
+  const legacyStage = ANALYTICS_LEGACY_STAGE_MAP[rawLegacyStage] ?? null
+  const candidate = followUpStage && (followUpStage !== "uncontacted" || !legacyStage || legacyStage === "uncontacted")
+    ? followUpStage
+    : legacyStage ?? "uncontacted"
+
+  if (
+    lead.status === "closed" &&
+    (lead.close_result === "won" || lead.close_result === "成交" || rawLegacyStage === "Won")
+  ) {
+    return "won" as const
+  }
+
+  return candidate
+}
+
 export function AnalyticsDashboard() {
   const [dateRange, setDateRange] = useState<DateRange | undefined>({
     from: subDays(new Date(), 30),
@@ -222,7 +277,7 @@ export function AnalyticsDashboard() {
         let query = supabase
           .from("leads_secure_view")
           .select(
-            "id, team_id, owner_id, created_by, source, stage, status, close_result, budget, created_at, product_category",
+            "id, team_id, owner_id, created_by, source, stage, follow_up_stage, status, close_result, budget, created_at, product_category",
           )
 
 
@@ -485,64 +540,7 @@ export function AnalyticsDashboard() {
         productTypeMap.set(key, current)
       }
 
-      const stageOrder = ["L1", "L2", "L3", "L4", "Won"]
-
-      const defaultStageLabelMap: Record<string, { stage: string; fullName: string }> = {
-        L1: { stage: "L1 询盘", fullName: "L1 初步意向" },
-        L2: { stage: "L2 意向", fullName: "L2 明确需求" },
-        L3: { stage: "L3 关键意向", fullName: "L3 报价阶段" },
-        L4: { stage: "L4 谈判", fullName: "L4 谈判阶段" },
-        Won: { stage: "成交", fullName: "成交客户" },
-      }
-
-      let stageLabelMap: Record<string, { stage: string; fullName: string }> = {
-        ...defaultStageLabelMap,
-      }
-
-      try {
-        const { data: settingsRows, error: stageSettingsError } = await supabase
-          .from("settings")
-          .select("key, value")
-          .eq("key", "dashboard.pipeline_stages")
-          .limit(1)
-
-        if (!stageSettingsError && settingsRows && settingsRows.length > 0) {
-          const raw = (settingsRows[0].value as any) ?? null
-          if (raw && typeof raw === "object") {
-            for (const stageKey of stageOrder) {
-              const cfg = (raw as any)[stageKey]
-              if (cfg && typeof cfg === "object") {
-                stageLabelMap[stageKey] = {
-                  stage: (cfg.label as string) ?? defaultStageLabelMap[stageKey]?.stage ?? stageKey,
-                  fullName:
-                    (cfg.fullName as string) ??
-                    defaultStageLabelMap[stageKey]?.fullName ??
-                    stageKey,
-                }
-              }
-            }
-          }
-        }
-      } catch (err) {
-        console.error("Failed to load pipeline stage labels from settings", err)
-      }
-
-      const getLogicalStage = (lead: LeadSecureRow): string => {
-        const rawStage = (lead.stage ?? "").trim()
-        let logicalStage = rawStage || "L1"
-
-        if (
-          lead.status === "closed" &&
-          (lead.close_result === "won" ||
-            lead.close_result === "成交" ||
-            rawStage === "Won" ||
-            rawStage === "成交")
-        ) {
-          logicalStage = "Won"
-        }
-
-        return logicalStage
-      }
+      const getLogicalStage = (lead: LeadSecureRow) => getAnalyticsFollowUpStage(lead)
 
       const stageCounts = new Map<string, number>()
       for (const lead of filteredLeads) {
@@ -551,8 +549,8 @@ export function AnalyticsDashboard() {
       }
 
       const nextFunnelData: FunnelItem[] = []
-      for (const stageKey of stageOrder) {
-        const labelDef = stageLabelMap[stageKey]
+      for (const stageKey of ANALYTICS_STAGE_ORDER) {
+        const labelDef = ANALYTICS_STAGE_LABELS[stageKey]
         const count = stageCounts.get(stageKey) ?? 0
         nextFunnelData.push({
           stage: labelDef.stage,
@@ -567,7 +565,7 @@ export function AnalyticsDashboard() {
         const current = sourceCounts.get(source) ?? { leads: 0, converted: 0 }
         current.leads += 1
         const logicalStage = getLogicalStage(lead)
-        if (logicalStage === "Won") {
+        if (logicalStage === "won") {
           current.converted += 1
         }
         sourceCounts.set(source, current)
@@ -622,7 +620,7 @@ export function AnalyticsDashboard() {
         current.leads += 1
 
         const logicalStage = getLogicalStage(lead)
-        if (logicalStage === "Won") {
+        if (logicalStage === "won") {
           current.won += 1
         }
 
