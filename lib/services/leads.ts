@@ -120,6 +120,20 @@ export async function updateLeadPipeline(
   if (error) throw error
 }
 
+export async function advanceLeadWithAction(
+  leadId: string,
+  nextStage: string,
+  content: string,
+): Promise<void> {
+  const supabase = getBrowserSupabaseClient()
+  const { error } = await supabase.rpc("rpc_lead_advance_with_action", {
+    p_lead_id: leadId,
+    p_next_stage: nextStage,
+    p_content: content,
+  })
+  if (error) throw error
+}
+
 export async function createLead(payload: Record<string, unknown>): Promise<string> {
   const supabase = getBrowserSupabaseClient()
 
@@ -210,6 +224,21 @@ export async function closeLead(leadId: string, result: string, reason: string |
 
   if (error) {
     console.error("Failed to close lead", error)
+    throw error
+  }
+}
+
+export async function closeLeadWithAction(leadId: string, result: string, reason: string): Promise<void> {
+  const supabase = getBrowserSupabaseClient()
+
+  const { error } = await supabase.rpc("rpc_lead_close_with_action", {
+    p_lead_id: leadId,
+    p_result: result,
+    p_reason: reason,
+  })
+
+  if (error) {
+    console.error("Failed to close lead with action", error)
     throw error
   }
 }

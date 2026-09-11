@@ -49,7 +49,7 @@ import { fetchCurrentUserProfile } from "@/lib/auth/profile"
 import type { UserProfile } from "@/lib/auth/profile"
 import { mapRpcError, type RpcErrorFriendly } from "@/lib/rpc-error-mapper"
 import { RpcErrorBanner } from "@/components/rpc-error-banner"
-import { updateLead, closeLead, transferLead } from "@/lib/services/leads"
+import { advanceLeadWithAction, closeLeadWithAction, updateLead, transferLead } from "@/lib/services/leads"
 import { MePermissionsContext } from "@/components/app-root"
 import { LeadKanbanImportDialog } from "@/components/lead-kanban-import-dialog"
 
@@ -104,7 +104,7 @@ interface Lead {
 
 interface Interaction {
   id: number
-  type: "call" | "wechat" | "visit" | "system"
+  type: "call" | "wechat" | "visit" | "stage_change" | "won" | "lost" | "system"
   content: string
   date: string
   user: string
@@ -606,6 +606,9 @@ function InteractionItem({ interaction }: { interaction: Interaction }) {
       case "visit":
         return <MapPin className="w-4 h-4" />
       case "system":
+      case "stage_change":
+      case "won":
+      case "lost":
         return <ArrowRight className="w-4 h-4" />
       default:
         return <Phone className="w-4 h-4" />
@@ -620,6 +623,12 @@ function InteractionItem({ interaction }: { interaction: Interaction }) {
         return "微信"
       case "visit":
         return "拜访"
+      case "stage_change":
+        return "阶段推进"
+      case "won":
+        return "成交"
+      case "lost":
+        return "丢单"
       default:
         return "其他"
     }
@@ -2055,8 +2064,8 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
           return {
             id: index + 1,
             type:
-              row.note_type === "call" || row.note_type === "wechat" || row.note_type === "visit"
-                ? (row.note_type as "call" | "wechat" | "visit")
+              row.note_type === "call" || row.note_type === "wechat" || row.note_type === "visit" || row.note_type === "stage_change" || row.note_type === "won" || row.note_type === "lost"
+                ? (row.note_type as Interaction["type"])
                 : "call",
             content: row.content ?? "",
             date: row.created_at ? new Date(row.created_at).toISOString().split("T")[0] : "",
@@ -2801,25 +2810,12 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     try {
       setIsAdvancingStage(true)
 
-      const supabase = getBrowserSupabaseClient()
-      const { error } = await supabase.rpc("rpc_lead_pipeline_update", {
-        p_lead_id: selectedLead.id,
-        p_follow_up_stage: nextStage.id,
-        p_reason: upgradeReason,
-      })
-
-      if (error) {
-        const friendly = mapRpcError(error, {
-          title: "阶段推进失败",
-          description: "阶段推进失败，请稍后重试",
-        })
-        toast.error(friendly.title, { description: friendly.description })
-        return
-      }
+      await advanceLeadWithAction(selectedLead.id as string, nextStage.id, upgradeReason.trim())
 
       const nextStageMeta = getFollowUpStageMeta(nextStage.id)
       setLeads(leads.map((l) => (l.id === selectedLead.id ? { ...l, followUpStage: nextStage.id } : l)))
       setSelectedLead({ ...selectedLead, followUpStage: nextStage.id })
+      void loadLeadInteractions(selectedLead.id)
       toast.success("阶段推进成功", {
         description: `${selectedLead.company} 已推进至 ${nextStageMeta.label}`,
       })
@@ -4981,10 +4977,10 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="reason">推进原因 *</Label>
+              <Label htmlFor="reason">本次客户动作 / 推进说明 *</Label>
               <Textarea
                 id="reason"
-                placeholder="请输入推进原因（必填）..."
+                placeholder="例如：客户确认已完成需求沟通，进入方案及报价阶段..."
                 value={upgradeReason}
                 onChange={(e) => setUpgradeReason(e.target.value)}
                 className="min-h-[100px]"
@@ -5027,7 +5023,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
               </Select>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="close-reason">关闭原因 *</Label>
+              <Label htmlFor="close-reason">成交或丢单动作说明 *</Label>
               <Textarea
                 id="close-reason"
                 placeholder="请输入成交或丢单的原因，便于后续复盘..."
@@ -5057,15 +5053,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
                 try {
                   setIsClosingLead(true)
-                  if (closeResult === "won") {
-                    const { error: pipelineError } = await getBrowserSupabaseClient().rpc("rpc_lead_pipeline_update", {
-                      p_lead_id: selectedLead.id,
-                      p_follow_up_stage: "won",
-                      p_reason: closeReason.trim(),
-                    })
-                    if (pipelineError) throw pipelineError
-                  }
-                  await closeLead(selectedLead.id, closeResult, closeReason.trim())
+                  await closeLeadWithAction(selectedLead.id, closeResult, closeReason.trim())
 
                   toast.success("线索已关闭", {
                     description: closeResult === "won" ? "已标记为成交" : "已标记为丢单",
