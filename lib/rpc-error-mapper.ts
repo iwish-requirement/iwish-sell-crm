@@ -34,6 +34,18 @@ export function mapRpcError(
   const title = fallback.title ?? "操作失败"
   const description = fallback.description ?? "请稍后重试"
 
+  const quotaExceeded = rawMessage.match(/ERR_QUOTA_EXCEEDED:lead_quota_limit:?([0-9]+)?/)
+  if (quotaExceeded) {
+    const limit = quotaExceeded[1] ?? "60"
+    return {
+      kind: "validation",
+      title: "已达到有效客户名额上限",
+      description: `该销售当前已达到 ${limit} 个有效客户名额，请先完成、转移或标记无效后再操作。管理员可使用超额权限处理特殊情况。`,
+      canRetry: false,
+      rawMessage,
+    }
+  }
+
   const noPerm = rawMessage.match(/ERR_NO_PERMISSION:([a-zA-Z0-9_.-]+)/)
   if (noPerm) {
     const permissionKey = noPerm[1]

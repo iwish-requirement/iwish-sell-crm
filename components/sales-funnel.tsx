@@ -15,11 +15,15 @@ interface SalesFunnelPoint {
 
 const FUNNEL_CONFIG = [
   { key: "all", label: "线索", fill: "#3b82f6" },
-  { key: "L1", label: "L1 询盘", fill: "#60a5fa" },
-  { key: "L2", label: "L2 意向", fill: "#93c5fd" },
-  { key: "L3", label: "L3 关键意向", fill: "#f59e0b" },
-  { key: "L4", label: "L4 谈判", fill: "#f97316" },
-  { key: "Won", label: "成交", fill: "#22c55e" },
+  { key: "uncontacted", label: "未建联", fill: "#60a5fa" },
+  { key: "connected", label: "已建联", fill: "#93c5fd" },
+  { key: "online_communication", label: "线上/电话沟通", fill: "#a5b4fc" },
+  { key: "offline_visit", label: "线下拜访", fill: "#818cf8" },
+  { key: "proposal_quotation", label: "方案及报价", fill: "#f59e0b" },
+  { key: "proposal_negotiation", label: "方案谈判", fill: "#f97316" },
+  { key: "intent_confirmed", label: "合作意向已确认", fill: "#fb923c" },
+  { key: "contract_review", label: "审合同/合同推进", fill: "#f97316" },
+  { key: "won", label: "成交", fill: "#22c55e" },
 ] as const
 
 export function SalesFunnel() {
@@ -133,7 +137,7 @@ export function SalesFunnel() {
                   borderRadius: "8px",
                   boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)",
                 }}
-                formatter={(value: number) => ["".concat(value.toString(), " 条"), "线索数"]}
+                formatter={(value: number | undefined) => [`${value ?? 0} 条`, "线索数"]}
               />
               <Bar dataKey="value" radius={[0, 4, 4, 0]}>
                 {data.map((entry, index) => (

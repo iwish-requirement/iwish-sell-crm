@@ -730,7 +730,8 @@ export function SystemSettings() {
 
 // Business Rules Tab
 function BusinessRulesTab() {
-  const [publicPoolDays, setPublicPoolDays] = useState("30")
+  const [publicPoolDays, setPublicPoolDays] = useState("120")
+  const [quotaLimit, setQuotaLimit] = useState("60")
   const [preventPreviousOwnerReclaim, setPreventPreviousOwnerReclaim] = useState(false)
   const [warningHours, setWarningHours] = useState("72")
   const [dangerHours, setDangerHours] = useState("168")
@@ -780,8 +781,11 @@ function BusinessRulesTab() {
         const pipelineValue = (pipelineRow?.value as any) ?? null
 
         if (pipelineValue) {
-          if (pipelineValue.public_pool_days != null) {
-            setPublicPoolDays(String(pipelineValue.public_pool_days))
+          if (pipelineValue.lead_protection_days != null || pipelineValue.public_pool_days != null) {
+            setPublicPoolDays(String(pipelineValue.lead_protection_days ?? pipelineValue.public_pool_days))
+          }
+          if (pipelineValue.quota_limit != null) {
+            setQuotaLimit(String(pipelineValue.quota_limit))
           }
           if (pipelineValue.warning_hours != null) {
             setWarningHours(String(pipelineValue.warning_hours))
@@ -828,15 +832,18 @@ function BusinessRulesTab() {
 
   const handleSave = async () => {
     const poolDays = Number.parseInt(publicPoolDays, 10)
+    const quota = Number.parseInt(quotaLimit, 10)
     const warnHours = Number.parseInt(warningHours, 10)
     const dangerHoursValue = Number.parseInt(dangerHours, 10)
     const renewalDays = Number.parseInt(renewalNotifyDaysBefore, 10)
 
     if (
       Number.isNaN(poolDays) ||
+      Number.isNaN(quota) ||
       Number.isNaN(warnHours) ||
       Number.isNaN(dangerHoursValue) ||
       poolDays <= 0 ||
+      quota <= 0 ||
       warnHours <= 0 ||
       dangerHoursValue <= 0 ||
       (renewalNotifyEnabled && (Number.isNaN(renewalDays) || renewalDays <= 0))
@@ -856,6 +863,8 @@ function BusinessRulesTab() {
               key: "pipeline.business_rules",
               value: {
                 public_pool_days: poolDays,
+                lead_protection_days: poolDays,
+                quota_limit: quota,
                 warning_hours: warnHours,
                 danger_hours: dangerHoursValue,
                 prevent_previous_owner_reclaim: preventPreviousOwnerReclaim,
@@ -926,7 +935,7 @@ function BusinessRulesTab() {
               <CardContent className="space-y-6">
                 <div className="grid gap-6">
                   <div className="space-y-2">
-                    <Label htmlFor="poolDays">公海池掉落天数</Label>
+                    <Label htmlFor="poolDays">无跟进保护期 / 公海池掉落天数</Label>
                     <div className="flex items-center gap-2">
                       <Input
                         id="poolDays"
@@ -938,7 +947,22 @@ function BusinessRulesTab() {
                       />
                       <span className="text-sm text-muted-foreground">天</span>
                     </div>
-                    <p className="text-xs text-muted-foreground">超过此天数未跟进的线索将自动进入公海池</p>
+                    <p className="text-xs text-muted-foreground">从销售获得归属开始计算；超过此天数且没有任何真实跟进记录的线索将自动进入公海池</p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="quotaLimit">每名销售有效客户名额</Label>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        id="quotaLimit"
+                        type="number"
+                        value={quotaLimit}
+                        onChange={(e) => setQuotaLimit(e.target.value)}
+                        className="w-24"
+                        disabled={isLoading || isSaving}
+                      />
+                      <span className="text-sm text-muted-foreground">个</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">只统计可跟进/潜在意向且未成交的当前负责人客户</p>
                   </div>
                   <Separator />
                   <div className="flex items-start justify-between gap-4">

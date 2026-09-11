@@ -565,6 +565,7 @@ export function PublicPool() {
   const canViewPublicPool = mePermissions?.canViewPublicPool ?? false
   const canImportLeads = mePermissions?.canImportLeads ?? false
   const [searchQuery, setSearchQuery] = useState("")
+  const [returnedByFilter, setReturnedByFilter] = useState("all")
   const [importDialogOpen, setImportDialogOpen] = useState(false)
   const [assignDialogOpen, setAssignDialogOpen] = useState(false)
   const [claimingLeadId, setClaimingLeadId] = useState<string | null>(null)
@@ -968,7 +969,7 @@ export function PublicPool() {
 
         const { data: leadRows, error: leadsError } = await supabase
           .from("leads_secure_view")
-          .select("owner_id, status")
+          .select("owner_id, status, customer_attribute, follow_up_stage, close_result")
           .eq("status", "open")
 
         if (leadsError) {
@@ -978,7 +979,7 @@ export function PublicPool() {
         const activeCounts: Record<string, number> = {}
         ;(leadRows ?? []).forEach((row: any) => {
           const ownerId = (row.owner_id as string | null) ?? null
-          if (ownerId && !excludedProfileIds.has(ownerId)) {
+          if (ownerId && !excludedProfileIds.has(ownerId) && row.customer_attribute !== "invalid" && row.follow_up_stage !== "won" && row.close_result !== "won") {
             activeCounts[ownerId] = (activeCounts[ownerId] ?? 0) + 1
           }
         })
@@ -1114,12 +1115,21 @@ export function PublicPool() {
     return map
   }, [salesReps])
 
+  const returnedByOptions = useMemo(() => {
+    const ids = new Set(salesReps.map((rep) => rep.id))
+    leads.forEach((lead) => {
+      if (lead.returnedById) ids.add(lead.returnedById)
+    })
+    return Array.from(ids).map((id) => ({ id, name: repNameById[id] ?? "历史成员" }))
+  }, [leads, repNameById, salesReps])
+
   const filteredLeads = leads.filter(
     (lead) =>
-      lead.company.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      lead.website.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      lead.contact.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      lead.phone.includes(searchQuery),
+      (returnedByFilter === "all" || lead.returnedById === returnedByFilter) &&
+      (lead.company.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        lead.website.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        lead.contact.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        lead.phone.includes(searchQuery)),
   )
 
 
@@ -2256,10 +2266,16 @@ const getDaysInPoolBadge = (days: number) => {
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
             </div>
-            <Button variant="outline" size="sm">
-              <Filter className="w-4 h-4 mr-2" />
-              筛选
-            </Button>
+            <Select value={returnedByFilter} onValueChange={setReturnedByFilter}>
+              <SelectTrigger className="w-full sm:w-[190px]">
+                <Filter className="w-4 h-4 mr-2" />
+                <SelectValue placeholder="按退回人筛选" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">全部退回人</SelectItem>
+                {returnedByOptions.map((rep) => <SelectItem key={rep.id} value={rep.id}>{rep.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
           </div>
         </CardContent>
       </Card>

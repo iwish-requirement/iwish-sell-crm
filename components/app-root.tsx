@@ -41,6 +41,7 @@ export type AppView =
 export type MePermissions = {
   canAssignLeads: boolean
   canClaimLeads: boolean
+  canOverrideLeadQuota: boolean
   canReturnToPool: boolean
   canDeleteLeads: boolean
   canTransferLeads: boolean
@@ -132,6 +133,7 @@ export function AppRoot() {
           setMePermissions({
             canAssignLeads: false,
             canClaimLeads: false,
+            canOverrideLeadQuota: false,
             canReturnToPool: false,
             canDeleteLeads: false,
             canTransferLeads: false,
@@ -158,6 +160,7 @@ export function AppRoot() {
         setMePermissions({
           canAssignLeads: Boolean(value.canAssignLeads),
           canClaimLeads: Boolean(value.canClaimLeads),
+          canOverrideLeadQuota: Boolean(value.canOverrideLeadQuota),
           canReturnToPool: Boolean(value.canReturnToPool),
           canDeleteLeads: Boolean(value.canDeleteLeads),
           canTransferLeads: Boolean(value.canTransferLeads),
@@ -183,6 +186,7 @@ export function AppRoot() {
         setMePermissions({
           canAssignLeads: false,
           canClaimLeads: false,
+          canOverrideLeadQuota: false,
           canReturnToPool: false,
           canDeleteLeads: false,
           canTransferLeads: false,

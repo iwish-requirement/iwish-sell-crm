@@ -157,7 +157,8 @@ function readExcludedIds(
   return { excludedTeamIds, excludedProfileIds }
 }
 
-function isQualifiedLead(lead: Pick<LeadSecureRow, "stage" | "customer_grade">): boolean {
+function isQualifiedLead(lead: Pick<LeadSecureRow, "stage" | "customer_grade" | "customer_attribute">): boolean {
+  if (lead.customer_attribute === "invalid") return false
   const stage = (lead.stage ?? "").trim()
   const grade = (lead.customer_grade ?? "").trim().toUpperCase()
   return ["L2", "L3", "L4", "Won"].includes(stage) || ["S", "A", "B"].includes(grade)
@@ -212,7 +213,7 @@ export async function fetchDashboardSummary(
 
   let query = supabase
     .from("leads_secure_view")
-    .select("id, team_id, owner_id, created_by, status, close_result, budget, last_contact_at, created_at")
+    .select("id, team_id, owner_id, created_by, status, close_result, budget, last_contact_at, created_at, customer_attribute, follow_up_stage")
     .neq("status", "pool")
 
   if (params.teamId !== undefined) {
@@ -376,7 +377,7 @@ export async function fetchDashboardSummary(
   }
 }
 
-type LeadStageRow = Pick<LeadSecureRow, "id" | "team_id" | "owner_id" | "stage" | "status" | "close_result">
+type LeadStageRow = Pick<LeadSecureRow, "id" | "team_id" | "owner_id" | "stage" | "status" | "close_result" | "follow_up_stage" | "customer_attribute">
 
 export interface SalesFunnelCounts {
   byStage: Record<string, number>
@@ -387,7 +388,7 @@ export async function fetchSalesFunnelCounts(
 ): Promise<SalesFunnelCounts> {
   const supabase = getBrowserSupabaseClient()
 
-  let query = supabase.from("leads_secure_view").select("id, team_id, owner_id, stage, status, close_result")
+  let query = supabase.from("leads_secure_view").select("id, team_id, owner_id, stage, status, close_result, follow_up_stage, customer_attribute")
 
   if (params.teamId !== undefined) {
     query = query.eq("team_id", params.teamId)
@@ -460,8 +461,16 @@ export async function fetchSalesFunnelCounts(
       continue
     }
 
-    const rawStage = (lead.stage ?? "").trim()
-    let logicalStage = rawStage || "L1"
+    if (lead.customer_attribute === "invalid") continue
+    const rawStage = (lead.follow_up_stage ?? lead.stage ?? "").trim()
+    const legacyStageMap: Record<string, string> = {
+      L1: "uncontacted",
+      L2: "connected",
+      L3: "proposal_quotation",
+      L4: "proposal_negotiation",
+      Won: "won",
+    }
+    let logicalStage = legacyStageMap[rawStage] ?? (rawStage || "uncontacted")
 
     if (
       status === "closed" &&
@@ -470,7 +479,7 @@ export async function fetchSalesFunnelCounts(
         rawStage === "Won" ||
         rawStage === "成交")
     ) {
-      logicalStage = "Won"
+      logicalStage = "won"
     }
 
     if (!byStage[logicalStage]) {

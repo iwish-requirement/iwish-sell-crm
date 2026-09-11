@@ -8,6 +8,9 @@ export interface LeadSecureRow {
   name: string | null
   source: string | null
   stage: string | null
+  customer_attribute?: "followable" | "potential_intent" | "invalid" | string | null
+  follow_up_stage?: string | null
+  ownership_started_at?: string | null
   status: string | null
   close_result: string | null
   close_reason: string | null
@@ -63,7 +66,7 @@ export async function fetchLeadsSecureView(params: LeadSecureQueryParams = {}): 
   let query = supabase
     .from("leads_secure_view")
     .select(
-      "id, team_id, owner_id, created_by, name, source, stage, status, close_result, close_reason, last_contact_at, created_at, updated_at, customer_name, product_category, customer_phone, customer_email, address, budget, internal_score, blacklist_reason, next_contact_at, wechat, customer_grade, source_level1, source_level2, tags, first_contact_at, locked_by, locked_until, protected_until, business_categories, business_types, responsibility_type, dev_method_key, referral_customer_name, referral_type_key, activity_name, source_department_key, source_locked_at, allocation_status",
+      "id, team_id, owner_id, created_by, name, source, stage, status, close_result, close_reason, last_contact_at, created_at, updated_at, customer_name, product_category, customer_phone, customer_email, address, budget, internal_score, blacklist_reason, next_contact_at, wechat, customer_grade, source_level1, source_level2, tags, first_contact_at, locked_by, locked_until, protected_until, business_categories, business_types, responsibility_type, dev_method_key, referral_customer_name, referral_type_key, activity_name, source_department_key, source_locked_at, allocation_status, customer_attribute, follow_up_stage, ownership_started_at",
     )
 
 
@@ -99,6 +102,22 @@ export async function fetchLeadsSecureView(params: LeadSecureQueryParams = {}): 
   }
 
   return (data ?? []) as LeadSecureRow[]
+}
+
+export async function updateLeadPipeline(
+  leadId: string,
+  customerAttribute: string,
+  followUpStage: string,
+  reason?: string | null,
+): Promise<void> {
+  const supabase = getBrowserSupabaseClient()
+  const { error } = await supabase.rpc("rpc_lead_pipeline_update", {
+    p_lead_id: leadId,
+    p_customer_attribute: customerAttribute,
+    p_follow_up_stage: followUpStage,
+    p_reason: reason ?? null,
+  })
+  if (error) throw error
 }
 
 export async function createLead(payload: Record<string, unknown>): Promise<string> {

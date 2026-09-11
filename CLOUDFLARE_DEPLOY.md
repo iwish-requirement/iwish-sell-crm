@@ -27,6 +27,8 @@
 
 `wrangler.jsonc` 已声明 `sell.iwishweb.com` 为 Worker Custom Domain。正式切换前需要先在 Pages 项目中移除同名自定义域名、清理冲突的 DNS 记录，并确保 `iwishweb.com` Zone 对当前 Cloudflare 账号可见；完成后通过 Workers Git 集成部署。Windows 本机的 OpenNext 符号链接构建可能失败。
 
+Worker 直接使用 OpenNext 生成的 fetch handler。自动回公海和续费企微通知由 Supabase `pg_cron` 调度并调用对应 RPC/HTTP 路由，Cloudflare Worker 不配置重复 Cron，也不需要为定时任务配置 `SUPABASE_SERVICE_ROLE_KEY`。
+
 ## 本地验证
 
 ```bash
