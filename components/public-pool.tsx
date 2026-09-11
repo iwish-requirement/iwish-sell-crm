@@ -76,7 +76,6 @@ interface PoolLead {
   daysInPool: number
   returnedAt: string
   returnedById: string | null
-  importedById: string | null
 }
 
 
@@ -90,10 +89,45 @@ interface SalesRep {
 
 interface PoolLeadInteraction {
   id: number
-  type: "call" | "wechat" | "visit"
+  type: "call" | "wechat" | "visit" | "stage_change" | "won" | "lost"
   content: string
   date: string
   author: string
+}
+
+const POOL_FOLLOW_UP_STAGE_LABELS: Record<string, string> = {
+  uncontacted: "未建联",
+  connected: "已建联",
+  online_communication: "线上/电话沟通",
+  offline_visit: "线下拜访",
+  proposal_quotation: "方案及报价",
+  proposal_negotiation: "方案谈判",
+  intent_confirmed: "合作意向已确认",
+  contract_review: "审合同/合同推进",
+  won: "成交",
+}
+
+const POOL_LEGACY_STAGE_LABELS: Record<string, string> = {
+  L1: "未建联",
+  L2: "已建联",
+  L3: "方案及报价",
+  L4: "方案谈判",
+  Won: "成交",
+  new: "未建联",
+}
+
+function getPoolStageLabel(followUpStage: unknown, legacyStage: unknown) {
+  const followUpKey = String(followUpStage ?? "").trim()
+  if (followUpKey && POOL_FOLLOW_UP_STAGE_LABELS[followUpKey]) {
+    return POOL_FOLLOW_UP_STAGE_LABELS[followUpKey]
+  }
+
+  const legacyKey = String(legacyStage ?? "").trim()
+  if (legacyKey && POOL_LEGACY_STAGE_LABELS[legacyKey]) {
+    return POOL_LEGACY_STAGE_LABELS[legacyKey]
+  }
+
+  return legacyKey || "未设置"
 }
 
 interface LeadImportJob {
@@ -790,7 +824,7 @@ export function PublicPool() {
         const { data, error } = await supabase
           .from("leads_secure_view")
           .select(
-            "id, name, website, stage, status, source, customer_name, customer_phone, wechat, product_category, budget, updated_at, created_by, team_id, owner_id",
+            "id, name, website, stage, follow_up_stage, status, source, customer_name, customer_phone, wechat, product_category, budget, updated_at, created_by, team_id, owner_id",
           )
 
           .eq("status", "pool")
@@ -888,7 +922,7 @@ export function PublicPool() {
                 row.budget != null
                   ? `¥${Number(row.budget).toLocaleString("zh-CN")}`
                   : "待确认",
-              lastStage: (row.stage as string) ?? "未设置",
+              lastStage: getPoolStageLabel(row.follow_up_stage, row.stage),
               returnReason: reasonInfo?.reason ?? "退回原因未记录",
               daysInPool,
               returnedAt:
@@ -896,7 +930,6 @@ export function PublicPool() {
                   ? returnedAtDate.toISOString().split("T")[0]
                   : "",
               returnedById: reasonInfo?.returnedById ?? null,
-              importedById: (row.created_by as string | null) ?? null,
             }
           }) ?? []
 
@@ -1189,8 +1222,9 @@ export function PublicPool() {
           return {
             id: index + 1,
             type:
-              row.note_type === "call" || row.note_type === "wechat" || row.note_type === "visit"
-                ? (row.note_type as "call" | "wechat" | "visit")
+              row.note_type === "call" || row.note_type === "wechat" || row.note_type === "visit" ||
+              row.note_type === "stage_change" || row.note_type === "won" || row.note_type === "lost"
+                ? (row.note_type as PoolLeadInteraction["type"])
                 : "call",
             content: (row.content as string) ?? "",
             date: row.created_at ? new Date(row.created_at).toISOString().split("T")[0] : "",
@@ -2304,18 +2338,17 @@ const getDaysInPoolBadge = (days: number) => {
                     className={isSomeSelected ? "data-[state=checked]:bg-primary/50" : ""}
                   />
                 </TableHead>
-                <TableHead className="w-[200px] min-w-[180px] font-bold text-foreground">公司名称</TableHead>
-                <TableHead className="w-[260px] min-w-[200px] font-bold text-foreground">网址</TableHead>
+                <TableHead className="min-w-[120px] font-bold text-foreground">最近退回人</TableHead>
+                <TableHead className="min-w-[100px] font-bold text-foreground">最后阶段</TableHead>
+                <TableHead className="min-w-[120px] font-bold text-foreground">线索来源</TableHead>
+                <TableHead className="w-[200px] min-w-[180px] font-bold text-foreground">客户名称</TableHead>
+                <TableHead className="w-[260px] min-w-[200px] font-bold text-foreground">网址/品牌名</TableHead>
                 <TableHead className="min-w-[80px] font-bold text-foreground">联系人</TableHead>
                 <TableHead className="min-w-[120px] font-bold text-foreground">电话</TableHead>
                 <TableHead className="min-w-[110px] font-bold text-foreground">微信号</TableHead>
-                <TableHead className="min-w-[80px] font-bold text-foreground">来源</TableHead>
                 <TableHead className="min-w-[120px] font-bold text-foreground">品类</TableHead>
-
                 <TableHead className="min-w-[80px] font-bold text-foreground">预算</TableHead>
-                <TableHead className="min-w-[100px] font-bold text-foreground">最后阶段</TableHead>
                 <TableHead className="min-w-[120px] font-bold text-foreground">退回原因</TableHead>
-                <TableHead className="min-w-[120px] font-bold text-foreground">最近退回人</TableHead>
                 <TableHead className="text-center min-w-[100px] font-bold text-foreground">
                   <div className="flex items-center justify-center gap-1">
                     <Clock className="w-4 h-4" />
@@ -2335,18 +2368,25 @@ const getDaysInPoolBadge = (days: number) => {
                       aria-label={`选择 ${lead.company}`}
                     />
                   </TableCell>
-                  <TableCell className="font-bold text-sm text-foreground">{lead.company}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground max-w-[220px] break-all">
-                    {lead.website}
+                  <TableCell>
+                    {lead.returnedById ? (
+                      <span className="text-sm font-semibold text-foreground/80">{repNameById[lead.returnedById] ?? "未知成员"}</span>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">历史数据未记录</span>
+                    )}
                   </TableCell>
+                  <TableCell>
+                    <Badge variant="secondary" className="text-xs font-semibold bg-muted/60">{lead.lastStage}</Badge>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className="text-xs font-medium border-muted-foreground/20">{lead.source}</Badge>
+                  </TableCell>
+                  <TableCell className="font-bold text-sm text-foreground">{lead.company}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground max-w-[220px] break-all">{lead.website}</TableCell>
                   <TableCell className="text-sm font-medium">{lead.contact}</TableCell>
                   <TableCell className="font-mono text-sm font-medium text-foreground/80">{lead.phone}</TableCell>
                   <TableCell className="font-mono text-xs text-foreground/80">
                     {lead.wechat || <span className="text-muted-foreground">-</span>}
-                  </TableCell>
-                  <TableCell>
-
-                    <Badge variant="outline" className="text-xs font-medium border-muted-foreground/20">{lead.source}</Badge>
                   </TableCell>
                   <TableCell>
                     <div className="flex flex-wrap gap-1">
@@ -2354,21 +2394,7 @@ const getDaysInPoolBadge = (days: number) => {
                     </div>
                   </TableCell>
                   <TableCell className="text-sm font-bold text-primary">{lead.budget}</TableCell>
-                  <TableCell>
-                    <Badge variant="secondary" className="text-xs font-semibold bg-muted/60">{lead.lastStage}</Badge>
-                  </TableCell>
                   <TableCell className="text-muted-foreground text-sm leading-tight max-w-[150px] truncate">{lead.returnReason}</TableCell>
-                  <TableCell>
-                    {lead.returnedById ? (
-                      <span className="text-sm font-semibold text-foreground/80">{repNameById[lead.returnedById] ?? "未知成员"}</span>
-                    ) : lead.importedById ? (
-                      <span className="text-xs text-muted-foreground italic">
-                        由 {repNameById[lead.importedById] ?? "未知成员"} 导入
-                      </span>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">--</span>
-                    )}
-                  </TableCell>
                   <TableCell className="text-center">{getDaysInPoolBadge(lead.daysInPool)}</TableCell>
 
 
@@ -2435,7 +2461,7 @@ const getDaysInPoolBadge = (days: number) => {
               ))}
               {filteredLeads.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={12} className="h-24 text-center text-muted-foreground">
+                  <TableCell colSpan={14} className="h-24 text-center text-muted-foreground">
                     暂无符合条件的线索
                   </TableCell>
                 </TableRow>
@@ -2625,6 +2651,9 @@ const getDaysInPoolBadge = (days: number) => {
                             {item.type === "call" && "电话互动"}
                             {item.type === "wechat" && "微信沟通"}
                             {item.type === "visit" && "线下拜访"}
+                            {item.type === "stage_change" && "推进阶段"}
+                            {item.type === "won" && "标记成交"}
+                            {item.type === "lost" && "标记丢单"}
                           </Badge>
                           <p className="text-sm text-foreground/80 leading-relaxed pl-1 border-l-2 border-primary/20">{item.content}</p>
                         </div>
