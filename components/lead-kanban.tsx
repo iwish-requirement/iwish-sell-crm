@@ -44,7 +44,6 @@ import {
 
 import { toast } from "sonner"
 import { KanbanSkeleton } from "@/components/skeleton-loaders"
-import { StatusBadge, StatusDot, getStageConfig } from "@/components/status-badge"
 import { getBrowserSupabaseClient } from "@/lib/supabase/client"
 import { fetchCurrentUserProfile } from "@/lib/auth/profile"
 import type { UserProfile } from "@/lib/auth/profile"
@@ -268,14 +267,6 @@ const companyResourceGroupOptions: SourceChannel[] = FALLBACK_COMPANY_RESOURCE_G
 
 
 
-const stages = [
-  { id: "L1", label: "L1 询盘" },
-  { id: "L2", label: "L2 意向" },
-  { id: "L3", label: "L3 关键意向" },
-  { id: "L4", label: "L4 谈判" },
-  { id: "Won", label: "成交" },
-]
-
 const CUSTOMER_ATTRIBUTE_OPTIONS = [
   { id: "followable", label: "可跟进" },
   { id: "potential_intent", label: "潜在意向" },
@@ -293,6 +284,27 @@ const FOLLOW_UP_STAGE_OPTIONS = [
   { id: "contract_review", label: "审合同/合同推进" },
   { id: "won", label: "成交" },
 ] as const
+
+const FOLLOW_UP_STAGE_COLORS = [
+  "bg-slate-400",
+  "bg-blue-400",
+  "bg-sky-500",
+  "bg-indigo-500",
+  "bg-amber-500",
+  "bg-orange-500",
+  "bg-orange-600",
+  "bg-red-500",
+  "bg-emerald-500",
+] as const
+
+function getFollowUpStageMeta(value: string | null | undefined) {
+  const index = FOLLOW_UP_STAGE_OPTIONS.findIndex((item) => item.id === value)
+  const option = index >= 0 ? FOLLOW_UP_STAGE_OPTIONS[index] : FOLLOW_UP_STAGE_OPTIONS[0]
+  return {
+    label: option.label,
+    dotColor: FOLLOW_UP_STAGE_COLORS[index >= 0 ? index : 0],
+  }
+}
 
 function getCustomerAttributeLabel(value: string | null | undefined) {
   return CUSTOMER_ATTRIBUTE_OPTIONS.find((item) => item.id === value)?.label ?? "可跟进"
@@ -425,7 +437,7 @@ function LeadCard({
 
   const getRiskBadge = (lead: Lead) => {
     // 已成交或已丢单的线索不再参与风险/需跟进提示
-    if (lead.status === "closed" || lead.stage === "Won") return null
+    if (lead.status === "closed" || lead.followUpStage === "won") return null
 
     const lastContactAt = lead.lastContactAt ? new Date(lead.lastContactAt) : lead.createdAt ? new Date(lead.createdAt) : null
     if (!lastContactAt) {
@@ -659,7 +671,7 @@ function getLeadRiskState(
   lead: Lead,
   riskConfig: { warningHours: number; dangerHours: number },
 ): "normal" | "warning" | "danger" {
-  if (lead.status === "closed" || lead.stage === "Won") return "normal"
+  if (lead.status === "closed" || lead.followUpStage === "won") return "normal"
 
   const now = Date.now()
   const nextContactAt = lead.nextContactAt ? new Date(lead.nextContactAt) : null
@@ -2790,11 +2802,9 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       setIsAdvancingStage(true)
 
       const supabase = getBrowserSupabaseClient()
-      const { error } = await supabase.rpc("rpc_lead_update", {
+      const { error } = await supabase.rpc("rpc_lead_pipeline_update", {
         p_lead_id: selectedLead.id,
-        patch: {
-          stage: nextStage.id,
-        },
+        p_follow_up_stage: nextStage.id,
         p_reason: upgradeReason,
       })
 
@@ -2807,26 +2817,11 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
         return
       }
 
-      const legacyToFollowUp: Record<string, string> = {
-        L1: "uncontacted",
-        L2: "connected",
-        L3: "proposal_quotation",
-        L4: "proposal_negotiation",
-        Won: "won",
-      }
-      const { error: pipelineError } = await supabase.rpc("rpc_lead_pipeline_update", {
-        p_lead_id: selectedLead.id,
-        p_follow_up_stage: legacyToFollowUp[nextStage.id] ?? selectedLead.followUpStage,
-        p_reason: upgradeReason,
-      })
-      if (pipelineError) {
-        console.error("Failed to sync new follow-up stage", pipelineError)
-      }
-
-      setLeads(leads.map((l) => (l.id === selectedLead.id ? { ...l, stage: nextStage.id, followUpStage: legacyToFollowUp[nextStage.id] ?? l.followUpStage } : l)))
-      setSelectedLead({ ...selectedLead, stage: nextStage.id, followUpStage: legacyToFollowUp[nextStage.id] ?? selectedLead.followUpStage })
+      const nextStageMeta = getFollowUpStageMeta(nextStage.id)
+      setLeads(leads.map((l) => (l.id === selectedLead.id ? { ...l, followUpStage: nextStage.id } : l)))
+      setSelectedLead({ ...selectedLead, followUpStage: nextStage.id })
       toast.success("阶段推进成功", {
-        description: `${selectedLead.company} 已推进至 ${nextStage.label}`,
+        description: `${selectedLead.company} 已推进至 ${nextStageMeta.label}`,
       })
     } catch (err) {
       console.error("Failed to advance lead stage", err)
@@ -2841,9 +2836,9 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
   }
 
   const getNextStage = () => {
-    const currentIndex = stages.findIndex((s) => s.id === selectedLead?.stage)
-    if (currentIndex < stages.length - 1) {
-      return stages[currentIndex + 1]
+    const currentIndex = FOLLOW_UP_STAGE_OPTIONS.findIndex((s) => s.id === selectedLead?.followUpStage)
+    if (currentIndex < FOLLOW_UP_STAGE_OPTIONS.length - 1) {
+      return FOLLOW_UP_STAGE_OPTIONS[currentIndex + 1]
     }
     return null
   }
@@ -2871,7 +2866,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       return false
     }
 
-    if (stageFilter !== "all" && lead.stage !== stageFilter) {
+    if (stageFilter !== "all" && lead.followUpStage !== stageFilter) {
       return false
     }
 
@@ -2952,7 +2947,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
   const stageCountsById: Record<string, number> = {}
   for (const lead of sortedLeads) {
-    stageCountsById[lead.stage] = (stageCountsById[lead.stage] ?? 0) + 1
+    stageCountsById[lead.followUpStage] = (stageCountsById[lead.followUpStage] ?? 0) + 1
   }
   const maxStageCount = Object.values(stageCountsById).reduce((max, count) => Math.max(max, count), 0)
 
@@ -3082,12 +3077,10 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                 </div>
                 <div className="space-y-2">
                   <Label>跟进阶段</Label>
-                  <Select value={newLead.followUpStage} onValueChange={(value) => setNewLead({ ...newLead, followUpStage: value })}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {FOLLOW_UP_STAGE_OPTIONS.map((item) => <SelectItem key={item.id} value={item.id}>{item.label}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
+                  <div className="flex h-10 items-center rounded-md border border-input bg-muted/30 px-3 text-sm">
+                    {getFollowUpStageLabel(newLead.followUpStage)}
+                    <span className="ml-2 text-xs text-muted-foreground">新建线索从此阶段开始</span>
+                  </div>
                 </div>
               </div>
             <div className="space-y-2">
@@ -3689,7 +3682,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">全部阶段</SelectItem>
-              {stages.map((stage) => (
+              {FOLLOW_UP_STAGE_OPTIONS.map((stage) => (
                 <SelectItem key={stage.id} value={stage.id}>
                   {stage.label}
                 </SelectItem>
@@ -3751,7 +3744,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       {/* Risk Alert（仅统计未成交线索） */}
 
       {(() => {
-        const activeLeadsForRisk = filteredLeads.filter((lead) => lead.status === "open" && lead.stage !== "Won")
+        const activeLeadsForRisk = filteredLeads.filter((lead) => lead.status === "open" && lead.followUpStage !== "won")
         const { warningHours, dangerHours } = riskConfigRef.current
 
 
@@ -3822,7 +3815,6 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                   <TableHead className="min-w-[220px]">客户/企业</TableHead>
                   <TableHead>联系人</TableHead>
                   <TableHead>联系方式</TableHead>
-                  <TableHead>阶段</TableHead>
                   <TableHead>客户属性</TableHead>
                   <TableHead>跟进阶段</TableHead>
                   <TableHead>来源</TableHead>
@@ -3839,8 +3831,8 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
               </TableHeader>
               <TableBody>
                 {tableLeads.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={16} className="py-10 text-center text-sm text-muted-foreground">
+                   <TableRow>
+                     <TableCell colSpan={15} className="py-10 text-center text-sm text-muted-foreground">
                       当前筛选条件下暂无线索
                     </TableCell>
                   </TableRow>
@@ -3852,7 +3844,6 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                     const sourceLabel = [sourceLevel1Label, sourceLevel2Label].filter(Boolean).join(" / ") || lead.source || "-"
                     const businessTypeLabel = lead.businessTypes?.map((item) => item.name).join("、") || "-"
                     const contactLabel = [lead.phone, lead.wechat].filter(Boolean).join(" / ") || "-"
-                    const stageLabel = stages.find((stage) => stage.id === lead.stage)?.label ?? lead.stage
 
                     return (
                       <TableRow
@@ -3870,10 +3861,6 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                         </TableCell>
                         <TableCell className="font-medium">{lead.contact || "-"}</TableCell>
                         <TableCell className="max-w-[180px] truncate">{contactLabel}</TableCell>
-                        <TableCell>
-                          <StatusBadge stage={lead.stage} />
-                          <span className="sr-only">{stageLabel}</span>
-                        </TableCell>
                         <TableCell>
                           <Badge variant={lead.customerAttribute === "invalid" ? "destructive" : "secondary"}>
                             {getCustomerAttributeLabel(lead.customerAttribute)}
@@ -3914,19 +3901,19 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
           </div>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-          {stages.map((stage) => {
-            const allStageLeads = sortedLeads.filter((lead) => lead.stage === stage.id)
+        <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-5 gap-4">
+          {FOLLOW_UP_STAGE_OPTIONS.map((stage) => {
+            const allStageLeads = sortedLeads.filter((lead) => lead.followUpStage === stage.id)
             const startIndex = (currentPageSafe - 1) * PAGE_SIZE
             const endIndex = Math.min(startIndex + PAGE_SIZE, allStageLeads.length)
             const stageLeads = allStageLeads.slice(startIndex, endIndex)
             const stageTotalCount = allStageLeads.length
-            const stageConfig = getStageConfig(stage.id)
+            const stageMeta = getFollowUpStageMeta(stage.id)
             return (
               <div key={stage.id} className="space-y-4">
                 <div className="flex items-center justify-between px-1">
                   <div className="flex items-center gap-2">
-                    <StatusDot stage={stage.id} />
+                    <div className={`w-3 h-3 rounded-full ${stageMeta.dotColor}`} />
                     <h3 className="font-bold text-sm text-foreground uppercase tracking-wider">{stage.label}</h3>
                   </div>
                   <Badge variant="secondary" className="text-xs font-bold rounded-full px-2 h-5 min-w-[20px] flex items-center justify-center">
@@ -4024,11 +4011,6 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                     )}
 
                     <div className="flex items-center gap-2">
-                      <StatusBadge stage={selectedLead.stage} />
-                      <Badge variant={selectedLead.customerAttribute === "invalid" ? "destructive" : "secondary"}>
-                        {getCustomerAttributeLabel(selectedLead.customerAttribute)}
-                      </Badge>
-                      <Badge variant="outline">{getFollowUpStageLabel(selectedLead.followUpStage)}</Badge>
                       {selectedLead.grade && (
                         <Badge variant="outline" className="text-xs font-bold border-primary/30 text-primary">
                           级别 {selectedLead.grade}
@@ -4105,23 +4087,39 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
               </SheetHeader>
 
               <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                {/* 生命周期阶段视图 */}
+                {/* 客户属性与跟进阶段 */}
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <p className="text-xs text-muted-foreground">生命周期阶段</p>
+                    <p className="text-xs text-muted-foreground">客户属性</p>
+                    {isEditing ? (
+                      <Select value={editLead.customerAttribute} onValueChange={(value) => setEditLead({ ...editLead, customerAttribute: value })}>
+                        <SelectTrigger className="h-8 w-[132px] text-xs"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {CUSTOMER_ATTRIBUTE_OPTIONS.map((item) => <SelectItem key={item.id} value={item.id}>{item.label}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <Badge variant={selectedLead.customerAttribute === "invalid" ? "destructive" : "secondary"}>
+                        {getCustomerAttributeLabel(selectedLead.customerAttribute)}
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-muted-foreground">跟进阶段</p>
                     {selectedLead.status === "closed" && (
                       <span className="text-[11px] text-muted-foreground">
-                        {selectedLead.closeResult === "won" || selectedLead.stage === "Won"
+                        {selectedLead.closeResult === "won" || selectedLead.followUpStage === "won"
                           ? "已成交"
                           : "已关闭（未成交）"}
                       </span>
                     )}
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    {stages.map((stage, index) => {
-                      const currentIndex = stages.findIndex((s) => s.id === selectedLead.stage)
-                      const isActive = stage.id === selectedLead.stage
+                    {FOLLOW_UP_STAGE_OPTIONS.map((stage, index) => {
+                      const currentIndex = FOLLOW_UP_STAGE_OPTIONS.findIndex((s) => s.id === selectedLead.followUpStage)
+                      const isActive = stage.id === selectedLead.followUpStage
                       const isPassed = currentIndex !== -1 && index < currentIndex
+                      const stageMeta = getFollowUpStageMeta(stage.id)
 
                       return (
                         <div key={stage.id} className="flex items-center gap-2">
@@ -4143,9 +4141,9 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                                 : "text-[11px] text-muted-foreground"
                             }
                           >
-                            {getStageConfig(stage.id).label}
+                            {stageMeta.label}
                           </span>
-                          {index < stages.length - 1 && (
+                          {index < FOLLOW_UP_STAGE_OPTIONS.length - 1 && (
                             <div
                               className={
                                 currentIndex > index
@@ -4563,24 +4561,6 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                       <p className="text-sm text-muted-foreground font-medium">历史数据未填写</p>
                     )}
                   </div>
-                  <div className="space-y-1.5">
-                    <p className="text-sm font-semibold text-muted-foreground">客户属性</p>
-                    {isEditing ? (
-                      <Select value={editLead.customerAttribute} onValueChange={(value) => setEditLead({ ...editLead, customerAttribute: value })}>
-                        <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
-                        <SelectContent>{CUSTOMER_ATTRIBUTE_OPTIONS.map((item) => <SelectItem key={item.id} value={item.id}>{item.label}</SelectItem>)}</SelectContent>
-                      </Select>
-                    ) : <Badge variant={selectedLead.customerAttribute === "invalid" ? "destructive" : "secondary"}>{getCustomerAttributeLabel(selectedLead.customerAttribute)}</Badge>}
-                  </div>
-                  <div className="space-y-1.5">
-                    <p className="text-sm font-semibold text-muted-foreground">跟进阶段</p>
-                    {isEditing ? (
-                      <Select value={editLead.followUpStage} onValueChange={(value) => setEditLead({ ...editLead, followUpStage: value })}>
-                        <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
-                        <SelectContent>{FOLLOW_UP_STAGE_OPTIONS.map((item) => <SelectItem key={item.id} value={item.id}>{item.label}</SelectItem>)}</SelectContent>
-                      </Select>
-                    ) : <Badge variant="outline">{getFollowUpStageLabel(selectedLead.followUpStage)}</Badge>}
-                  </div>
                   <div className="space-y-1.5 col-span-2">
                     <p className="text-sm font-semibold text-muted-foreground">业务类型</p>
                     {isEditing ? (
@@ -4995,7 +4975,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
           <DialogHeader>
             <DialogTitle>推进线索阶段</DialogTitle>
             <DialogDescription>
-              将 {selectedLead?.company} 从 {stages.find((s) => s.id === selectedLead?.stage)?.label} 推进至{" "}
+              将 {selectedLead?.company} 从 {getFollowUpStageLabel(selectedLead?.followUpStage)} 推进至{" "}
               {getNextStage()?.label}
             </DialogDescription>
           </DialogHeader>
@@ -5077,6 +5057,14 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
                 try {
                   setIsClosingLead(true)
+                  if (closeResult === "won") {
+                    const { error: pipelineError } = await getBrowserSupabaseClient().rpc("rpc_lead_pipeline_update", {
+                      p_lead_id: selectedLead.id,
+                      p_follow_up_stage: "won",
+                      p_reason: closeReason.trim(),
+                    })
+                    if (pipelineError) throw pipelineError
+                  }
                   await closeLead(selectedLead.id, closeResult, closeReason.trim())
 
                   toast.success("线索已关闭", {
