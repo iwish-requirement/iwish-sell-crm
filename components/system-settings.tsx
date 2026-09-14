@@ -2088,7 +2088,7 @@ function OrganizationTab() {
       try {
         const supabase = getBrowserSupabaseClient()
 
-        const [teamsResult, rolesResult, pendingResult, profilesPublicResult] = await Promise.all([
+        const [teamsResult, rolesResult, pendingResult, profilesPublicResult, membershipsResult] = await Promise.all([
           supabase.from("teams").select("id, name").order("id", { ascending: true }),
           supabase.from("roles").select("id, name").order("name", { ascending: true }),
           supabase
@@ -2099,19 +2099,21 @@ function OrganizationTab() {
           supabase
             .from("profiles_public")
             .select("id, full_name, avatar_url, team_id, role_id, status"),
+          supabase.from("profile_team_memberships").select("profile_id, team_id"),
         ])
 
         if (!isMounted) {
           return
         }
 
-        if (teamsResult.error || rolesResult.error || pendingResult.error || profilesPublicResult.error) {
+        if (teamsResult.error || rolesResult.error || pendingResult.error || profilesPublicResult.error || membershipsResult.error) {
           console.error(
             "Failed to load organization metadata",
             teamsResult.error,
             rolesResult.error,
             pendingResult.error,
             profilesPublicResult.error,
+            membershipsResult.error,
           )
           toast.error("加载组织信息失败", {
             description: "请稍后重试或联系管理员",
@@ -2122,6 +2124,15 @@ function OrganizationTab() {
         const teamsData = (teamsResult.data ?? []) as any[]
         const rolesData = (rolesResult.data ?? []) as any[]
         const profilesPublicData = (profilesPublicResult.data ?? []) as any[]
+        const membershipTeamIds = new Map<string, number[]>()
+        for (const membership of (membershipsResult.data ?? []) as any[]) {
+          const profileId = membership.profile_id as string
+          const teamId = Number(membership.team_id)
+          if (!profileId || !Number.isFinite(teamId)) continue
+          const current = membershipTeamIds.get(profileId) ?? []
+          current.push(teamId)
+          membershipTeamIds.set(profileId, current)
+        }
 
         const allMembersFromProfiles: TeamMember[] = []
 
@@ -2192,23 +2203,16 @@ function OrganizationTab() {
             continue
           }
 
-          const teamId = profile.team_id as number | null
-          if (!teamId) {
+          const primaryTeamId = profile.team_id as number | null
+          const teamIds = Array.from(new Set([...(membershipTeamIds.get(profileId) ?? []), ...(primaryTeamId ? [primaryTeamId] : [])]))
+          if (teamIds.length === 0) {
             continue
           }
-
-          const team = teamsMap.get(teamId)
-          if (!team) {
-            continue
+          for (const teamId of teamIds) {
+            const team = teamsMap.get(teamId)
+            if (!team) continue
+            team.members.push({ ...memberBase, id: nextMemberId++, status: status === "disabled" ? "disabled" : "active" })
           }
-
-          const member: TeamMember = {
-            ...memberBase,
-            id: nextMemberId++,
-            status: status === "disabled" ? "disabled" : "active",
-          }
-
-          team.members.push(member)
         }
 
         const builtTeams = Array.from(teamsMap.values())
@@ -2414,10 +2418,9 @@ function OrganizationTab() {
           continue
         }
 
-        const { error } = await supabase.rpc("rpc_profile_update_org", {
+        const { error } = await supabase.rpc("rpc_profile_add_team_membership", {
           p_user_id: member.profileId,
           p_team_id: selectedTeam.id,
-          p_role_id: member.roleId ?? null,
         })
 
         if (error) {
@@ -2964,7 +2967,7 @@ function OrganizationTab() {
                     <DialogContent>
                       <DialogHeader>
                         <DialogTitle>添加成员</DialogTitle>
-                        <DialogDescription>选择要添加到 {selectedTeam?.name} 的成员</DialogDescription>
+                        <DialogDescription>选择要添加到 {selectedTeam?.name} 的成员；成员可以同时属于多个团队</DialogDescription>
                       </DialogHeader>
                       <div className="py-4 space-y-3">
                         {allMembers.map((user) => (

@@ -824,7 +824,7 @@ export function PublicPool() {
         const { data, error } = await supabase
           .from("leads_secure_view")
           .select(
-            "id, name, website, stage, follow_up_stage, status, source, customer_name, customer_phone, wechat, product_category, budget, updated_at, created_by, team_id, owner_id",
+            "id, name, website, stage, follow_up_stage, status, source, customer_name, customer_phone, wechat, product_category, budget, updated_at, created_by, team_id, owner_id, pool_return_reason, pool_returned_at, pool_returned_by",
           )
 
           .eq("status", "pool")
@@ -891,9 +891,14 @@ export function PublicPool() {
 
             const leadId = row.id as string
             const reasonInfo = reasonsByLeadId[leadId]
+            // New rows read the metadata directly from the secure view. Keep
+            // the audit fallback for records created before this migration.
+            const returnedAtValue = (row.pool_returned_at as string | null) ?? reasonInfo?.returnedAt ?? null
+            const returnedByValue = (row.pool_returned_by as string | null) ?? reasonInfo?.returnedById ?? null
+            const returnReasonValue = (row.pool_return_reason as string | null) ?? reasonInfo?.reason ?? null
             const returnedAtDate =
-              reasonInfo?.returnedAt != null
-                ? new Date(reasonInfo.returnedAt)
+              returnedAtValue != null
+                ? new Date(returnedAtValue)
                 : row.updated_at
                   ? new Date(row.updated_at)
                   : null
@@ -923,13 +928,13 @@ export function PublicPool() {
                   ? `¥${Number(row.budget).toLocaleString("zh-CN")}`
                   : "待确认",
               lastStage: getPoolStageLabel(row.follow_up_stage, row.stage),
-              returnReason: reasonInfo?.reason ?? "退回原因未记录",
+              returnReason: returnReasonValue ?? "退回原因未记录",
               daysInPool,
               returnedAt:
                 returnedAtDate != null
                   ? returnedAtDate.toISOString().split("T")[0]
                   : "",
-              returnedById: reasonInfo?.returnedById ?? null,
+              returnedById: returnedByValue,
             }
           }) ?? []
 

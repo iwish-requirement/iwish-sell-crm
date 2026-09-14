@@ -17,6 +17,7 @@ function isPublicPath(pathname: string): boolean {
 
   // 允许 Next.js 静态资源与基础文件不经鉴权
   if (
+    pathname === '/api/version' ||
     pathname.startsWith('/_next/') ||
     pathname.startsWith('/public/') ||
     pathname === '/favicon.ico' ||

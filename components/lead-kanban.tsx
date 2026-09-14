@@ -1027,6 +1027,9 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
   const [isReassigning, setIsReassigning] = useState(false)
   const [isAdvancingStage, setIsAdvancingStage] = useState(false)
   const [isReturningToPool, setIsReturningToPool] = useState(false)
+  const [selectedLeadIds, setSelectedLeadIds] = useState<string[]>([])
+  const [batchReturnDialogOpen, setBatchReturnDialogOpen] = useState(false)
+  const [batchReturnReason, setBatchReturnReason] = useState("")
   const [isLoggingFollowUp, setIsLoggingFollowUp] = useState(false)
   const [, setIsSubmittingReturnToPool] = useState(false)
   const [isSavingEdit, setIsSavingEdit] = useState(false)
@@ -2224,6 +2227,48 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     } finally {
       setIsReturningToPool(false)
       setIsSubmittingReturnToPool(false)
+    }
+  }
+
+  const handleBatchReturnToPool = async () => {
+    if (selectedLeadIds.length === 0) return
+    if (!batchReturnReason.trim()) {
+      toast.error("请填写退回公海的原因")
+      return
+    }
+
+    try {
+      setIsReturningToPool(true)
+      const supabase = getBrowserSupabaseClient()
+      const { data, error } = await supabase.rpc("rpc_leads_return_to_pool_batch", {
+        p_lead_ids: selectedLeadIds,
+        p_reason: batchReturnReason.trim(),
+      })
+
+      if (error) {
+        const friendly = mapRpcError(error, { title: "批量退回公海失败", description: "请稍后重试" })
+        toast.error(friendly.title, { description: friendly.description })
+        return
+      }
+
+      const result = (data ?? {}) as { success_ids?: string[]; success_count?: number; failed_count?: number }
+      const successIds = Array.isArray(result.success_ids) ? result.success_ids : []
+      if (successIds.length > 0) {
+        setLeads((prev) => prev.filter((lead) => !successIds.includes(String(lead.id))))
+      }
+      setSelectedLeadIds([])
+      setBatchReturnDialogOpen(false)
+      setBatchReturnReason("")
+      if ((result.failed_count ?? 0) > 0) {
+        toast.warning("部分线索未退回公海", { description: `已处理 ${successIds.length} 条，${result.failed_count} 条因权限、保护期或状态原因未处理。` })
+      } else {
+        toast.success(`已将 ${successIds.length} 条线索退回公海`)
+      }
+    } catch (err) {
+      console.error("Failed to batch return leads to pool", err)
+      toast.error("批量退回公海失败", { description: "请稍后重试或联系管理员" })
+    } finally {
+      setIsReturningToPool(false)
     }
   }
 
@@ -3737,6 +3782,16 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
         </div>
       )}
 
+      {!isPublicPool && selectedLeadIds.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/20 bg-primary/5 p-3">
+          <span className="text-sm font-medium text-primary">已选择 {selectedLeadIds.length} 条线索</span>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => setSelectedLeadIds([])}>取消选择</Button>
+            {canReturnToPool && <Button size="sm" onClick={() => setBatchReturnDialogOpen(true)}>批量退回公海</Button>}
+          </div>
+        </div>
+      )}
+
       {/* Risk Alert（仅统计未成交线索） */}
 
       {(() => {
@@ -3808,6 +3863,16 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-[48px]">
+                    <Checkbox
+                      checked={tableLeads.length > 0 && tableLeads.every((lead) => selectedLeadIds.includes(String(lead.id)))}
+                      onCheckedChange={(checked) => {
+                        const pageIds = tableLeads.map((lead) => String(lead.id))
+                        setSelectedLeadIds((prev) => checked ? Array.from(new Set([...prev, ...pageIds])) : prev.filter((id) => !pageIds.includes(id)))
+                      }}
+                      aria-label="选择当前页线索"
+                    />
+                  </TableHead>
                   <TableHead className="min-w-[220px]">客户/企业</TableHead>
                   <TableHead>联系人</TableHead>
                   <TableHead>联系方式</TableHead>
@@ -3828,7 +3893,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
               <TableBody>
                 {tableLeads.length === 0 ? (
                    <TableRow>
-                     <TableCell colSpan={15} className="py-10 text-center text-sm text-muted-foreground">
+                     <TableCell colSpan={16} className="py-10 text-center text-sm text-muted-foreground">
                       当前筛选条件下暂无线索
                     </TableCell>
                   </TableRow>
@@ -3847,6 +3912,13 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                         className="cursor-pointer hover:bg-muted/30"
                         onClick={() => handleLeadClick(lead)}
                       >
+                        <TableCell onClick={(event) => event.stopPropagation()}>
+                          <Checkbox
+                            checked={selectedLeadIds.includes(String(lead.id))}
+                            onCheckedChange={(checked) => setSelectedLeadIds((prev) => checked ? Array.from(new Set([...prev, String(lead.id)])) : prev.filter((id) => id !== String(lead.id)))}
+                            aria-label={`选择 ${getLeadTitle(lead)}`}
+                          />
+                        </TableCell>
                         <TableCell>
                           <div className="max-w-[260px]">
                             <p className="truncate font-semibold text-foreground">{getLeadTitle(lead)}</p>
@@ -3939,6 +4011,23 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
           })}
         </div>
       )}
+
+      <Dialog open={batchReturnDialogOpen} onOpenChange={setBatchReturnDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>批量退回公海</DialogTitle>
+            <DialogDescription>将已选择的 {selectedLeadIds.length} 条线索退回公海，并记录统一原因。</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <Label htmlFor="batch-return-reason">退回原因 *</Label>
+            <Textarea id="batch-return-reason" value={batchReturnReason} onChange={(event) => setBatchReturnReason(event.target.value)} placeholder="请输入退回原因，如长期未接通、客户暂缓等..." />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBatchReturnDialogOpen(false)}>取消</Button>
+            <Button onClick={() => void handleBatchReturnToPool()} disabled={!batchReturnReason.trim() || isReturningToPool}>确认退回公海</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
 
       {totalLeads > 0 && (

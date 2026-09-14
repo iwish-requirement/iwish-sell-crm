@@ -3,4 +3,4 @@
 // 旧 Tab 会继续运行旧版 bundle，而通过 /api/version 获取到的新版本号将发生变化，
 // 触发前端弹出“有新版本，请刷新”的提示。
 
-export const APP_VERSION = "2026-03-11-01";
+export const APP_VERSION = "2026-09-14-01";
