@@ -2331,8 +2331,8 @@ const getDaysInPoolBadge = (days: number) => {
 
       {/* Table - responsive with horizontal scroll on mobile */}
       <Card className="border-muted-foreground/10">
-        <CardContent className="p-0 overflow-x-auto">
-          <Table>
+        <CardContent className="p-0">
+          <Table className="min-w-[1720px]">
             <TableHeader className="bg-muted/30">
               <TableRow className="hover:bg-transparent">
                 <TableHead className="w-[50px]">
@@ -2347,7 +2347,7 @@ const getDaysInPoolBadge = (days: number) => {
                 <TableHead className="min-w-[100px] font-bold text-foreground">最后阶段</TableHead>
                 <TableHead className="min-w-[120px] font-bold text-foreground">线索来源</TableHead>
                 <TableHead className="w-[200px] min-w-[180px] font-bold text-foreground">客户名称</TableHead>
-                <TableHead className="w-[260px] min-w-[200px] font-bold text-foreground">网址/品牌名</TableHead>
+                <TableHead className="w-[260px] min-w-[260px] font-bold text-foreground">网址/品牌名</TableHead>
                 <TableHead className="min-w-[80px] font-bold text-foreground">联系人</TableHead>
                 <TableHead className="min-w-[120px] font-bold text-foreground">电话</TableHead>
                 <TableHead className="min-w-[110px] font-bold text-foreground">微信号</TableHead>
@@ -2387,7 +2387,11 @@ const getDaysInPoolBadge = (days: number) => {
                     <Badge variant="outline" className="text-xs font-medium border-muted-foreground/20">{lead.source}</Badge>
                   </TableCell>
                   <TableCell className="font-bold text-sm text-foreground">{lead.company}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground max-w-[220px] break-all">{lead.website}</TableCell>
+                  <TableCell className="w-[260px] min-w-[260px] max-w-[260px] align-top !whitespace-normal">
+                    <div className="max-w-[244px] break-all whitespace-normal leading-5 text-xs text-muted-foreground">
+                      {lead.website || "-"}
+                    </div>
+                  </TableCell>
                   <TableCell className="text-sm font-medium">{lead.contact}</TableCell>
                   <TableCell className="font-mono text-sm font-medium text-foreground/80">{lead.phone}</TableCell>
                   <TableCell className="font-mono text-xs text-foreground/80">
