@@ -6,7 +6,7 @@ IWISH 销售线索 CRM 是面向销售团队的线索、公海、客户跟进、
 
 ## 当前版本
 
-- 应用版本：`2026-09-15-01`
+- 应用版本：`2026-09-15-02`
 - 当前主分支：`main`
 - 生产运行时：Cloudflare Workers + Next.js 16 + OpenNext
 - 数据库：Supabase PostgreSQL
