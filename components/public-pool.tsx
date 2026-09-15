@@ -822,7 +822,7 @@ export function PublicPool() {
       try {
         const supabase = getBrowserSupabaseClient()
         const { data, error } = await supabase
-          .from("leads_secure_view")
+          .from("public_pool_secure_view")
           .select(
             "id, name, website, stage, follow_up_stage, status, source, customer_name, customer_phone, wechat, product_category, budget, updated_at, created_by, team_id, owner_id, pool_return_reason, pool_returned_at, pool_returned_by",
           )
@@ -2077,7 +2077,7 @@ const getDaysInPoolBadge = (days: number) => {
                     } else {
                       // 直接导出当前公海数据为 Excel（先导出为 CSV，后续可接第三方库生成 xlsx）
                       const { data, error: leadsError } = await supabase
-                        .from("leads_secure_view")
+                        .from("public_pool_secure_view")
                         .select(
                           "name, website, customer_name, customer_phone, source, product_category, budget, stage, status, responsibility_type, source_level1, source_level2, activity_name, referral_customer_name",
                         )
@@ -2177,7 +2177,7 @@ const getDaysInPoolBadge = (days: number) => {
                       toast.error(friendly.title, { description: friendly.description })
                     } else {
                       const { data, error: leadsError } = await supabase
-                        .from("leads_secure_view")
+                        .from("public_pool_secure_view")
                         .select(
                           "name, website, customer_name, customer_phone, wechat, source, product_category, budget, stage, status, responsibility_type, source_level1, source_level2",
                         )
