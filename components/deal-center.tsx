@@ -627,7 +627,7 @@ export function DealCenter() {
         </div>
 
         <div className="flex items-center gap-3">
-          {leadScopeType !== "self" && (
+          {(leadScopeType === "team" || leadScopeType === "org" || leadScopeType === "custom") && (
             <div className="flex items-center gap-2">
               <span className="text-xs text-muted-foreground">视角</span>
               <Select
@@ -649,7 +649,7 @@ export function DealCenter() {
                         {team.name}
                       </SelectItem>
                     ))}
-                  {leadScopeType !== "self" && (
+                  {(leadScopeType === "team" || leadScopeType === "org" || leadScopeType === "custom") && (
                     <SelectItem value="all">全部可见（当前权限）</SelectItem>
                   )}
                 </SelectContent>
@@ -927,7 +927,7 @@ export function DealCenter() {
                     <p className="text-sm font-bold text-foreground uppercase tracking-wider">合同信息</p>
                     {canManageContracts && selectedDeal && (
                       <Button
-                        size="xs"
+                        size="sm"
                         variant="outline"
                         className="h-7 px-2 text-xs"
                         onClick={() => {
@@ -1029,7 +1029,7 @@ export function DealCenter() {
                     <p className="text-sm font-bold text-foreground uppercase tracking-wider">回款记录</p>
                     {canManageContracts && selectedContract && (
                       <Button
-                        size="xs"
+                        size="sm"
                         variant="outline"
                         className="h-7 px-2 text-xs"
                         onClick={() => {
@@ -1371,6 +1371,4 @@ export function DealCenter() {
     </div>
   )
 }
-
-
 

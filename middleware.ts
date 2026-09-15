@@ -17,6 +17,8 @@ function isPublicPath(pathname: string): boolean {
 
   // 允许 Next.js 静态资源与基础文件不经鉴权
   if (
+    pathname === '/api/version' ||
+    pathname === '/api/jobs/renewal-wecom-notify' ||
     pathname.startsWith('/_next/') ||
     pathname.startsWith('/public/') ||
     pathname === '/favicon.ico' ||
@@ -89,12 +91,14 @@ export async function middleware(request: NextRequest) {
     },
   })
 
+  // Verify the JWT server-side for access decisions. getSession() only reads
+  // the cookie and may trust stale session data.
   const {
-    data: { session },
-  } = await supabase.auth.getSession()
+    data: { user },
+  } = await supabase.auth.getUser()
 
   // 未登录：统一重定向到 /auth/login
-  if (!session) {
+  if (!user) {
     const redirectUrl = request.nextUrl.clone()
     redirectUrl.pathname = '/auth/login'
     redirectUrl.searchParams.set('redirectTo', pathname)

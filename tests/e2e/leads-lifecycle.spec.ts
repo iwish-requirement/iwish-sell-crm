@@ -38,12 +38,7 @@ test.describe('线索全生命周期（创建 → 跟进 → 成交 → 分析�
 
     await page.getByRole('button', { name: '确认添加' }).click();
 
-    // 为避免依赖后端权限/数据，这里不再断言结果，只要流程能走到点击即可
-    return;
-
-
-
-    // 新线索应该出现在 L1 列表中（如果后续你希望严格校验，可以去掉上面的 return 并保证权限/数据一致）
+    // 新线索必须真实出现在列表中，避免测试在点击按钮后假通过。
     await expect(page.getByText(companyName)).toBeVisible({ timeout: 15_000 });
 
     // 3. 打开详情并关闭为成交
