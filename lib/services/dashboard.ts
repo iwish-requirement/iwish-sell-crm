@@ -85,6 +85,8 @@ export interface TeamActivityRow {
   wonLeads: number
   paymentReceived: number
   overdueLeads: number
+  // 各跟进阶段的线索数量（不含公海与无效线索），key 为 FOLLOW_UP_STAGE_FLOW 的 stageId
+  stageCounts: Record<string, number>
   // 配额占用率 = 在管有效线索 / (配额上限 × 成员数)
   quotaUsage: number | null
 }
@@ -582,7 +584,10 @@ export async function fetchRoleDashboardActivity(
   let pendingInRange = 0
   let newlyAssigned = 0
   const stageCounts = new Map<string, number>()
-  const teamStockById = new Map<number, { activeLeads: number; wonLeads: number; paymentReceived: number }>()
+  const teamStockById = new Map<
+    number,
+    { activeLeads: number; wonLeads: number; paymentReceived: number; stageCounts: Record<string, number> }
+  >()
   const teamNewLeadsById = new Map<number, number>()
   const customerDetailsById = new Map<string, DashboardCustomerDetailRow>()
 
@@ -677,10 +682,16 @@ export async function fetchRoleDashboardActivity(
     }
 
     if (teamKey != null) {
-      const stock = teamStockById.get(teamKey) ?? { activeLeads: 0, wonLeads: 0, paymentReceived: 0 }
+      const stock =
+        teamStockById.get(teamKey) ??
+        { activeLeads: 0, wonLeads: 0, paymentReceived: 0, stageCounts: {} as Record<string, number> }
       if (!isInvalid && !terminal && status === "open") stock.activeLeads += 1
       if (isWonLead(lead)) stock.wonLeads += 1
       if (followUpStage === "payment_received") stock.paymentReceived += 1
+      if (!isInvalid) {
+        const stageKey = followUpStage || "uncontacted"
+        stock.stageCounts[stageKey] = (stock.stageCounts[stageKey] ?? 0) + 1
+      }
       teamStockById.set(teamKey, stock)
     }
 
@@ -833,7 +844,9 @@ export async function fetchRoleDashboardActivity(
   const teams: TeamActivityRow[] = Array.from(teamIds)
     .map((teamId) => {
       const members = users.filter((user) => user.teamId === teamId)
-      const stock = teamStockById.get(teamId) ?? { activeLeads: 0, wonLeads: 0, paymentReceived: 0 }
+      const stock =
+        teamStockById.get(teamId) ??
+        { activeLeads: 0, wonLeads: 0, paymentReceived: 0, stageCounts: {} as Record<string, number> }
       const effectiveMembers = Math.max(members.length, 1)
       return {
         teamId,
@@ -847,6 +860,7 @@ export async function fetchRoleDashboardActivity(
         wonLeads: stock.wonLeads,
         paymentReceived: stock.paymentReceived,
         overdueLeads: members.reduce((sum, user) => sum + user.overdueLeads, 0),
+        stageCounts: stock.stageCounts,
         quotaUsage: quotaLimit > 0 ? stock.activeLeads / (quotaLimit * effectiveMembers) : null,
       }
     })

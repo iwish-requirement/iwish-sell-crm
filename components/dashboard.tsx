@@ -34,6 +34,7 @@ import { fetchCurrentUserProfile, fetchCurrentUserPublicProfile } from "@/lib/au
 import {
   fetchDashboardSummary,
   fetchRoleDashboardActivity,
+  FOLLOW_UP_STAGE_FLOW,
   type DailyActivityUserRow,
   type DashboardCustomerDetailRow,
   type DashboardAlert,
@@ -390,53 +391,67 @@ function DepartmentMemberTable({
   )
 }
 
+// 部门对比的关键阶段：线下拜访（见面沟通）与方案及报价（已给方案）
+const KEY_STAGE_IDS = new Set<string>(["offline_visit", "proposal_quotation"])
+
 function TeamTable({ teams }: { teams: TeamActivityRow[] }) {
   return (
     <Card className="border-muted-foreground/10 shadow-sm">
       <CardHeader className="border-b border-muted/30">
         <CardTitle className="text-lg">部门数据对比</CardTitle>
-        <CardDescription>各部门在管线索、产出与动作量对比。</CardDescription>
+        <CardDescription>
+          各部门线索的跟进阶段分布，
+          <span className="font-medium text-amber-600">线下拜访</span>与
+          <span className="font-medium text-amber-600">方案及报价</span>
+          是过程关键点。
+        </CardDescription>
       </CardHeader>
-      <CardContent className="max-h-[420px] overflow-auto p-0">
-        <Table>
+      <CardContent className="max-h-[460px] overflow-auto p-0">
+        <Table className="min-w-[620px]">
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
-              <TableHead className="min-w-[120px]">部门</TableHead>
+              <TableHead className="min-w-[92px]">部门</TableHead>
               <TableHead className="text-right">成员</TableHead>
-              <TableHead className="text-right">在管线索</TableHead>
-              <TableHead className="text-right">配额占用</TableHead>
-              <TableHead className="text-right">新增</TableHead>
-              <TableHead className="text-right">成交</TableHead>
-              <TableHead className="text-right">到款</TableHead>
-              <TableHead className="text-right">人均动作</TableHead>
+              {FOLLOW_UP_STAGE_FLOW.map((stage) => (
+                <TableHead
+                  key={stage.id}
+                  className={`whitespace-nowrap text-right ${
+                    KEY_STAGE_IDS.has(stage.id) ? "font-semibold text-amber-600" : ""
+                  }`}
+                >
+                  {stage.label}
+                </TableHead>
+              ))}
             </TableRow>
           </TableHeader>
           <TableBody>
             {teams.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={11} className="py-8 text-center text-sm text-muted-foreground">
                   暂无可统计的部门数据
                 </TableCell>
               </TableRow>
             ) : (
-              teams.map((team) => {
-                const actions = team.contactActions + team.visits + team.followUps
-                const perMemberActions = team.memberCount > 0 ? actions / team.memberCount : 0
-                return (
-                  <TableRow key={team.teamId ?? team.teamName}>
-                    <TableCell className="font-semibold">{team.teamName}</TableCell>
-                    <TableCell className="text-right font-medium">{team.memberCount}</TableCell>
-                    <TableCell className="text-right font-medium">{team.activeLeads}</TableCell>
-                    <TableCell className="text-right font-medium">
-                      {team.quotaUsage == null ? "-" : `${Math.round(team.quotaUsage * 100)}%`}
-                    </TableCell>
-                    <TableCell className="text-right font-medium">{team.newLeads}</TableCell>
-                    <TableCell className="text-right font-medium">{team.wonLeads}</TableCell>
-                    <TableCell className="text-right font-medium">{team.paymentReceived}</TableCell>
-                    <TableCell className="text-right font-medium">{perMemberActions.toFixed(1)}</TableCell>
-                  </TableRow>
-                )
-              })
+              teams.map((team) => (
+                <TableRow key={team.teamId ?? team.teamName}>
+                  <TableCell className="font-semibold">{team.teamName}</TableCell>
+                  <TableCell className="text-right font-medium">{team.memberCount}</TableCell>
+                  {FOLLOW_UP_STAGE_FLOW.map((stage) => {
+                    const isKey = KEY_STAGE_IDS.has(stage.id)
+                    const count = team.stageCounts[stage.id] ?? 0
+                    return (
+                      <TableCell
+                        key={stage.id}
+                        className={`text-right tabular-nums ${
+                          isKey ? "bg-amber-50/70 font-semibold text-amber-700" : "font-medium"
+                        }`}
+                      >
+                        {count}
+                      </TableCell>
+                    )
+                  })}
+                </TableRow>
+              ))
             )}
           </TableBody>
         </Table>
