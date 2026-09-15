@@ -5,12 +5,10 @@ import {
   AlertTriangle,
   BarChart3,
   CalendarClock,
-  CheckCircle2,
   Clock,
   ExternalLink,
   MessageCircle,
   PhoneCall,
-  TrendingUp,
   UserPlus,
   Users,
 } from "lucide-react"
@@ -25,7 +23,7 @@ import {
 } from "recharts"
 
 import { MePermissionsContext } from "@/components/app-root"
-import { SalesFunnel } from "@/components/sales-funnel"
+import { FollowUpFunnel } from "@/components/follow-up-funnel"
 import { ChartSkeleton, KPICardSkeleton, TableSkeleton } from "@/components/skeleton-loaders"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
@@ -41,13 +39,14 @@ import {
   type DashboardAlert,
   type DashboardSummary,
   type RoleDashboardActivity,
+  type TeamActivityRow,
 } from "@/lib/services/dashboard"
 import { getBrowserSupabaseClient } from "@/lib/supabase/client"
 
 type RoleDashboardMode = "sales" | "manager" | "director"
-type TimeRangePreset = "today" | "yesterday" | "week" | "month" | "custom"
+type TimeRangePreset = "today" | "yesterday" | "week" | "month" | "quarter" | "custom"
 
-interface KpiDefinition {
+interface SalesKpiDefinition {
   key: keyof RoleDashboardActivity["totals"]
   title: string
   description: string
@@ -60,16 +59,7 @@ interface DashboardDateRange {
   end: Date
 }
 
-const MANAGER_KPIS: KpiDefinition[] = [
-  { key: "newLeads", title: "今日新增线索", description: "当天录入并进入跟进范围", icon: UserPlus, tone: "text-blue-600 bg-blue-50" },
-  { key: "contactActions", title: "建联行动", description: "电话和微信沟通记录", icon: PhoneCall, tone: "text-cyan-600 bg-cyan-50" },
-  { key: "visits", title: "拜访客户", description: "线下拜访或深度拜访记录", icon: Users, tone: "text-violet-600 bg-violet-50" },
-  { key: "qualifiedLeads", title: "有效线索", description: "L2+ 或 S/A/B 级线索", icon: CheckCircle2, tone: "text-emerald-600 bg-emerald-50" },
-  { key: "wonLeads", title: "成交线索", description: "已进入成交结果", icon: TrendingUp, tone: "text-amber-600 bg-amber-50" },
-  { key: "overdueLeads", title: "逾期未跟进", description: "超过下次跟进或风险阈值", icon: AlertTriangle, tone: "text-red-600 bg-red-50" },
-]
-
-const SALES_KPIS: KpiDefinition[] = [
+const SALES_KPIS: SalesKpiDefinition[] = [
   { key: "pendingToday", title: "今日待跟进", description: "下次跟进时间在今天", icon: CalendarClock, tone: "text-blue-600 bg-blue-50" },
   { key: "overdueLeads", title: "逾期未跟进", description: "需要优先补动作", icon: AlertTriangle, tone: "text-red-600 bg-red-50" },
   { key: "newlyAssigned", title: "新分配/更新", description: "今日有新变化的线索", icon: UserPlus, tone: "text-violet-600 bg-violet-50" },
@@ -131,6 +121,10 @@ function getPresetRange(preset: TimeRangePreset): DashboardDateRange {
     const start = new Date(today.getFullYear(), today.getMonth(), 1)
     return { start, end: addDays(today, 1) }
   }
+  if (preset === "quarter") {
+    const start = new Date(today.getFullYear(), Math.floor(today.getMonth() / 3) * 3, 1)
+    return { start, end: addDays(today, 1) }
+  }
   return { start: today, end: addDays(today, 1) }
 }
 
@@ -152,18 +146,10 @@ function getAlertClassName(alert: DashboardAlert): string {
   return "border-blue-200 bg-blue-50 text-blue-900"
 }
 
-function KpiGrid({
-  activity,
-  mode,
-}: {
-  activity: RoleDashboardActivity | null
-  mode: RoleDashboardMode
-}) {
-  const kpis = mode === "sales" ? SALES_KPIS : MANAGER_KPIS
-
+function KpiGrid({ activity }: { activity: RoleDashboardActivity | null }) {
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-6">
-      {kpis.map((item) => {
+      {SALES_KPIS.map((item) => {
         const Icon = item.icon
         const value = activity?.totals[item.key] ?? 0
         return (
@@ -203,6 +189,7 @@ function TimeRangeControls({
     { key: "yesterday", label: "昨日" },
     { key: "week", label: "本周" },
     { key: "month", label: "本月" },
+    { key: "quarter", label: "本季" },
     { key: "custom", label: "自定义" },
   ]
 
@@ -262,16 +249,12 @@ function TimeRangeControls({
   )
 }
 
-function ActivityTable({ users, mode }: { users: DailyActivityUserRow[]; mode: RoleDashboardMode }) {
-  const rows = mode === "sales" ? users.slice(0, 1) : users
-
+function ActivityTable({ users }: { users: DailyActivityUserRow[] }) {
   return (
     <Card className="border-muted-foreground/10 shadow-sm">
       <CardHeader className="border-b border-muted/30">
-        <CardTitle className="text-lg">{mode === "sales" ? "我的今日动作" : "业务人员每日动作表"}</CardTitle>
-        <CardDescription>
-          按人员聚合今日线索录入、建联、拜访、跟进和逾期情况。
-        </CardDescription>
+        <CardTitle className="text-lg">团队成员动作对比</CardTitle>
+        <CardDescription>按人员聚合线索录入、建联、拜访、跟进和逾期情况。</CardDescription>
       </CardHeader>
       <CardContent className="max-h-[460px] overflow-auto p-0">
         <Table>
@@ -282,21 +265,20 @@ function ActivityTable({ users, mode }: { users: DailyActivityUserRow[]; mode: R
               <TableHead className="text-right">建联</TableHead>
               <TableHead className="text-right">拜访</TableHead>
               <TableHead className="text-right">跟进</TableHead>
-              <TableHead className="text-right">有效线索</TableHead>
               <TableHead className="text-right">成交</TableHead>
               <TableHead className="text-right">逾期</TableHead>
               <TableHead className="text-right">状态</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.length === 0 ? (
+            {users.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={9} className="py-8 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
                   暂无可统计的业务人员数据
                 </TableCell>
               </TableRow>
             ) : (
-              rows.map((row) => {
+              users.map((row) => {
                 const actionTotal = row.newLeads + row.contactActions + row.visits + row.followUps
                 return (
                   <TableRow key={row.id}>
@@ -315,7 +297,6 @@ function ActivityTable({ users, mode }: { users: DailyActivityUserRow[]; mode: R
                     <TableCell className="text-right font-medium">{row.contactActions}</TableCell>
                     <TableCell className="text-right font-medium">{row.visits}</TableCell>
                     <TableCell className="text-right font-medium">{row.followUps}</TableCell>
-                    <TableCell className="text-right font-medium">{row.qualifiedLeads}</TableCell>
                     <TableCell className="text-right font-medium">{row.wonLeads}</TableCell>
                     <TableCell className="text-right font-medium text-red-600">{row.overdueLeads}</TableCell>
                     <TableCell className="text-right">
@@ -338,14 +319,77 @@ function ActivityTable({ users, mode }: { users: DailyActivityUserRow[]; mode: R
   )
 }
 
-function CustomerDetailsTable({ rows }: { rows: DashboardCustomerDetailRow[] }) {
+function TeamTable({ teams }: { teams: TeamActivityRow[] }) {
+  return (
+    <Card className="border-muted-foreground/10 shadow-sm">
+      <CardHeader className="border-b border-muted/30">
+        <CardTitle className="text-lg">部门数据对比</CardTitle>
+        <CardDescription>各部门在管线索、产出与动作量对比。</CardDescription>
+      </CardHeader>
+      <CardContent className="max-h-[420px] overflow-auto p-0">
+        <Table>
+          <TableHeader className="sticky top-0 z-10 bg-background">
+            <TableRow>
+              <TableHead className="min-w-[120px]">部门</TableHead>
+              <TableHead className="text-right">成员</TableHead>
+              <TableHead className="text-right">在管线索</TableHead>
+              <TableHead className="text-right">配额占用</TableHead>
+              <TableHead className="text-right">新增</TableHead>
+              <TableHead className="text-right">成交</TableHead>
+              <TableHead className="text-right">到款</TableHead>
+              <TableHead className="text-right">人均动作</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {teams.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
+                  暂无可统计的部门数据
+                </TableCell>
+              </TableRow>
+            ) : (
+              teams.map((team) => {
+                const actions = team.contactActions + team.visits + team.followUps
+                const perMemberActions = team.memberCount > 0 ? actions / team.memberCount : 0
+                return (
+                  <TableRow key={team.teamId ?? team.teamName}>
+                    <TableCell className="font-semibold">{team.teamName}</TableCell>
+                    <TableCell className="text-right font-medium">{team.memberCount}</TableCell>
+                    <TableCell className="text-right font-medium">{team.activeLeads}</TableCell>
+                    <TableCell className="text-right font-medium">
+                      {team.quotaUsage == null ? "-" : `${Math.round(team.quotaUsage * 100)}%`}
+                    </TableCell>
+                    <TableCell className="text-right font-medium">{team.newLeads}</TableCell>
+                    <TableCell className="text-right font-medium">{team.wonLeads}</TableCell>
+                    <TableCell className="text-right font-medium">{team.paymentReceived}</TableCell>
+                    <TableCell className="text-right font-medium">{perMemberActions.toFixed(1)}</TableCell>
+                  </TableRow>
+                )
+              })
+            )}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
+  )
+}
+
+function CustomerDetailsTable({
+  rows,
+  title = "客户明细",
+  description = "按当前时间范围汇总的客户与跟进明细。",
+}: {
+  rows: DashboardCustomerDetailRow[]
+  title?: string
+  description?: string
+}) {
   return (
     <Card className="border-muted-foreground/10 shadow-sm">
       <CardHeader className="border-b border-muted/30">
         <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
           <div>
-            <CardTitle className="text-lg">客户明细</CardTitle>
-            <CardDescription>按当前时间范围汇总的客户与跟进明细。</CardDescription>
+            <CardTitle className="text-lg">{title}</CardTitle>
+            <CardDescription>{description}</CardDescription>
           </div>
           <Badge variant="outline">最多展示 50 条</Badge>
         </div>
@@ -452,12 +496,13 @@ function AlertsPanel({ alerts }: { alerts: DashboardAlert[] }) {
 }
 
 function TrendChart({ activity }: { activity: RoleDashboardActivity | null }) {
+  const trendDays = activity?.trends.length ?? 7
   return (
     <Card className="border-muted-foreground/10 shadow-sm">
       <CardHeader className="border-b border-muted/30">
         <CardTitle className="flex items-center gap-2 text-lg">
           <BarChart3 className="h-4 w-4 text-blue-600" />
-          最近 7 天过程趋势
+          最近 {trendDays} 天过程趋势
         </CardTitle>
         <CardDescription>对比线索录入、建联行动和客户拜访走势。</CardDescription>
       </CardHeader>
@@ -492,70 +537,39 @@ function TrendChart({ activity }: { activity: RoleDashboardActivity | null }) {
   )
 }
 
-function ProcessFunnel({ activity }: { activity: RoleDashboardActivity | null }) {
-  const items = [
-    { label: "今日新增", value: activity?.funnel.newLeads ?? 0 },
-    { label: "已建联", value: activity?.funnel.contacted ?? 0 },
-    { label: "已拜访", value: activity?.funnel.visited ?? 0 },
-    { label: "跟进中", value: activity?.funnel.inProgress ?? 0 },
-    { label: "成交", value: activity?.funnel.won ?? 0 },
-  ]
-  const max = Math.max(...items.map((item) => item.value), 1)
+function FunnelCard({
+  activity,
+  summary,
+}: {
+  activity: RoleDashboardActivity | null
+  summary: DashboardSummary | null
+}) {
+  const bands = activity?.stageFunnel ?? []
+  const total = bands.reduce((sum, band) => sum + band.count, 0)
+  const wonCount = bands.find((band) => band.stageId === "won")?.count ?? 0
+  const paymentCount = bands.find((band) => band.stageId === "payment_received")?.count ?? 0
+  const paymentRate = wonCount > 0 ? `${((paymentCount / wonCount) * 100).toFixed(1)}%` : "—"
 
   return (
     <Card className="border-muted-foreground/10 shadow-sm">
       <CardHeader className="border-b border-muted/30">
-        <CardTitle className="text-lg">过程漏斗</CardTitle>
-        <CardDescription>线索录入、建联、拜访、跟进与成交分布。</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3 pt-5">
-        {items.map((item) => (
-          <div key={item.label} className="space-y-1.5">
-            <div className="flex items-center justify-between text-sm">
-              <span className="font-medium">{item.label}</span>
-              <span className="font-semibold">{item.value}</span>
-            </div>
-            <div className="h-2 rounded-full bg-muted">
-              <div
-                className="h-2 rounded-full bg-primary"
-                style={{ width: `${Math.max((item.value / max) * 100, item.value > 0 ? 8 : 0)}%` }}
-              />
-            </div>
+        <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+          <div>
+            <CardTitle className="text-lg">销售漏斗</CardTitle>
+            <CardDescription>按当前跟进阶段的线索分布（不含公海与无效线索）。</CardDescription>
           </div>
-        ))}
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="outline">成交 {formatNumber(wonCount)}</Badge>
+            <Badge variant="outline">到款 {formatNumber(paymentCount)}</Badge>
+            <Badge variant="outline">到款率 {paymentRate}</Badge>
+            <Badge variant="outline">本月回款 {formatCurrency(summary?.monthlyRevenue ?? 0)}</Badge>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="pt-5">
+        <FollowUpFunnel bands={bands} total={total} />
       </CardContent>
     </Card>
-  )
-}
-
-function LegacySummaryCard({ summary }: { summary: DashboardSummary | null }) {
-  return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-      <Card className="border-muted-foreground/10 shadow-sm">
-        <CardContent className="p-4">
-          <p className="text-2xl font-bold">{formatNumber(summary?.totalLeads ?? 0)}</p>
-          <p className="mt-1 text-sm font-semibold">当前线索总数</p>
-        </CardContent>
-      </Card>
-      <Card className="border-muted-foreground/10 shadow-sm">
-        <CardContent className="p-4">
-          <p className="text-2xl font-bold">{(summary?.winRate ?? 0).toFixed(1)}%</p>
-          <p className="mt-1 text-sm font-semibold">成交转化率</p>
-        </CardContent>
-      </Card>
-      <Card className="border-muted-foreground/10 shadow-sm">
-        <CardContent className="p-4">
-          <p className="text-2xl font-bold">{formatCurrency(summary?.monthlyRevenue ?? 0)}</p>
-          <p className="mt-1 text-sm font-semibold">本月回款</p>
-        </CardContent>
-      </Card>
-      <Card className="border-muted-foreground/10 shadow-sm">
-        <CardContent className="p-4">
-          <p className="text-2xl font-bold text-red-600">{formatNumber(summary?.riskLeadCount ?? 0)}</p>
-          <p className="mt-1 text-sm font-semibold">风险线索</p>
-        </CardContent>
-      </Card>
-    </div>
   )
 }
 
@@ -647,6 +661,19 @@ export function Dashboard() {
     }
   }, [mode])
 
+  // 个人工作台：下次跟进时间已到或已逾期的线索优先展示
+  const todoRows = useMemo(() => {
+    const rows = activity?.customerDetails ?? []
+    const endMs = dateRange.end.getTime()
+    return rows
+      .filter((row) => {
+        if (row.isOverdue) return true
+        if (!row.nextContactAt) return false
+        return new Date(row.nextContactAt).getTime() < endMs
+      })
+      .sort((a, b) => (a.isOverdue === b.isOverdue ? 0 : a.isOverdue ? -1 : 1))
+  }, [activity, dateRange])
+
   if (isLoading) {
     return (
       <div className="space-y-6">
@@ -686,7 +713,6 @@ export function Dashboard() {
         <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
           <Badge variant="outline">新增：创建时间</Badge>
           <Badge variant="outline">建联：电话/微信</Badge>
-          <Badge variant="outline">逾期：下次跟进优先</Badge>
         </div>
       </div>
 
@@ -711,33 +737,39 @@ export function Dashboard() {
         }}
       />
 
-      <KpiGrid activity={activity} mode={mode} />
-
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.45fr_0.55fr]">
-        <ActivityTable users={activity?.users ?? []} mode={mode} />
-        <AlertsPanel alerts={activity?.alerts ?? []} />
-      </div>
-
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.2fr_0.8fr]">
-        <TrendChart activity={activity} />
-        <ProcessFunnel activity={activity} />
-      </div>
-
-      <CustomerDetailsTable rows={activity?.customerDetails ?? []} />
-
-      <LegacySummaryCard summary={summary} />
-
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <Card className="border-muted-foreground/10 shadow-sm">
-          <CardHeader className="border-b border-muted/30">
-            <CardTitle className="text-lg">销售漏斗概览</CardTitle>
-            <CardDescription>当前线索阶段分布。</CardDescription>
-          </CardHeader>
-          <CardContent className="pt-6">
-            <SalesFunnel />
-          </CardContent>
-        </Card>
-      </div>
+      {mode === "director" ? (
+        <>
+          <FunnelCard activity={activity} summary={summary} />
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.5fr_0.5fr]">
+            <TeamTable teams={activity?.teams ?? []} />
+            <TrendChart activity={activity} />
+          </div>
+          <CustomerDetailsTable
+            rows={activity?.customerDetails ?? []}
+            title="全员客户明细"
+            description="按当前时间范围汇总的客户与跟进明细。"
+          />
+        </>
+      ) : mode === "manager" ? (
+        <>
+          <FunnelCard activity={activity} summary={summary} />
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.45fr_0.55fr]">
+            <ActivityTable users={activity?.users ?? []} />
+            <AlertsPanel alerts={activity?.alerts ?? []} />
+          </div>
+          <CustomerDetailsTable rows={activity?.customerDetails ?? []} />
+        </>
+      ) : (
+        <>
+          <FunnelCard activity={activity} summary={summary} />
+          <KpiGrid activity={activity} />
+          <CustomerDetailsTable
+            rows={todoRows}
+            title="待跟进与逾期"
+            description="下次跟进时间已到或已逾期的线索，优先处理。"
+          />
+        </>
+      )}
     </div>
   )
 }

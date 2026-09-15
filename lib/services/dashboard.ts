@@ -66,6 +66,29 @@ export interface DashboardCustomerDetailRow {
   isOverdue: boolean
 }
 
+export interface FollowUpFunnelBand {
+  stageId: string
+  label: string
+  count: number
+}
+
+export interface TeamActivityRow {
+  teamId: number | null
+  teamName: string
+  memberCount: number
+  // 在管有效线索：open、非无效、非成交/到款终态
+  activeLeads: number
+  newLeads: number
+  contactActions: number
+  visits: number
+  followUps: number
+  wonLeads: number
+  paymentReceived: number
+  overdueLeads: number
+  // 配额占用率 = 在管有效线索 / (配额上限 × 成员数)
+  quotaUsage: number | null
+}
+
 export interface RoleDashboardActivity {
   dateLabel: string
   totals: {
@@ -80,16 +103,11 @@ export interface RoleDashboardActivity {
     newlyAssigned: number
   }
   users: DailyActivityUserRow[]
+  teams: TeamActivityRow[]
   trends: DashboardTrendPoint[]
   alerts: DashboardAlert[]
   customerDetails: DashboardCustomerDetailRow[]
-  funnel: {
-    newLeads: number
-    contacted: number
-    visited: number
-    inProgress: number
-    won: number
-  }
+  stageFunnel: FollowUpFunnelBand[]
 }
 
 export interface RecentDealSummary {
@@ -134,6 +152,31 @@ function toDateKey(date: Date): string {
   return `${year}-${month}-${day}`
 }
 
+export const FOLLOW_UP_STAGE_FLOW = [
+  { id: "uncontacted", label: "未建联" },
+  { id: "connected", label: "已建联" },
+  { id: "online_communication", label: "线上沟通" },
+  { id: "offline_visit", label: "线下拜访" },
+  { id: "proposal_quotation", label: "方案及报价" },
+  { id: "intent_confirmed", label: "合作意向已确认" },
+  { id: "contract_review", label: "审合同" },
+  { id: "won", label: "成交" },
+  { id: "payment_received", label: "到款" },
+] as const
+
+export type FollowUpStageId = (typeof FOLLOW_UP_STAGE_FLOW)[number]["id"]
+
+export function getFollowUpStageLabel(value: string | null | undefined): string {
+  const key = (value ?? "").trim()
+  return FOLLOW_UP_STAGE_FLOW.find((stage) => stage.id === key)?.label ?? (key || "未设置")
+}
+
+// 成交及之后的阶段为终态：不计入逾期、风险等过程管理统计
+function isTerminalFollowUpStage(value: string | null | undefined): boolean {
+  const key = (value ?? "").trim()
+  return key === "won" || key === "payment_received"
+}
+
 function readExcludedIds(
   teamExclusionRow: any,
   profileExclusionRow: any,
@@ -157,11 +200,13 @@ function readExcludedIds(
   return { excludedTeamIds, excludedProfileIds }
 }
 
-function isQualifiedLead(lead: Pick<LeadSecureRow, "stage" | "customer_grade" | "customer_attribute">): boolean {
-  if (lead.customer_attribute === "invalid") return false
-  const stage = (lead.stage ?? "").trim()
+function isQualifiedLead(
+  lead: Pick<LeadSecureRow, "stage" | "follow_up_stage" | "customer_grade" | "customer_attribute">,
+): boolean {
+  if ((lead.customer_attribute ?? "") === "invalid") return false
   const grade = (lead.customer_grade ?? "").trim().toUpperCase()
-  return ["L2", "L3", "L4", "Won"].includes(stage) || ["S", "A", "B"].includes(grade)
+  const stage = (lead.follow_up_stage ?? "").trim() || (lead.stage ?? "").trim()
+  return (stage !== "" && stage !== "uncontacted" && stage !== "L1") || ["S", "A", "B"].includes(grade)
 }
 
 function isWonLead(lead: Pick<LeadSecureRow, "stage" | "status" | "close_result">): boolean {
@@ -329,8 +374,8 @@ export async function fetchDashboardSummary(
       }
     }
 
-    // 仪表盘“风险线索”仅统计在谈线索，成交/丢单不计入
-    if (status === "open") {
+    // 仪表盘“风险线索”仅统计在谈线索，成交/丢单/无效/到款不计入
+    if (status === "open" && (lead.customer_attribute ?? "") !== "invalid" && !isTerminalFollowUpStage(lead.follow_up_stage)) {
       if (lastContact) {
         const diffHours = (now.getTime() - lastContact.getTime()) / (1000 * 60 * 60)
         if (diffHours >= dangerHours) {
@@ -377,123 +422,6 @@ export async function fetchDashboardSummary(
   }
 }
 
-type LeadStageRow = Pick<LeadSecureRow, "id" | "team_id" | "owner_id" | "stage" | "status" | "close_result" | "follow_up_stage" | "customer_attribute">
-
-export interface SalesFunnelCounts {
-  byStage: Record<string, number>
-}
-
-export async function fetchSalesFunnelCounts(
-  params: DashboardFilterParams = {},
-): Promise<SalesFunnelCounts> {
-  const supabase = getBrowserSupabaseClient()
-
-  let query = supabase.from("leads_secure_view").select("id, team_id, owner_id, stage, status, close_result, follow_up_stage, customer_attribute")
-
-  if (params.teamId !== undefined) {
-    query = query.eq("team_id", params.teamId)
-  }
-
-  if (params.ownerId) {
-    query = query.eq("owner_id", params.ownerId)
-  }
-
-  const [
-    { data, error },
-    { data: teamExclusionRow, error: teamExclusionError },
-    { data: profileExclusionRow, error: profileExclusionError },
-  ] = await Promise.all([
-    query,
-    supabase.from("settings").select("value").eq("key", "analytics.excluded_teams").maybeSingle(),
-    supabase.from("settings").select("value").eq("key", "analytics.excluded_profiles").maybeSingle(),
-  ])
-
-  if (teamExclusionError && teamExclusionError.code !== "PGRST116") {
-    console.error("Failed to load analytics excluded teams for dashboard funnel", teamExclusionError)
-  }
-  if (profileExclusionError && profileExclusionError.code !== "PGRST116") {
-    console.error("Failed to load analytics excluded profiles for dashboard funnel", profileExclusionError)
-  }
-
-  if (error) {
-    console.error("Failed to load sales funnel leads", error)
-    throw error
-  }
-
-  const excludedTeamIds = new Set<number>(
-    teamExclusionRow &&
-      (teamExclusionRow as any).value &&
-      Array.isArray(((teamExclusionRow as any).value as any).team_ids)
-      ? (((teamExclusionRow as any).value as any).team_ids as any[]).filter((v: any) => typeof v === "number")
-      : [],
-  )
-
-  const excludedProfileIds = new Set<string>(
-    profileExclusionRow &&
-      (profileExclusionRow as any).value &&
-      Array.isArray(((profileExclusionRow as any).value as any).profile_ids)
-      ? (((profileExclusionRow as any).value as any).profile_ids as any[]).filter((v: any) => typeof v === "string")
-      : [],
-  )
-
-  const rawLeads = (data ?? []) as LeadStageRow[]
-
-  const leads = rawLeads.filter((lead) => {
-    const teamId = (lead.team_id as number | null) ?? null
-    if (teamId != null && excludedTeamIds.has(teamId)) {
-      return false
-    }
-
-    const ownerId = (lead.owner_id as string | null) ?? null
-    if (ownerId && excludedProfileIds.has(ownerId)) {
-      return false
-    }
-
-    return true
-  })
-
-  const byStage: Record<string, number> = {}
-
-  for (const lead of leads) {
-    const status = lead.status ?? "open"
-
-    if (status === "pool") {
-      continue
-    }
-
-    if (lead.customer_attribute === "invalid") continue
-    const rawStage = (lead.follow_up_stage ?? lead.stage ?? "").trim()
-    const legacyStageMap: Record<string, string> = {
-      L1: "uncontacted",
-      L2: "connected",
-      L3: "proposal_quotation",
-      L4: "contract_review",
-      Won: "won",
-    }
-    let logicalStage = legacyStageMap[rawStage] ?? (rawStage || "uncontacted")
-
-    if (
-      status === "closed" &&
-      (lead.close_result === "won" ||
-        lead.close_result === "成交" ||
-        rawStage === "Won" ||
-        rawStage === "成交")
-    ) {
-      logicalStage = "won"
-    }
-
-    if (!byStage[logicalStage]) {
-      byStage[logicalStage] = 0
-    }
-
-    byStage[logicalStage] += 1
-  }
-
-  return {
-    byStage,
-  }
-}
-
 export async function fetchRoleDashboardActivity(
   params: DashboardActivityFilterParams = {},
 ): Promise<RoleDashboardActivity> {
@@ -525,22 +453,27 @@ export async function fetchRoleDashboardActivity(
 
   let warningHours = 72
   let dangerHours = 168
+  let quotaLimit = 60
   const businessRulesValue = (businessRulesRpcResult as any) ?? null
   if (businessRulesValue && typeof businessRulesValue === "object") {
     const rawWarning = (businessRulesValue as any).warning_hours
     const rawDanger = (businessRulesValue as any).danger_hours
+    const rawQuota = (businessRulesValue as any).quota_limit
     if (typeof rawWarning === "number" && Number.isFinite(rawWarning) && rawWarning > 0) {
       warningHours = rawWarning
     }
     if (typeof rawDanger === "number" && Number.isFinite(rawDanger) && rawDanger > 0) {
       dangerHours = rawDanger
     }
+    if (typeof rawQuota === "number" && Number.isFinite(rawQuota) && rawQuota > 0) {
+      quotaLimit = rawQuota
+    }
   }
 
   let leadsQuery = supabase
     .from("leads_secure_view")
     .select(
-      "id, team_id, owner_id, created_by, name, customer_name, stage, status, close_result, last_contact_at, next_contact_at, created_at, updated_at, customer_grade",
+      "id, team_id, owner_id, created_by, name, customer_name, stage, follow_up_stage, customer_attribute, status, close_result, last_contact_at, next_contact_at, created_at, updated_at, customer_grade",
     )
     .neq("status", "pool")
     .limit(5000)
@@ -565,8 +498,10 @@ export async function fetchRoleDashboardActivity(
     profilesQuery = profilesQuery.eq("id", params.ownerId)
   }
 
-  const [{ data: leadRows, error: leadsError }, { data: profileRows, error: profilesError }] =
-    await Promise.all([leadsQuery, profilesQuery])
+  const teamsQuery = supabase.from("teams").select("id, name, is_active")
+
+  const [{ data: leadRows, error: leadsError }, { data: profileRows, error: profilesError }, { data: teamRows, error: teamsError }] =
+    await Promise.all([leadsQuery, profilesQuery, teamsQuery])
 
   if (leadsError) {
     console.error("Failed to load role dashboard leads", leadsError)
@@ -574,6 +509,15 @@ export async function fetchRoleDashboardActivity(
   }
   if (profilesError) {
     console.error("Failed to load role dashboard profiles", profilesError)
+  }
+  if (teamsError) {
+    console.error("Failed to load role dashboard teams", teamsError)
+  }
+
+  const teamNameById = new Map<number, string>()
+  for (const row of (teamRows ?? []) as any[]) {
+    if (row.is_active === false) continue
+    teamNameById.set(row.id as number, (row.name as string) ?? `团队 ${row.id}`)
   }
 
   const leads = ((leadRows ?? []) as LeadSecureRow[]).filter((lead) => {
@@ -637,9 +581,9 @@ export async function fetchRoleDashboardActivity(
   let overdueLeads = 0
   let pendingInRange = 0
   let newlyAssigned = 0
-  let funnelContacted = 0
-  let funnelVisited = 0
-  let funnelInProgress = 0
+  const stageCounts = new Map<string, number>()
+  const teamStockById = new Map<number, { activeLeads: number; wonLeads: number; paymentReceived: number }>()
+  const teamNewLeadsById = new Map<number, number>()
   const customerDetailsById = new Map<string, DashboardCustomerDetailRow>()
 
   const leadIds = leads.map((lead) => lead.id).filter(Boolean)
@@ -664,7 +608,7 @@ export async function fetchRoleDashboardActivity(
       contactName: (lead as any).customer_name || "-",
       ownerId: ownerKey,
       ownerName,
-      stage: lead.stage || "-",
+      stage: getFollowUpStageLabel(lead.follow_up_stage ?? lead.stage),
       status: lead.status || "-",
       grade: lead.customer_grade ?? null,
       createdAt: lead.created_at ?? null,
@@ -695,10 +639,17 @@ export async function fetchRoleDashboardActivity(
     const nextContactAt = lead.next_contact_at ? new Date(lead.next_contact_at) : null
     const lastContactAt = lead.last_contact_at ? new Date(lead.last_contact_at) : createdAt
     const status = lead.status ?? "open"
+    const followUpStage = (lead.follow_up_stage ?? "").trim()
+    const isInvalid = (lead.customer_attribute ?? "") === "invalid"
+    const terminal = isTerminalFollowUpStage(followUpStage)
+    const teamKey = lead.team_id ?? null
 
     if (createdAt && createdAt >= rangeStart && createdAt < rangeEnd) {
       periodNewLeads += 1
       user && (user.newLeads += 1)
+      if (teamKey != null) {
+        teamNewLeadsById.set(teamKey, (teamNewLeadsById.get(teamKey) ?? 0) + 1)
+      }
     }
 
     if (createdAt && createdAt >= trendStart && createdAt < rangeEnd) {
@@ -720,7 +671,20 @@ export async function fetchRoleDashboardActivity(
       user && (user.wonLeads += 1)
     }
 
-    if (status === "open") {
+    if (!isInvalid) {
+      const stageKey = followUpStage || "uncontacted"
+      stageCounts.set(stageKey, (stageCounts.get(stageKey) ?? 0) + 1)
+    }
+
+    if (teamKey != null) {
+      const stock = teamStockById.get(teamKey) ?? { activeLeads: 0, wonLeads: 0, paymentReceived: 0 }
+      if (!isInvalid && !terminal && status === "open") stock.activeLeads += 1
+      if (isWonLead(lead)) stock.wonLeads += 1
+      if (followUpStage === "payment_received") stock.paymentReceived += 1
+      teamStockById.set(teamKey, stock)
+    }
+
+    if (status === "open" && !isInvalid && !terminal) {
       const isDueInRange = nextContactAt && nextContactAt >= rangeStart && nextContactAt < rangeEnd
       const isNextContactOverdue = nextContactAt && nextContactAt < now
       const isRiskByAge =
@@ -731,11 +695,6 @@ export async function fetchRoleDashboardActivity(
       if (isNextContactOverdue || isRiskByAge) {
         overdueLeads += 1
         user && (user.overdueLeads += 1)
-      }
-
-      const stage = (lead.stage ?? "").trim()
-      if (["L2", "L3", "L4"].includes(stage)) {
-        funnelInProgress += 1
       }
     }
 
@@ -777,7 +736,6 @@ export async function fetchRoleDashboardActivity(
         const detail = isInRange && leadForNote ? addCustomerDetail(leadForNote) : null
 
         if (isContact) {
-          funnelContacted += 1
           if (point) point.contactActions += 1
           if (isInRange) {
             user && (user.contactActions += 1)
@@ -785,7 +743,6 @@ export async function fetchRoleDashboardActivity(
           }
         }
         if (isVisit) {
-          funnelVisited += 1
           if (point) point.visits += 1
           if (isInRange) {
             user && (user.visits += 1)
@@ -872,10 +829,40 @@ export async function fetchRoleDashboardActivity(
     })
   }
 
+  const teamIds = new Set<number>([...teamNameById.keys(), ...teamStockById.keys()])
+  const teams: TeamActivityRow[] = Array.from(teamIds)
+    .map((teamId) => {
+      const members = users.filter((user) => user.teamId === teamId)
+      const stock = teamStockById.get(teamId) ?? { activeLeads: 0, wonLeads: 0, paymentReceived: 0 }
+      const effectiveMembers = Math.max(members.length, 1)
+      return {
+        teamId,
+        teamName: teamNameById.get(teamId) ?? `团队 ${teamId}`,
+        memberCount: members.length,
+        activeLeads: stock.activeLeads,
+        newLeads: teamNewLeadsById.get(teamId) ?? 0,
+        contactActions: members.reduce((sum, user) => sum + user.contactActions, 0),
+        visits: members.reduce((sum, user) => sum + user.visits, 0),
+        followUps: members.reduce((sum, user) => sum + user.followUps, 0),
+        wonLeads: stock.wonLeads,
+        paymentReceived: stock.paymentReceived,
+        overdueLeads: members.reduce((sum, user) => sum + user.overdueLeads, 0),
+        quotaUsage: quotaLimit > 0 ? stock.activeLeads / (quotaLimit * effectiveMembers) : null,
+      }
+    })
+    .sort((a, b) => b.wonLeads - a.wonLeads || b.activeLeads - a.activeLeads)
+
+  const stageFunnel: FollowUpFunnelBand[] = FOLLOW_UP_STAGE_FLOW.map((stage) => ({
+    stageId: stage.id,
+    label: stage.label,
+    count: stageCounts.get(stage.id) ?? 0,
+  }))
+
   return {
     dateLabel,
     totals,
     users,
+    teams,
     trends: Array.from(trendMap.values()),
     alerts: alerts.slice(0, 6),
     customerDetails: Array.from(customerDetailsById.values())
@@ -886,12 +873,6 @@ export async function fetchRoleDashboardActivity(
         return bTime.localeCompare(aTime)
       })
       .slice(0, 50),
-    funnel: {
-      newLeads: periodNewLeads,
-      contacted: funnelContacted,
-      visited: funnelVisited,
-      inProgress: funnelInProgress,
-      won: wonLeads,
-    },
+    stageFunnel,
   }
 }
