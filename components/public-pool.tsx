@@ -98,13 +98,14 @@ interface PoolLeadInteraction {
 const POOL_FOLLOW_UP_STAGE_LABELS: Record<string, string> = {
   uncontacted: "未建联",
   connected: "已建联",
-  online_communication: "线上/电话沟通",
+  online_communication: "线上沟通",
   offline_visit: "线下拜访",
   proposal_quotation: "方案及报价",
   proposal_negotiation: "方案谈判",
   intent_confirmed: "合作意向已确认",
-  contract_review: "审合同/合同推进",
+  contract_review: "审合同",
   won: "成交",
+  payment_received: "到款",
 }
 
 const POOL_LEGACY_STAGE_LABELS: Record<string, string> = {

@@ -104,29 +104,29 @@ const ANALYTICS_STAGE_ORDER = [
   "online_communication",
   "offline_visit",
   "proposal_quotation",
-  "proposal_negotiation",
   "intent_confirmed",
   "contract_review",
   "won",
+  "payment_received",
 ] as const
 
 const ANALYTICS_STAGE_LABELS: Record<(typeof ANALYTICS_STAGE_ORDER)[number], { stage: string; fullName: string }> = {
   uncontacted: { stage: "未建联", fullName: "未建联" },
   connected: { stage: "已建联", fullName: "已建联" },
-  online_communication: { stage: "线上/电话沟通", fullName: "线上/电话沟通" },
+  online_communication: { stage: "线上沟通", fullName: "线上沟通" },
   offline_visit: { stage: "线下拜访", fullName: "线下拜访" },
   proposal_quotation: { stage: "方案及报价", fullName: "方案及报价" },
-  proposal_negotiation: { stage: "方案谈判", fullName: "方案谈判" },
   intent_confirmed: { stage: "合作意向已确认", fullName: "合作意向已确认" },
-  contract_review: { stage: "审合同/合同推进", fullName: "审合同/合同推进" },
+  contract_review: { stage: "审合同", fullName: "审合同" },
   won: { stage: "成交", fullName: "成交" },
+  payment_received: { stage: "到款", fullName: "到款" },
 }
 
 const ANALYTICS_LEGACY_STAGE_MAP: Record<string, (typeof ANALYTICS_STAGE_ORDER)[number]> = {
   L1: "uncontacted",
   L2: "connected",
   L3: "proposal_quotation",
-  L4: "proposal_negotiation",
+  L4: "contract_review",
   Won: "won",
   成交: "won",
   new: "uncontacted",
@@ -565,7 +565,7 @@ export function AnalyticsDashboard() {
         const current = sourceCounts.get(source) ?? { leads: 0, converted: 0 }
         current.leads += 1
         const logicalStage = getLogicalStage(lead)
-        if (logicalStage === "won") {
+        if (logicalStage === "won" || logicalStage === "payment_received") {
           current.converted += 1
         }
         sourceCounts.set(source, current)
