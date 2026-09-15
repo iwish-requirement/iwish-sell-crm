@@ -13,9 +13,9 @@ import {
   Users,
 } from "lucide-react"
 import {
-  Bar,
-  BarChart,
   CartesianGrid,
+  Line,
+  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -399,12 +399,6 @@ function TeamTable({ teams }: { teams: TeamActivityRow[] }) {
     <Card className="border-muted-foreground/10 shadow-sm">
       <CardHeader className="border-b border-muted/30">
         <CardTitle className="text-lg">部门数据对比</CardTitle>
-        <CardDescription>
-          各部门线索的跟进阶段分布，
-          <span className="font-medium text-amber-600">线下拜访</span>与
-          <span className="font-medium text-amber-600">方案及报价</span>
-          是过程关键点。
-        </CardDescription>
       </CardHeader>
       <CardContent className="max-h-[460px] overflow-auto p-0">
         <Table className="min-w-[620px]">
@@ -588,9 +582,9 @@ function TrendChart({ activity }: { activity: RoleDashboardActivity | null }) {
       <CardHeader className="border-b border-muted/30">
         <CardTitle className="flex items-center gap-2 text-lg">
           <BarChart3 className="h-4 w-4 text-blue-600" />
-          最近 {trendDays} 天过程趋势
+          最近 {trendDays} 天新增与成交趋势
         </CardTitle>
-        <CardDescription>对比线索录入、建联行动和客户拜访走势。</CardDescription>
+        <CardDescription>对比每日新增线索与成交数量走势。</CardDescription>
       </CardHeader>
       <CardContent className="pt-6">
         <div className="h-[260px]">
@@ -600,7 +594,7 @@ function TrendChart({ activity }: { activity: RoleDashboardActivity | null }) {
             </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={activity.trends} margin={{ top: 8, right: 20, left: -10, bottom: 0 }}>
+              <LineChart data={activity.trends} margin={{ top: 8, right: 20, left: -10, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} strokeOpacity={0.4} />
                 <XAxis dataKey="date" tick={{ fontSize: 12 }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fontSize: 12 }} axisLine={false} tickLine={false} allowDecimals={false} />
@@ -611,10 +605,25 @@ function TrendChart({ activity }: { activity: RoleDashboardActivity | null }) {
                     boxShadow: "0 8px 18px rgb(15 23 42 / 0.12)",
                   }}
                 />
-                <Bar dataKey="newLeads" name="新增线索" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="contactActions" name="建联行动" fill="#06b6d4" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="visits" name="拜访客户" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
-              </BarChart>
+                <Line
+                  type="monotone"
+                  dataKey="newLeads"
+                  name="新增线索"
+                  stroke="#3b82f6"
+                  strokeWidth={2.5}
+                  dot={{ r: 3 }}
+                  activeDot={{ r: 5 }}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="won"
+                  name="成交"
+                  stroke="#22c55e"
+                  strokeWidth={2.5}
+                  dot={{ r: 3 }}
+                  activeDot={{ r: 5 }}
+                />
+              </LineChart>
             </ResponsiveContainer>
           )}
         </div>
