@@ -4,6 +4,7 @@
 
 ## 2026-09-15
 
+- `20260915043000_unify_lead_quota_paths.sql`：统一有效客户配额口径，新增数据库级有效线索判定函数，覆盖新增/导入、认领公海、分配、转移和状态变更；公海认领现在会在原子更新前执行 60 条配额校验，并防止并发认领绕过上限。
 - `877d79c` fix: harden crm security and integrity flows
 - `f6f4d84` docs: record security and integrity fixes
 - `d844deb` chore: bump production application version
