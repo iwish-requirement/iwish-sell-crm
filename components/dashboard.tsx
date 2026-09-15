@@ -577,6 +577,8 @@ function AlertsPanel({ alerts }: { alerts: DashboardAlert[] }) {
 
 function TrendChart({ activity }: { activity: RoleDashboardActivity | null }) {
   const trendDays = activity?.trends.length ?? 7
+  // 点位较少时直接在图上标注数值，总经理无需悬停即可读数
+  const showLabels = trendDays <= 10
   return (
     <Card className="border-muted-foreground/10 shadow-sm">
       <CardHeader className="border-b border-muted/30">
@@ -594,7 +596,7 @@ function TrendChart({ activity }: { activity: RoleDashboardActivity | null }) {
             </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={activity.trends} margin={{ top: 8, right: 20, left: -10, bottom: 0 }}>
+              <LineChart data={activity.trends} margin={{ top: 18, right: 20, left: -10, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} strokeOpacity={0.4} />
                 <XAxis dataKey="date" tick={{ fontSize: 12 }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fontSize: 12 }} axisLine={false} tickLine={false} allowDecimals={false} />
@@ -613,6 +615,7 @@ function TrendChart({ activity }: { activity: RoleDashboardActivity | null }) {
                   strokeWidth={2.5}
                   dot={{ r: 3 }}
                   activeDot={{ r: 5 }}
+                  label={showLabels ? { position: "top", fontSize: 11, fill: "#2563eb" } : undefined}
                 />
                 <Line
                   type="monotone"
@@ -622,6 +625,7 @@ function TrendChart({ activity }: { activity: RoleDashboardActivity | null }) {
                   strokeWidth={2.5}
                   dot={{ r: 3 }}
                   activeDot={{ r: 5 }}
+                  label={showLabels ? { position: "bottom", fontSize: 11, fill: "#16a34a" } : undefined}
                 />
               </LineChart>
             </ResponsiveContainer>
