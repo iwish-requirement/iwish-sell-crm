@@ -11,6 +11,7 @@
 - 新增 `supabase/migrations/20260915043000_unify_lead_quota_paths.sql`，由数据库函数 `iwish.lead_counts_toward_quota` 定义唯一的有效客户判定。
 - 公海认领、线索分配、跨团队转移在写入前显式执行配额校验；新增、导入和跟进状态变化继续由 `public.leads` 的数据库触发器兜底。
 - 配额校验使用按负责人加锁的事务级 advisory lock，避免并发认领或分配同时通过 60 条检查。
+- 新增 `20260915050000_atomic_pool_assignment_quota.sql`，将公海分配负责人和转为 `open` 合并为一次数据库写入，满额时整次操作回滚。
 - 公海、无效、成交、关闭和软删除线索不计入有效客户数量；管理员覆盖权限保持不变。
 
 **验证**

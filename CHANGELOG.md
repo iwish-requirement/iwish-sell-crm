@@ -5,6 +5,7 @@
 ## 2026-09-15
 
 - `20260915043000_unify_lead_quota_paths.sql`：统一有效客户配额口径，新增数据库级有效线索判定函数，覆盖新增/导入、认领公海、分配、转移和状态变更；公海认领现在会在原子更新前执行 60 条配额校验，并防止并发认领绕过上限。
+- `20260915050000_atomic_pool_assignment_quota.sql`：修复公海分配的两步写入漏洞，分配给成员时直接原子切换为有效客户并执行配额校验，避免满额后留下“已分配但仍在公海”的中间状态。
 - `877d79c` fix: harden crm security and integrity flows
 - `f6f4d84` docs: record security and integrity fixes
 - `d844deb` chore: bump production application version
