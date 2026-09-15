@@ -1330,22 +1330,6 @@ export function PublicPool() {
           continue
         }
 
-        const { error: updateError } = await supabase.rpc("rpc_lead_update", {
-          p_lead_id: leadId,
-          patch: {
-            status: "open",
-          },
-        })
-
-        if (updateError) {
-          const friendly = mapRpcError(updateError, {
-            title: "部分线索状态更新失败",
-            description: "更新线索状态失败，请稍后重试",
-          })
-          toast.error(friendly.title, { description: friendly.description })
-          continue
-        }
-
         successCount += 1
       }
 
