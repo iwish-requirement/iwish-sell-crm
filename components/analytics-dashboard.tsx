@@ -1228,7 +1228,7 @@ export function AnalyticsDashboard() {
                 <Tooltip
                   cursor={{ fill: 'hsl(var(--muted))', opacity: 0.2 }}
                   contentStyle={{ borderRadius: '12px', border: '1px solid hsl(var(--border))', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                  formatter={(value: number) => [`${value} 条`, "线索数量"]}
+                  formatter={(value: number | undefined) => [`${value} 条`, "线索数量"]}
                   labelFormatter={(label) => funnelData.find((d) => d.stage === label)?.fullName || label}
                 />
                 <Bar dataKey="count" fill="#3b82f6" radius={[0, 6, 6, 0]} barSize={40} />
@@ -1321,7 +1321,7 @@ export function AnalyticsDashboard() {
                     dataKey="value"
                     label={isMobile ? ((props) => {
                       const { name, percent, x, y, textAnchor, fill } = props as any
-                      const percentText = `${(percent * 100).toFixed(0)}%`
+                      const percentText = `${((percent ?? 0) * 100).toFixed(0)}%`
                       return (
                         <text x={x} y={y} textAnchor={textAnchor} fill={fill} fontSize={12}>
                           <tspan x={x} dy="-0.2em">
@@ -1332,7 +1332,7 @@ export function AnalyticsDashboard() {
                           </tspan>
                         </text>
                       )
-                    }) : (({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`)}
+                    }) : (({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`)}
                     labelLine={false}
                   >
                     {sourceVolumeData.map((entry, index) => (
@@ -1342,7 +1342,7 @@ export function AnalyticsDashboard() {
 >
                   <Tooltip
                     contentStyle={{ borderRadius: '12px', border: '1px solid hsl(var(--border))', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                    formatter={(value: number) => [`${value} 条`, "线索数量"]}
+                    formatter={(value: number | undefined) => [`${value} 条`, "线索数量"]}
                   />
                   <Legend />
                 </PieChart>
@@ -1379,9 +1379,9 @@ export function AnalyticsDashboard() {
                   <YAxis tickFormatter={(value) => `${value}%`} domain={[0, 25]} tick={{ fontSize: 12, fontWeight: 500 }} axisLine={false} tickLine={false} />
                   <Tooltip
                     contentStyle={{ borderRadius: '12px', border: '1px solid hsl(var(--border))', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                    formatter={(value: number, name: string) => {
+                    formatter={(value: number | undefined, name: string | undefined) => {
                       if (name === "rate") return [`${value}%`, "转化率"]
-                      return [value, name]
+                      return [value ?? 0, name ?? ""]
                     }}
                   />
                   <Bar dataKey="rate" fill="#10b981" radius={[6, 6, 0, 0]} barSize={40} />

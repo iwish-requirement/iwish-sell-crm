@@ -85,7 +85,7 @@ interface TeamMember {
   avatar: string
   role: string
   phone: string
-  status: "active" | "disabled"
+  status: "active" | "disabled" | "pending"
   disabledAt?: string
   disableReason?: string
 }
@@ -106,7 +106,7 @@ interface RolePermissionFlags {
   closeLeads: boolean
   viewUnmaskedPhone: boolean
   exportData: boolean
-  importLeads: boolean
+  importLeads?: boolean
   assignLeads: boolean
   claimLeads?: boolean
   deleteLeads: boolean
@@ -119,8 +119,8 @@ interface RolePermissionFlags {
   editInternalFields: boolean
   viewReports: boolean
   viewAudit: boolean
-  viewContracts: boolean
-  manageContracts: boolean
+  viewContracts?: boolean
+  manageContracts?: boolean
 }
 
 
@@ -220,6 +220,7 @@ const initialRoles: Role[] = [
     dataScope: "all",
     usersCount: 2,
     isSystem: true,
+    roleType: "sales_manager",
     permissions: {
       createLeads: true,
       updateLeads: true,
@@ -246,6 +247,7 @@ const initialRoles: Role[] = [
     dataScope: "team",
     usersCount: 3,
     isSystem: true,
+    roleType: "sales_manager",
     permissions: {
       createLeads: true,
       updateLeads: true,
@@ -272,6 +274,7 @@ const initialRoles: Role[] = [
     dataScope: "own",
     usersCount: 8,
     isSystem: true,
+    roleType: "sales_rep",
     permissions: {
       createLeads: true,
       updateLeads: true,
@@ -298,6 +301,7 @@ const initialRoles: Role[] = [
     dataScope: "own",
     usersCount: 2,
     isSystem: false,
+    roleType: "other",
     permissions: {
       createLeads: false,
       updateLeads: false,
@@ -2099,7 +2103,9 @@ function OrganizationTab() {
           supabase
             .from("profiles_public")
             .select("id, full_name, avatar_url, team_id, role_id, status"),
-          supabase.from("profile_team_memberships").select("profile_id, team_id"),
+          supabase
+            .from("profile_team_memberships")
+            .select("profile_id, team_id"),
         ])
 
         if (!isMounted) {
@@ -2130,7 +2136,7 @@ function OrganizationTab() {
           const teamId = Number(membership.team_id)
           if (!profileId || !Number.isFinite(teamId)) continue
           const current = membershipTeamIds.get(profileId) ?? []
-          current.push(teamId)
+          if (!current.includes(teamId)) current.push(teamId)
           membershipTeamIds.set(profileId, current)
         }
 
@@ -2188,7 +2194,7 @@ function OrganizationTab() {
           const roleName = (roleId && roleIdToName.get(roleId)) ?? "未分配角色"
 
           const memberBase: TeamMember = {
-            id: profileId,
+            id: nextMemberId++,
             profileId,
             roleId: roleId ?? undefined,
             name: (profile.full_name as string) ?? "未填写姓名",
@@ -2474,9 +2480,10 @@ function OrganizationTab() {
       setIsUpdatingOrg(true)
       const supabase = getBrowserSupabaseClient()
 
-      const { error } = await supabase.rpc("rpc_profile_update_org", {
+      const { error } = await supabase.rpc("rpc_profile_transfer_team", {
         p_user_id: selectedMember.profileId,
-        p_team_id: targetId,
+        p_from_team_id: selectedTeamId,
+        p_to_team_id: targetId,
         p_role_id: selectedMember.roleId ?? null,
       })
 
@@ -2536,21 +2543,13 @@ function OrganizationTab() {
       return
     }
 
-    if (member.status === "active") {
-      toast.error("无法移除在职成员", {
-        description: "在职成员必须至少属于一个团队，请先通过“转移团队”或“禁用账号”处理。",
-      })
-      return
-    }
-
     try {
       setIsUpdatingOrg(true)
       const supabase = getBrowserSupabaseClient()
 
-      const { error } = await supabase.rpc("rpc_profile_update_org", {
+      const { error } = await supabase.rpc("rpc_profile_remove_team_membership", {
         p_user_id: member.profileId,
-        p_team_id: null,
-        p_role_id: member.roleId ?? null,
+        p_team_id: team.id,
       })
 
       if (error) {
@@ -3787,7 +3786,7 @@ function PermissionsTab() {
           function deriveFlag(roleId: string, toggleKey: PermissionToggleKey): boolean {
             const perms = permsByRole.get(roleId) ?? []
             const mappedKeys = PERMISSION_KEY_MAP[toggleKey]
-            return perms.some((p) => p.effect === "allow" && mappedKeys.includes(p.permission_key as any))
+            return perms.some((p) => p.effect === "allow" && (mappedKeys as readonly string[]).includes(String(p.permission_key)))
           }
 
           const nextRoles: Role[] = rawRoles.map((role) => {
@@ -4000,7 +3999,7 @@ function PermissionsTab() {
       pushToggle("closeLeads", editingRole.permissions.closeLeads)
       pushToggle("viewUnmaskedPhone", editingRole.permissions.viewUnmaskedPhone)
       pushToggle("exportData", editingRole.permissions.exportData, "org")
-      pushToggle("importLeads", editingRole.permissions.importLeads, "org")
+      pushToggle("importLeads", editingRole.permissions.importLeads ?? false, "org")
       pushToggle("assignLeads", editingRole.permissions.assignLeads)
       pushToggle("claimLeads", Boolean(editingRole.permissions.claimLeads))
       pushToggle("deleteLeads", editingRole.permissions.deleteLeads, "org")
@@ -4013,8 +4012,8 @@ function PermissionsTab() {
       pushToggle("editInternalFields", editingRole.permissions.editInternalFields)
       pushToggle("viewReports", editingRole.permissions.viewReports)
       pushToggle("viewAudit", editingRole.permissions.viewAudit)
-      pushToggle("viewContracts", editingRole.permissions.viewContracts)
-      pushToggle("manageContracts", editingRole.permissions.manageContracts)
+      pushToggle("viewContracts", (editingRole.permissions.viewContracts ?? false))
+      pushToggle("manageContracts", (editingRole.permissions.manageContracts ?? false))
 
 
       const { error: rpcError } = await rpcRolePermissionsSetMatrix(editingRole.id, items)
@@ -4047,7 +4046,7 @@ function PermissionsTab() {
 
         const deriveFlagFromPerms = (toggleKey: PermissionToggleKey) => {
           const mappedKeys = PERMISSION_KEY_MAP[toggleKey]
-          return perms.some((p) => p.effect === "allow" && mappedKeys.includes(p.permission_key as any))
+          return perms.some((p) => p.effect === "allow" && (mappedKeys as readonly string[]).includes(String(p.permission_key)))
         }
 
         nextRole = {
@@ -4673,7 +4672,7 @@ function PermissionsTab() {
                             </Badge>
                             <Button
                               type="button"
-                              size="xs"
+                              size="sm"
                               variant="outline"
                               className="h-6 px-2 text-[11px]"
                               disabled={!editingRole}
