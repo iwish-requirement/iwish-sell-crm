@@ -4,6 +4,9 @@
 
 ## 2026-09-15
 
+- `877d79c` fix: harden crm security and integrity flows
+- `f6f4d84` docs: record security and integrity fixes
+- `d844deb` chore: bump production application version
 - 完成安全审计修复：付款视图改为调用者权限范围，撤销匿名内部 RPC 执行权限，并补充函数 `search_path` 防护。
 - 修复线索配额并发超限、创建字段丢失、已删除线索可修改和无效成员分配问题。
 - 补齐多团队成员转移、移除、审批和恢复的数据写入链路。
