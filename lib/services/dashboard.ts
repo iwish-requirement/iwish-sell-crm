@@ -467,7 +467,7 @@ export async function fetchSalesFunnelCounts(
       L1: "uncontacted",
       L2: "connected",
       L3: "proposal_quotation",
-      L4: "proposal_negotiation",
+      L4: "contract_review",
       Won: "won",
     }
     let logicalStage = legacyStageMap[rawStage] ?? (rawStage || "uncontacted")

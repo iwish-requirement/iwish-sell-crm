@@ -45,6 +45,7 @@ E2E 测试使用 `PW_SALES_EMAIL`、`PW_SALES_PASSWORD` 等测试环境变量。
 - `20260915023134_harden_views_and_internal_rpcs.sql`：收紧付款视图、内部 RPC、配额并发检查和已删除线索保护
 - `20260915030000_team_membership_write_paths.sql`：补齐多团队转移、移除、审批和恢复写入链路
 - `20260915033000_lead_create_pipeline_fields.sql`：保存新建线索的客户属性和跟进阶段
+- `20260915040000_lead_stage_flow_update.sql`：跟进阶段流程调整为未建联→已建联→线上沟通→线下拜访→方案及报价→合作意向已确认→审合同→成交→到款（移除方案谈判，新增到款）
 
 ## 部署
 

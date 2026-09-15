@@ -276,13 +276,13 @@ const CUSTOMER_ATTRIBUTE_OPTIONS = [
 const FOLLOW_UP_STAGE_OPTIONS = [
   { id: "uncontacted", label: "未建联" },
   { id: "connected", label: "已建联" },
-  { id: "online_communication", label: "线上/电话沟通" },
+  { id: "online_communication", label: "线上沟通" },
   { id: "offline_visit", label: "线下拜访" },
   { id: "proposal_quotation", label: "方案及报价" },
-  { id: "proposal_negotiation", label: "方案谈判" },
   { id: "intent_confirmed", label: "合作意向已确认" },
-  { id: "contract_review", label: "审合同/合同推进" },
+  { id: "contract_review", label: "审合同" },
   { id: "won", label: "成交" },
+  { id: "payment_received", label: "到款" },
 ] as const
 
 const FOLLOW_UP_STAGE_COLORS = [
@@ -291,11 +291,16 @@ const FOLLOW_UP_STAGE_COLORS = [
   "bg-sky-500",
   "bg-indigo-500",
   "bg-amber-500",
-  "bg-orange-500",
   "bg-orange-600",
   "bg-red-500",
   "bg-emerald-500",
+  "bg-emerald-700",
 ] as const
+
+// 成交及之后的阶段视为终态，不再参与风险提醒与配额统计
+function isTerminalFollowUpStage(value: string | null | undefined) {
+  return value === "won" || value === "payment_received"
+}
 
 function getFollowUpStageMeta(value: string | null | undefined) {
   const index = FOLLOW_UP_STAGE_OPTIONS.findIndex((item) => item.id === value)
@@ -437,7 +442,7 @@ function LeadCard({
 
   const getRiskBadge = (lead: Lead) => {
     // 已成交或已丢单的线索不再参与风险/需跟进提示
-    if (lead.status === "closed" || lead.followUpStage === "won") return null
+    if (lead.status === "closed" || isTerminalFollowUpStage(lead.followUpStage)) return null
 
     const lastContactAt = lead.lastContactAt ? new Date(lead.lastContactAt) : lead.createdAt ? new Date(lead.createdAt) : null
     if (!lastContactAt) {
@@ -680,7 +685,7 @@ function getLeadRiskState(
   lead: Lead,
   riskConfig: { warningHours: number; dangerHours: number },
 ): "normal" | "warning" | "danger" {
-  if (lead.status === "closed" || lead.followUpStage === "won") return "normal"
+  if (lead.status === "closed" || isTerminalFollowUpStage(lead.followUpStage)) return "normal"
 
   const now = Date.now()
   const nextContactAt = lead.nextContactAt ? new Date(lead.nextContactAt) : null
@@ -1561,7 +1566,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     for (const lead of leads) {
       if (!lead.ownerId) continue
       if (lead.status !== "open") continue
-      if (lead.customerAttribute === "invalid" || lead.followUpStage === "won") continue
+      if (lead.customerAttribute === "invalid" || isTerminalFollowUpStage(lead.followUpStage)) continue
       const current = counts.get(lead.ownerId) ?? 0
       counts.set(lead.ownerId, current + 1)
     }
@@ -3740,7 +3745,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       {/* Risk Alert（仅统计未成交线索） */}
 
       {(() => {
-        const activeLeadsForRisk = filteredLeads.filter((lead) => lead.status === "open" && lead.followUpStage !== "won")
+        const activeLeadsForRisk = filteredLeads.filter((lead) => lead.status === "open" && !isTerminalFollowUpStage(lead.followUpStage))
         const { warningHours, dangerHours } = riskConfigRef.current
 
 
@@ -4104,7 +4109,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                     <p className="text-xs text-muted-foreground">跟进阶段</p>
                     {selectedLead.status === "closed" && (
                       <span className="text-[11px] text-muted-foreground">
-                        {selectedLead.closeResult === "won" || selectedLead.followUpStage === "won"
+                        {selectedLead.closeResult === "won" || isTerminalFollowUpStage(selectedLead.followUpStage)
                           ? "已成交"
                           : "已关闭（未成交）"}
                       </span>

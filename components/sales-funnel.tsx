@@ -17,13 +17,13 @@ const FUNNEL_CONFIG = [
   { key: "all", label: "线索", fill: "#3b82f6" },
   { key: "uncontacted", label: "未建联", fill: "#60a5fa" },
   { key: "connected", label: "已建联", fill: "#93c5fd" },
-  { key: "online_communication", label: "线上/电话沟通", fill: "#a5b4fc" },
+  { key: "online_communication", label: "线上沟通", fill: "#a5b4fc" },
   { key: "offline_visit", label: "线下拜访", fill: "#818cf8" },
   { key: "proposal_quotation", label: "方案及报价", fill: "#f59e0b" },
-  { key: "proposal_negotiation", label: "方案谈判", fill: "#f97316" },
   { key: "intent_confirmed", label: "合作意向已确认", fill: "#fb923c" },
-  { key: "contract_review", label: "审合同/合同推进", fill: "#f97316" },
+  { key: "contract_review", label: "审合同", fill: "#f97316" },
   { key: "won", label: "成交", fill: "#22c55e" },
+  { key: "payment_received", label: "到款", fill: "#15803d" },
 ] as const
 
 export function SalesFunnel() {
