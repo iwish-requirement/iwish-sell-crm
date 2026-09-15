@@ -161,7 +161,7 @@ pnpm run deploy
 curl https://sell.iwishweb.com/api/version
 ```
 
-`iwish-sell-crm.pages.dev` 仍是历史 Pages 项目并连接 GitHub，作为旧预览/回滚入口保留；它不是当前生产地址。不要在 Worker 验证前断开 Pages 的 GitHub 连接。
+Pages 不再作为业务入口或回滚入口使用；生产部署和验证只针对 Cloudflare Worker 的 `sell.iwishweb.com`。
 
 完整发布说明见 [CLOUDFLARE_DEPLOY.md](CLOUDFLARE_DEPLOY.md)，日常排查见 [OPS_GUIDE.md](OPS_GUIDE.md)。
 
@@ -198,6 +198,13 @@ curl https://sell.iwishweb.com/api/version
 - 将生产域名从 Pages 运行时切换到 Cloudflare Workers/OpenNext，同时保留 Pages 历史入口。
 - 公海导入持续完善 AI 映射、规则兜底、标准化预览、超时治理和 Supabase Edge Function 代理。
 - 增加分配中心、产品类型、续费、合同、企微通知、报表和审计能力。
+
+截至 `2026-09-15`，本轮审计修复包括：
+
+- 收紧合同回款视图和内部批处理 RPC，匿名请求无法读取付款数据或触发自动回收。
+- 配额检查增加事务级并发锁，创建线索时持久化客户属性和跟进阶段。
+- 补齐成员多团队转移、移除、审批和恢复写入链路。
+- 修复续费提醒路由、软删除线索修改、无效成员分配和前端 TypeScript 错误。
 
 ## 许可证
 
