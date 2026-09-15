@@ -520,6 +520,8 @@ export async function fetchRoleDashboardActivity(
   const teamNameById = new Map<number, string>()
   for (const row of (teamRows ?? []) as any[]) {
     if (row.is_active === false) continue
+    // 数据统计设置中被排除的团队不出现在部门对比中
+    if (excludedTeamIds.has(row.id as number)) continue
     teamNameById.set(row.id as number, (row.name as string) ?? `团队 ${row.id}`)
   }
 
