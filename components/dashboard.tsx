@@ -579,14 +579,32 @@ function TrendChart({ activity }: { activity: RoleDashboardActivity | null }) {
   const trendDays = activity?.trends.length ?? 7
   // 点位较少时直接在图上标注数值，总经理无需悬停即可读数
   const showLabels = trendDays <= 10
+  const totalNew = activity?.trends.reduce((sum, point) => sum + point.newLeads, 0) ?? 0
+  const totalWon = activity?.trends.reduce((sum, point) => sum + point.won, 0) ?? 0
   return (
     <Card className="border-muted-foreground/10 shadow-sm">
       <CardHeader className="border-b border-muted/30">
-        <CardTitle className="flex items-center gap-2 text-lg">
-          <BarChart3 className="h-4 w-4 text-blue-600" />
-          最近 {trendDays} 天新增与成交趋势
-        </CardTitle>
-        <CardDescription>对比每日新增线索与成交数量走势。</CardDescription>
+        <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <BarChart3 className="h-4 w-4 text-blue-600" />
+              最近 {trendDays} 天新增与成交趋势
+            </CardTitle>
+            <CardDescription>对比每日新增线索与成交数量走势。</CardDescription>
+          </div>
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5">
+            <div className="flex items-center gap-2 text-sm">
+              <span className="h-2.5 w-2.5 rounded-full bg-[#3b82f6]" />
+              <span className="font-medium text-foreground">新增线索</span>
+              <span className="text-base font-bold tabular-nums text-[#2563eb]">合计 {totalNew}</span>
+            </div>
+            <div className="flex items-center gap-2 text-sm">
+              <span className="h-2.5 w-2.5 rounded-full bg-[#22c55e]" />
+              <span className="font-medium text-foreground">成交</span>
+              <span className="text-base font-bold tabular-nums text-[#16a34a]">合计 {totalWon}</span>
+            </div>
+          </div>
+        </div>
       </CardHeader>
       <CardContent className="pt-6">
         <div className="h-[260px]">
@@ -596,7 +614,7 @@ function TrendChart({ activity }: { activity: RoleDashboardActivity | null }) {
             </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={activity.trends} margin={{ top: 18, right: 20, left: -10, bottom: 0 }}>
+              <LineChart data={activity.trends} margin={{ top: 20, right: 24, left: -10, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} strokeOpacity={0.4} />
                 <XAxis dataKey="date" tick={{ fontSize: 12 }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fontSize: 12 }} axisLine={false} tickLine={false} allowDecimals={false} />
@@ -615,7 +633,7 @@ function TrendChart({ activity }: { activity: RoleDashboardActivity | null }) {
                   strokeWidth={2.5}
                   dot={{ r: 3 }}
                   activeDot={{ r: 5 }}
-                  label={showLabels ? { position: "top", fontSize: 11, fill: "#2563eb" } : undefined}
+                  label={showLabels ? { position: "top", fontSize: 13, fill: "#2563eb" } : undefined}
                 />
                 <Line
                   type="monotone"
@@ -625,7 +643,7 @@ function TrendChart({ activity }: { activity: RoleDashboardActivity | null }) {
                   strokeWidth={2.5}
                   dot={{ r: 3 }}
                   activeDot={{ r: 5 }}
-                  label={showLabels ? { position: "bottom", fontSize: 11, fill: "#16a34a" } : undefined}
+                  label={showLabels ? { position: "bottom", fontSize: 13, fill: "#16a34a" } : undefined}
                 />
               </LineChart>
             </ResponsiveContainer>
