@@ -1,6 +1,6 @@
 "use client"
 
-import { useContext, useEffect, useMemo, useState } from "react"
+import { Fragment, useContext, useEffect, useMemo, useState } from "react"
 import {
   AlertTriangle,
   BarChart3,
@@ -249,6 +249,55 @@ function TimeRangeControls({
   )
 }
 
+function MemberRow({ row }: { row: DailyActivityUserRow }) {
+  const actionTotal = row.newLeads + row.contactActions + row.visits + row.followUps
+  return (
+    <TableRow>
+      <TableCell>
+        <div className="flex items-center gap-3">
+          <Avatar className="h-8 w-8">
+            {row.avatarUrl ? <AvatarImage src={row.avatarUrl} alt={row.name} /> : null}
+            <AvatarFallback className="text-xs font-semibold">
+              {row.name.trim().slice(0, 1) || "?"}
+            </AvatarFallback>
+          </Avatar>
+          <span className="font-semibold">{row.name}</span>
+        </div>
+      </TableCell>
+      <TableCell className="text-right font-medium">{row.newLeads}</TableCell>
+      <TableCell className="text-right font-medium">{row.contactActions}</TableCell>
+      <TableCell className="text-right font-medium">{row.visits}</TableCell>
+      <TableCell className="text-right font-medium">{row.followUps}</TableCell>
+      <TableCell className="text-right font-medium">{row.wonLeads}</TableCell>
+      <TableCell className="text-right font-medium text-red-600">{row.overdueLeads}</TableCell>
+      <TableCell className="text-right">
+        {row.overdueLeads > 0 ? (
+          <Badge variant="destructive">需关注</Badge>
+        ) : actionTotal > 0 ? (
+          <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100">正常</Badge>
+        ) : (
+          <Badge variant="secondary">暂无动作</Badge>
+        )}
+      </TableCell>
+    </TableRow>
+  )
+}
+
+const MEMBER_TABLE_HEADERS = (
+  <TableHeader className="sticky top-0 z-10 bg-background">
+    <TableRow>
+      <TableHead className="min-w-[160px]">业务人员</TableHead>
+      <TableHead className="text-right">新增线索</TableHead>
+      <TableHead className="text-right">建联</TableHead>
+      <TableHead className="text-right">拜访</TableHead>
+      <TableHead className="text-right">跟进</TableHead>
+      <TableHead className="text-right">成交</TableHead>
+      <TableHead className="text-right">逾期</TableHead>
+      <TableHead className="text-right">状态</TableHead>
+    </TableRow>
+  </TableHeader>
+)
+
 function ActivityTable({ users }: { users: DailyActivityUserRow[] }) {
   return (
     <Card className="border-muted-foreground/10 shadow-sm">
@@ -258,18 +307,7 @@ function ActivityTable({ users }: { users: DailyActivityUserRow[] }) {
       </CardHeader>
       <CardContent className="max-h-[460px] overflow-auto p-0">
         <Table>
-          <TableHeader className="sticky top-0 z-10 bg-background">
-            <TableRow>
-              <TableHead className="min-w-[160px]">业务人员</TableHead>
-              <TableHead className="text-right">新增线索</TableHead>
-              <TableHead className="text-right">建联</TableHead>
-              <TableHead className="text-right">拜访</TableHead>
-              <TableHead className="text-right">跟进</TableHead>
-              <TableHead className="text-right">成交</TableHead>
-              <TableHead className="text-right">逾期</TableHead>
-              <TableHead className="text-right">状态</TableHead>
-            </TableRow>
-          </TableHeader>
+          {MEMBER_TABLE_HEADERS}
           <TableBody>
             {users.length === 0 ? (
               <TableRow>
@@ -278,37 +316,70 @@ function ActivityTable({ users }: { users: DailyActivityUserRow[] }) {
                 </TableCell>
               </TableRow>
             ) : (
-              users.map((row) => {
-                const actionTotal = row.newLeads + row.contactActions + row.visits + row.followUps
+              users.map((row) => <MemberRow key={row.id} row={row} />)
+            )}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
+  )
+}
+
+function DepartmentMemberTable({
+  users,
+  teams,
+}: {
+  users: DailyActivityUserRow[]
+  teams: TeamActivityRow[]
+}) {
+  const groups: { key: string; name: string; members: DailyActivityUserRow[]; team: TeamActivityRow | null }[] = []
+  for (const team of teams) {
+    const members = users.filter((user) => user.teamId === team.teamId)
+    if (members.length > 0) {
+      groups.push({ key: `team-${team.teamId}`, name: team.teamName, members, team })
+    }
+  }
+  const unassigned = users.filter(
+    (user) => user.teamId == null || !teams.some((team) => team.teamId === user.teamId),
+  )
+  if (unassigned.length > 0) {
+    groups.push({ key: "unassigned", name: "未分配团队", members: unassigned, team: null })
+  }
+
+  return (
+    <Card className="border-muted-foreground/10 shadow-sm">
+      <CardHeader className="border-b border-muted/30">
+        <CardTitle className="text-lg">部门成员明细</CardTitle>
+        <CardDescription>按部门展示各成员的线索与跟进数据。</CardDescription>
+      </CardHeader>
+      <CardContent className="max-h-[560px] overflow-auto p-0">
+        <Table>
+          {MEMBER_TABLE_HEADERS}
+          <TableBody>
+            {groups.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
+                  暂无可统计的业务人员数据
+                </TableCell>
+              </TableRow>
+            ) : (
+              groups.map((group) => {
+                const wonTotal = group.team?.wonLeads ?? group.members.reduce((sum, m) => sum + m.wonLeads, 0)
+                const overdueTotal = group.members.reduce((sum, m) => sum + m.overdueLeads, 0)
                 return (
-                  <TableRow key={row.id}>
-                    <TableCell>
-                      <div className="flex items-center gap-3">
-                        <Avatar className="h-8 w-8">
-                          {row.avatarUrl ? <AvatarImage src={row.avatarUrl} alt={row.name} /> : null}
-                          <AvatarFallback className="text-xs font-semibold">
-                            {row.name.trim().slice(0, 1) || "?"}
-                          </AvatarFallback>
-                        </Avatar>
-                        <span className="font-semibold">{row.name}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right font-medium">{row.newLeads}</TableCell>
-                    <TableCell className="text-right font-medium">{row.contactActions}</TableCell>
-                    <TableCell className="text-right font-medium">{row.visits}</TableCell>
-                    <TableCell className="text-right font-medium">{row.followUps}</TableCell>
-                    <TableCell className="text-right font-medium">{row.wonLeads}</TableCell>
-                    <TableCell className="text-right font-medium text-red-600">{row.overdueLeads}</TableCell>
-                    <TableCell className="text-right">
-                      {row.overdueLeads > 0 ? (
-                        <Badge variant="destructive">需关注</Badge>
-                      ) : actionTotal > 0 ? (
-                        <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100">正常</Badge>
-                      ) : (
-                        <Badge variant="secondary">暂无动作</Badge>
-                      )}
-                    </TableCell>
-                  </TableRow>
+                  <Fragment key={group.key}>
+                    <TableRow className="bg-muted/40 hover:bg-muted/40">
+                      <TableCell colSpan={8}>
+                        <span className="font-semibold text-foreground">{group.name}</span>
+                        <span className="ml-2 text-xs text-muted-foreground">
+                          {group.members.length} 人 · 成交 {wonTotal} · 逾期 {overdueTotal}
+                        </span>
+                      </TableCell>
+                    </TableRow>
+                    {group.members.map((member) => (
+                      <MemberRow key={member.id} row={member} />
+                    ))}
+                  </Fragment>
                 )
               })
             )}
@@ -739,16 +810,12 @@ export function Dashboard() {
 
       {mode === "director" ? (
         <>
-          <FunnelCard activity={activity} summary={summary} />
-          <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.5fr_0.5fr]">
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+            <FunnelCard activity={activity} summary={summary} />
             <TeamTable teams={activity?.teams ?? []} />
-            <TrendChart activity={activity} />
           </div>
-          <CustomerDetailsTable
-            rows={activity?.customerDetails ?? []}
-            title="全员客户明细"
-            description="按当前时间范围汇总的客户与跟进明细。"
-          />
+          <TrendChart activity={activity} />
+          <DepartmentMemberTable users={activity?.users ?? []} teams={activity?.teams ?? []} />
         </>
       ) : mode === "manager" ? (
         <>
