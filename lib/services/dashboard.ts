@@ -37,6 +37,7 @@ export interface DashboardTrendPoint {
   newLeads: number
   contactActions: number
   visits: number
+  won: number
 }
 
 export interface DashboardAlert {
@@ -551,30 +552,14 @@ export async function fetchRoleDashboardActivity(
     })
   }
 
-  for (const lead of leads) {
-    const ownerKey = getLeadOwnerKey(lead)
-    if (ownerKey && !usersById.has(ownerKey)) {
-      usersById.set(ownerKey, {
-        id: ownerKey,
-        name: ownerKey.slice(0, 8),
-        avatarUrl: null,
-        teamId: lead.team_id ?? null,
-        newLeads: 0,
-        contactActions: 0,
-        visits: 0,
-        followUps: 0,
-        qualifiedLeads: 0,
-        wonLeads: 0,
-        overdueLeads: 0,
-      })
-    }
-  }
+  // 归属人不是在职成员的线索（如已离职/停用账号）不生成成员行；
+  // 其线索量仍计入部门与漏斗统计，账号停用后由迁移统一退回公海池。
 
   const trendMap = new Map<string, DashboardTrendPoint>()
   for (let i = 0; i < 7; i += 1) {
     const day = addDays(trendStart, i)
     const key = toDateKey(day)
-    trendMap.set(key, { date: key.slice(5), newLeads: 0, contactActions: 0, visits: 0 })
+    trendMap.set(key, { date: key.slice(5), newLeads: 0, contactActions: 0, visits: 0, won: 0 })
   }
 
   let periodNewLeads = 0
@@ -742,9 +727,12 @@ export async function fetchRoleDashboardActivity(
         const user = authorId ? usersById.get(authorId) : null
         const isContact = noteType === "call" || noteType === "wechat"
         const isVisit = noteType === "visit"
+        const isWonNote = noteType === "won"
         const noteLeadId = (note.lead_id as string | null) ?? null
         const leadForNote = noteLeadId ? leadById.get(noteLeadId) : null
         const detail = isInRange && leadForNote ? addCustomerDetail(leadForNote) : null
+
+        if (isWonNote && point) point.won += 1
 
         if (isContact) {
           if (point) point.contactActions += 1
