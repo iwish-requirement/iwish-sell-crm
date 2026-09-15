@@ -823,9 +823,9 @@ export function PublicPool() {
       try {
         const supabase = getBrowserSupabaseClient()
         const { data, error } = await supabase
-          .from("leads_secure_view")
+          .from("public_pool_secure_view")
           .select(
-            "id, name, website, stage, follow_up_stage, status, source, customer_name, customer_phone, wechat, product_category, budget, updated_at, created_by, team_id, owner_id",
+            "id, name, website, stage, follow_up_stage, status, source, customer_name, customer_phone, wechat, product_category, budget, updated_at, created_by, team_id, owner_id, pool_return_reason, pool_returned_at, pool_returned_by",
           )
 
           .eq("status", "pool")
@@ -892,9 +892,14 @@ export function PublicPool() {
 
             const leadId = row.id as string
             const reasonInfo = reasonsByLeadId[leadId]
+            // New rows read the metadata directly from the secure view. Keep
+            // the audit fallback for records created before this migration.
+            const returnedAtValue = (row.pool_returned_at as string | null) ?? reasonInfo?.returnedAt ?? null
+            const returnedByValue = (row.pool_returned_by as string | null) ?? reasonInfo?.returnedById ?? null
+            const returnReasonValue = (row.pool_return_reason as string | null) ?? reasonInfo?.reason ?? null
             const returnedAtDate =
-              reasonInfo?.returnedAt != null
-                ? new Date(reasonInfo.returnedAt)
+              returnedAtValue != null
+                ? new Date(returnedAtValue)
                 : row.updated_at
                   ? new Date(row.updated_at)
                   : null
@@ -924,13 +929,13 @@ export function PublicPool() {
                   ? `¥${Number(row.budget).toLocaleString("zh-CN")}`
                   : "待确认",
               lastStage: getPoolStageLabel(row.follow_up_stage, row.stage),
-              returnReason: reasonInfo?.reason ?? "退回原因未记录",
+              returnReason: returnReasonValue ?? "退回原因未记录",
               daysInPool,
               returnedAt:
                 returnedAtDate != null
                   ? returnedAtDate.toISOString().split("T")[0]
                   : "",
-              returnedById: reasonInfo?.returnedById ?? null,
+              returnedById: returnedByValue,
             }
           }) ?? []
 
@@ -1321,22 +1326,6 @@ export function PublicPool() {
           const friendly = mapRpcError(assignError, {
             title: "分配失败",
             description: "分配线索失败，请稍后重试",
-          })
-          toast.error(friendly.title, { description: friendly.description })
-          continue
-        }
-
-        const { error: updateError } = await supabase.rpc("rpc_lead_update", {
-          p_lead_id: leadId,
-          patch: {
-            status: "open",
-          },
-        })
-
-        if (updateError) {
-          const friendly = mapRpcError(updateError, {
-            title: "部分线索状态更新失败",
-            description: "更新线索状态失败，请稍后重试",
           })
           toast.error(friendly.title, { description: friendly.description })
           continue
@@ -2089,7 +2078,7 @@ const getDaysInPoolBadge = (days: number) => {
                     } else {
                       // 直接导出当前公海数据为 Excel（先导出为 CSV，后续可接第三方库生成 xlsx）
                       const { data, error: leadsError } = await supabase
-                        .from("leads_secure_view")
+                        .from("public_pool_secure_view")
                         .select(
                           "name, website, customer_name, customer_phone, source, product_category, budget, stage, status, responsibility_type, source_level1, source_level2, activity_name, referral_customer_name",
                         )
@@ -2189,7 +2178,7 @@ const getDaysInPoolBadge = (days: number) => {
                       toast.error(friendly.title, { description: friendly.description })
                     } else {
                       const { data, error: leadsError } = await supabase
-                        .from("leads_secure_view")
+                        .from("public_pool_secure_view")
                         .select(
                           "name, website, customer_name, customer_phone, wechat, source, product_category, budget, stage, status, responsibility_type, source_level1, source_level2",
                         )
@@ -2327,8 +2316,8 @@ const getDaysInPoolBadge = (days: number) => {
 
       {/* Table - responsive with horizontal scroll on mobile */}
       <Card className="border-muted-foreground/10">
-        <CardContent className="p-0 overflow-x-auto">
-          <Table>
+        <CardContent className="p-0">
+          <Table className="min-w-[1720px]">
             <TableHeader className="bg-muted/30">
               <TableRow className="hover:bg-transparent">
                 <TableHead className="w-[50px]">
@@ -2343,7 +2332,7 @@ const getDaysInPoolBadge = (days: number) => {
                 <TableHead className="min-w-[100px] font-bold text-foreground">最后阶段</TableHead>
                 <TableHead className="min-w-[120px] font-bold text-foreground">线索来源</TableHead>
                 <TableHead className="w-[200px] min-w-[180px] font-bold text-foreground">客户名称</TableHead>
-                <TableHead className="w-[260px] min-w-[200px] font-bold text-foreground">网址/品牌名</TableHead>
+                <TableHead className="w-[260px] min-w-[260px] font-bold text-foreground">网址/品牌名</TableHead>
                 <TableHead className="min-w-[80px] font-bold text-foreground">联系人</TableHead>
                 <TableHead className="min-w-[120px] font-bold text-foreground">电话</TableHead>
                 <TableHead className="min-w-[110px] font-bold text-foreground">微信号</TableHead>
@@ -2383,7 +2372,11 @@ const getDaysInPoolBadge = (days: number) => {
                     <Badge variant="outline" className="text-xs font-medium border-muted-foreground/20">{lead.source}</Badge>
                   </TableCell>
                   <TableCell className="font-bold text-sm text-foreground">{lead.company}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground max-w-[220px] break-all">{lead.website}</TableCell>
+                  <TableCell className="w-[260px] min-w-[260px] max-w-[260px] align-top !whitespace-normal">
+                    <div className="max-w-[244px] break-all whitespace-normal leading-5 text-xs text-muted-foreground">
+                      {lead.website || "-"}
+                    </div>
+                  </TableCell>
                   <TableCell className="text-sm font-medium">{lead.contact}</TableCell>
                   <TableCell className="font-mono text-sm font-medium text-foreground/80">{lead.phone}</TableCell>
                   <TableCell className="font-mono text-xs text-foreground/80">

@@ -10,6 +10,10 @@
 - Node.js：20 或更高版本
 - 包管理器：pnpm（按仓库 `pnpm-lock.yaml` 安装）
 
+当前 Cloudflare 账号里仍保留同名 Pages 项目并连接 GitHub，供历史预览/回滚使用；生产域名 `sell.iwishweb.com` 由上面的 Worker Custom Domain 接管。不要把 `iwish-sell-crm.pages.dev` 当作生产地址，也不要在 Worker 验证完成前直接断开 Pages 的 GitHub 连接，否则会失去现有预览和回滚入口。
+
+发布后请用 `https://sell.iwishweb.com/api/version` 验证版本接口返回 JSON。该接口已在中间件中加入公开路径，避免未登录请求被重定向到登录页，旧 Tab 才能正确提示刷新。
+
 项目根目录的 `wrangler.jsonc` 已声明 Worker 入口、静态资源目录和 `nodejs_compat`。Supabase 的 URL、匿名 key、服务端 key 以及其他运行时密钥请在 Cloudflare Worker 的 Variables and Secrets 中配置，不要提交到 Git。
 
 ## 成交中心灰度

@@ -19,12 +19,14 @@
   2. 在 **staging** 上执行迁移，并手动做一次完整自测（认证、线索、公海、分析、设置、审计）；
   3. 在 **prod** 上执行迁移后，立刻跑一遍 e2e 核心用例（见下文 Playwright 部分）。
 
+本次需求对应 `20260914000113_lead_pool_return_and_batch.sql` 与 `20260914000114_profile_team_memberships.sql`，必须先在 Supabase 生产库执行这两份迁移，再发布 Worker 前端代码。
+
 ---
 
 ### 2. 关键数据表与安全边界
 
 **核心业务表：**
-- `profiles` / `profiles_public`：用户资料表（含团队、角色、状态）与公开下拉用表；
+- `profiles` / `profiles_public` / `profile_team_memberships`：用户资料表（含主团队、角色、状态）、公开下拉用表与多团队成员关系；
 - `leads` / `leads_secure_view`：线索原表与安全视图（所有前端读取线索必须经由视图）；
 - `lead_notes`：跟进记录；
 - `lead_import_jobs` / `lead_export_jobs`：导入/导出任务；
@@ -135,7 +137,7 @@
 - 用户看不到某些线索/公海/报表数据：
   1. 检查其角色的 `scope_type`（self/team/org/custom）；
   2. 检查是否有用户级覆盖权限（user_permissions）；
-  3. 确认其团队归属是否正确（profiles.team_id）。
+  3. 确认其主团队归属是否正确（`profiles.team_id`），以及多团队关系是否存在于 `profile_team_memberships`。
 
 **导入/导出问题：**
 - 导入失败或数据不完整：

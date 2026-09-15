@@ -2130,15 +2130,14 @@ function OrganizationTab() {
         const teamsData = (teamsResult.data ?? []) as any[]
         const rolesData = (rolesResult.data ?? []) as any[]
         const profilesPublicData = (profilesPublicResult.data ?? []) as any[]
-        const membershipsData = (membershipsResult.data ?? []) as any[]
-        const membershipsByProfile = new Map<string, number[]>()
-        for (const membership of membershipsData) {
-          const profileId = membership.profile_id as string | null
-          const teamId = membership.team_id as number | null
-          if (!profileId || teamId == null) continue
-          const current = membershipsByProfile.get(profileId) ?? []
+        const membershipTeamIds = new Map<string, number[]>()
+        for (const membership of (membershipsResult.data ?? []) as any[]) {
+          const profileId = membership.profile_id as string
+          const teamId = Number(membership.team_id)
+          if (!profileId || !Number.isFinite(teamId)) continue
+          const current = membershipTeamIds.get(profileId) ?? []
           if (!current.includes(teamId)) current.push(teamId)
-          membershipsByProfile.set(profileId, current)
+          membershipTeamIds.set(profileId, current)
         }
 
         const allMembersFromProfiles: TeamMember[] = []
@@ -2210,18 +2209,15 @@ function OrganizationTab() {
             continue
           }
 
-          const teamIds = membershipsByProfile.get(profileId) ?? []
-          const legacyTeamId = profile.team_id as number | null
-          if (legacyTeamId != null && !teamIds.includes(legacyTeamId)) teamIds.push(legacyTeamId)
+          const primaryTeamId = profile.team_id as number | null
+          const teamIds = Array.from(new Set([...(membershipTeamIds.get(profileId) ?? []), ...(primaryTeamId ? [primaryTeamId] : [])]))
+          if (teamIds.length === 0) {
+            continue
+          }
           for (const teamId of teamIds) {
             const team = teamsMap.get(teamId)
             if (!team) continue
-            const member: TeamMember = {
-              ...memberBase,
-              id: nextMemberId++,
-              status: status === "disabled" ? "disabled" : "active",
-            }
-            team.members.push(member)
+            team.members.push({ ...memberBase, id: nextMemberId++, status: status === "disabled" ? "disabled" : "active" })
           }
         }
 
@@ -2970,7 +2966,7 @@ function OrganizationTab() {
                     <DialogContent>
                       <DialogHeader>
                         <DialogTitle>添加成员</DialogTitle>
-                        <DialogDescription>选择要添加到 {selectedTeam?.name} 的成员</DialogDescription>
+                        <DialogDescription>选择要添加到 {selectedTeam?.name} 的成员；成员可以同时属于多个团队</DialogDescription>
                       </DialogHeader>
                       <div className="py-4 space-y-3">
                         {allMembers.map((user) => (

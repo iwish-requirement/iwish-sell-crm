@@ -175,6 +175,26 @@ export function mapRpcError(
       }
     }
 
+    if (code === "pool_return_reason_required") {
+      return {
+        kind: "validation",
+        title: "请填写退回原因",
+        description: "退回公海必须填写原因，方便后续复盘和重新认领。",
+        canRetry: false,
+        rawMessage,
+      }
+    }
+
+    if (code === "lead_ids_required") {
+      return {
+        kind: "validation",
+        title: "请选择线索",
+        description: "至少选择一条线索后才能执行批量操作。",
+        canRetry: false,
+        rawMessage,
+      }
+    }
+
     if (code === "secondary_source_required_for_company_resource") {
       return {
         kind: "validation",
