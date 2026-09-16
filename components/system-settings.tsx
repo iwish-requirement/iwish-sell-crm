@@ -1078,6 +1078,12 @@ function BusinessRulesTab() {
           <div className="space-y-6">
             <AnalyticsExclusionSettingsCard />
             <AnalyticsExcludedTeamsSettingsCard />
+            <AnalyticsExcludedTeamsSettingsCard
+              storageKey="gm_dashboard.excluded_teams"
+              title="总经理仪表盘排除团队"
+              description="配置哪些团队不计入业务总经理仪表盘的统计（该团队将从销售漏斗、部门数据对比和成员明细中整体隐藏）。"
+              saveSuccessMessage="总经理仪表盘排除配置已保存"
+            />
           </div>
         </TabsContent>
       </Tabs>
@@ -1838,7 +1844,17 @@ function LeadLockAndProtectionSettingsCard() {
   )
 }
 
-function AnalyticsExcludedTeamsSettingsCard() {
+function AnalyticsExcludedTeamsSettingsCard({
+  storageKey = "analytics.excluded_teams",
+  title = "统计排除团队",
+  description = "配置哪些团队不参与数据分析中的团队筛选和业绩统计，适用于“系统管理”“技术维护”等运维团队。",
+  saveSuccessMessage = "排除团队配置已保存",
+}: {
+  storageKey?: string
+  title?: string
+  description?: string
+  saveSuccessMessage?: string
+}) {
   const [teams, setTeams] = useState<{ id: number; name: string }[]>([])
   const [search, setSearch] = useState("")
   const [excludedTeamIds, setExcludedTeamIds] = useState<number[]>([])
@@ -1858,7 +1874,7 @@ function AnalyticsExcludedTeamsSettingsCard() {
           supabase
             .from("settings")
             .select("value")
-            .eq("key", "analytics.excluded_teams")
+            .eq("key", storageKey)
             .maybeSingle(),
         ])
 
@@ -1919,7 +1935,7 @@ function AnalyticsExcludedTeamsSettingsCard() {
         .from("settings")
         .upsert(
           {
-            key: "analytics.excluded_teams",
+            key: storageKey,
             value: {
               team_ids: excludedTeamIds,
             },
@@ -1943,7 +1959,7 @@ function AnalyticsExcludedTeamsSettingsCard() {
         return
       }
 
-      toast.success("排除团队配置已保存")
+      toast.success(saveSuccessMessage)
     } catch (error) {
       console.error("Unexpected error while saving analytics excluded teams settings", error)
       toast.error("保存失败", { description: "保存统计排除配置时发生异常，请稍后重试或联系管理员" })
@@ -1964,10 +1980,8 @@ function AnalyticsExcludedTeamsSettingsCard() {
   return (
     <Card className="max-w-2xl">
       <CardHeader>
-        <CardTitle className="text-xl font-bold text-foreground">统计排除团队</CardTitle>
-        <CardDescription className="text-sm">
-          配置哪些团队不参与数据分析中的团队筛选和业绩统计，适用于“系统管理”“技术维护”等运维团队。
-        </CardDescription>
+        <CardTitle className="text-xl font-bold text-foreground">{title}</CardTitle>
+        <CardDescription className="text-sm">{description}</CardDescription>
         {loadError && <p className="mt-2 text-sm text-destructive/80">{loadError}</p>}
       </CardHeader>
       <CardContent className="space-y-4">

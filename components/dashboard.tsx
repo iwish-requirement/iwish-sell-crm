@@ -360,18 +360,33 @@ function DepartmentMemberTable({
   teams: TeamActivityRow[]
   quotaLimit: number
 }) {
-  const groups: { key: string; name: string; members: DailyActivityUserRow[]; team: TeamActivityRow | null }[] = []
+  const groups: {
+    key: string
+    name: string
+    team: TeamActivityRow | null
+    rows: { user: DailyActivityUserRow; isAdditional: boolean }[]
+  }[] = []
+  const teamNameById = new Map<number, string>(teams.map((team) => [team.teamId as number, team.teamName]))
   for (const team of teams) {
-    const members = users.filter((user) => user.teamId === team.teamId)
-    if (members.length > 0) {
-      groups.push({ key: `team-${team.teamId}`, name: team.teamName, members, team })
+    const rows: { user: DailyActivityUserRow; isAdditional: boolean }[] = []
+    for (const user of users) {
+      if (user.teamId === team.teamId) rows.push({ user, isAdditional: false })
+      else if ((user.additionalTeamIds ?? []).includes(team.teamId as number))
+        rows.push({ user, isAdditional: true })
+    }
+    if (rows.length > 0) {
+      groups.push({ key: `team-${team.teamId}`, name: team.teamName, team, rows })
     }
   }
-  const unassigned = users.filter(
-    (user) => user.teamId == null || !teams.some((team) => team.teamId === user.teamId),
-  )
+  const groupedIds = new Set(groups.flatMap((group) => group.rows.map((row) => row.user.id)))
+  const unassigned = users.filter((user) => !groupedIds.has(user.id))
   if (unassigned.length > 0) {
-    groups.push({ key: "unassigned", name: "未分配团队", members: unassigned, team: null })
+    groups.push({
+      key: "unassigned",
+      name: "未分配团队",
+      team: null,
+      rows: unassigned.map((user) => ({ user, isAdditional: false })),
+    })
   }
 
   const stageCellClass = (stageId: string) =>
@@ -382,7 +397,7 @@ function DepartmentMemberTable({
       <CardHeader className="border-b border-muted/30">
         <CardTitle className="text-lg">部门成员明细</CardTitle>
         <CardDescription>
-          按部门展示各成员的在管名额与线索阶段分布，口径与上方部门数据对比一致。
+          按部门展示各成员的在管名额与线索阶段分布，口径与上方部门数据对比一致。附加团队成员仅作查看，其数据计入主团队。
         </CardDescription>
       </CardHeader>
       <CardContent className="max-h-[560px] overflow-auto p-0">
@@ -416,25 +431,26 @@ function DepartmentMemberTable({
               </TableRow>
             ) : (
               groups.map((group) => {
+                const primaryRows = group.rows.filter((row) => !row.isAdditional)
                 const stageTotal = (stageId: string) =>
                   group.team
                     ? group.team.stageCounts[stageId] ?? 0
-                    : group.members.reduce((sum, m) => sum + (m.stageCounts[stageId] ?? 0), 0)
+                    : primaryRows.reduce((sum, r) => sum + (r.user.stageCounts[stageId] ?? 0), 0)
                 const newTotal = group.team
                   ? group.team.newLeads
-                  : group.members.reduce((sum, m) => sum + m.newLeads, 0)
-                const overdueTotal = group.members.reduce((sum, m) => sum + m.overdueLeads, 0)
+                  : primaryRows.reduce((sum, r) => sum + r.user.newLeads, 0)
+                const overdueTotal = primaryRows.reduce((sum, r) => sum + r.user.overdueLeads, 0)
                 const activeTotal = group.team
                   ? group.team.activeLeads
-                  : group.members.reduce((sum, m) => sum + m.activeLeads, 0)
-                const memberQuota = quotaLimit * group.members.length
+                  : primaryRows.reduce((sum, r) => sum + r.user.activeLeads, 0)
+                const memberQuota = quotaLimit * primaryRows.length
                 return (
                   <Fragment key={group.key}>
                     <TableRow className="bg-muted/40 hover:bg-muted/40">
                       <TableCell colSpan={13}>
                         <span className="font-semibold text-foreground">{group.name}（总计）</span>
                         <span className="ml-2 text-xs tabular-nums text-muted-foreground">
-                          {group.members.length} 人 · 在管 {activeTotal}
+                          {primaryRows.length} 人 · 在管 {activeTotal}
                           {quotaLimit > 0
                             ? `/${memberQuota} · 名额占用 ${Math.round((activeTotal / memberQuota) * 100)}%`
                             : ""}
@@ -451,21 +467,31 @@ function DepartmentMemberTable({
                         </span>
                       </TableCell>
                     </TableRow>
-                    {group.members.map((member) => {
+                    {group.rows.map(({ user: member, isAdditional }) => {
                       const quotaRatio = quotaLimit > 0 ? member.activeLeads / quotaLimit : 0
+                      const primaryTeamName = isAdditional
+                        ? teamNameById.get(member.teamId as number) ?? "主团队"
+                        : null
                       return (
                         <TableRow key={member.id}>
                           <TableCell>
-                            <div className="flex items-center gap-3">
-                              <Avatar className="h-8 w-8">
-                                {member.avatarUrl ? (
-                                  <AvatarImage src={member.avatarUrl} alt={member.name} />
-                                ) : null}
-                                <AvatarFallback className="text-xs font-semibold">
-                                  {member.name.trim().slice(0, 1) || "?"}
-                                </AvatarFallback>
-                              </Avatar>
-                              <span className="font-semibold">{member.name}</span>
+                            <div className="flex flex-col gap-0.5">
+                              <div className="flex items-center gap-3">
+                                <Avatar className="h-8 w-8">
+                                  {member.avatarUrl ? (
+                                    <AvatarImage src={member.avatarUrl} alt={member.name} />
+                                  ) : null}
+                                  <AvatarFallback className="text-xs font-semibold">
+                                    {member.name.trim().slice(0, 1) || "?"}
+                                  </AvatarFallback>
+                                </Avatar>
+                                <span className={isAdditional ? "font-medium" : "font-semibold"}>{member.name}</span>
+                              </div>
+                              {isAdditional && primaryTeamName ? (
+                                <span className="text-[11px] text-muted-foreground">
+                                  附加成员 · 数据计入主团队「{primaryTeamName}」
+                                </span>
+                              ) : null}
                             </div>
                           </TableCell>
                           <TableCell className={`text-right tabular-nums ${quotaCellClass(quotaRatio)}`}>
