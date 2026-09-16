@@ -256,8 +256,15 @@ function TimeRangeControls({
   )
 }
 
-function MemberRow({ row }: { row: DailyActivityUserRow }) {
+function quotaCellClass(ratio: number): string {
+  if (ratio >= 1) return "font-semibold text-red-600"
+  if (ratio >= 0.8) return "font-semibold text-amber-600"
+  return "font-medium"
+}
+
+function MemberRow({ row, quotaLimit }: { row: DailyActivityUserRow; quotaLimit: number }) {
   const actionTotal = row.newLeads + row.contactActions + row.visits + row.followUps
+  const quotaRatio = quotaLimit > 0 ? row.activeLeads / quotaLimit : 0
   return (
     <TableRow>
       <TableCell>
@@ -270,6 +277,9 @@ function MemberRow({ row }: { row: DailyActivityUserRow }) {
           </Avatar>
           <span className="font-semibold">{row.name}</span>
         </div>
+      </TableCell>
+      <TableCell className={`text-right tabular-nums ${quotaCellClass(quotaRatio)}`}>
+        {row.activeLeads}/{quotaLimit}
       </TableCell>
       <TableCell className="text-right font-medium">{row.newLeads}</TableCell>
       <TableCell className="text-right font-medium">{row.contactActions}</TableCell>
@@ -294,6 +304,9 @@ const MEMBER_TABLE_HEADERS = (
   <TableHeader className="sticky top-0 z-10 bg-background">
     <TableRow>
       <TableHead className="min-w-[160px]">业务人员</TableHead>
+      <TableHead className="text-right" title="在管有效线索 / 配额上限">
+        在管/名额
+      </TableHead>
       <TableHead className="text-right">新增线索</TableHead>
       <TableHead className="text-right">建联</TableHead>
       <TableHead className="text-right">拜访</TableHead>
@@ -305,12 +318,18 @@ const MEMBER_TABLE_HEADERS = (
   </TableHeader>
 )
 
-function ActivityTable({ users }: { users: DailyActivityUserRow[] }) {
+function ActivityTable({
+  users,
+  quotaLimit,
+}: {
+  users: DailyActivityUserRow[]
+  quotaLimit: number
+}) {
   return (
     <Card className="border-muted-foreground/10 shadow-sm">
       <CardHeader className="border-b border-muted/30">
         <CardTitle className="text-lg">团队成员动作对比</CardTitle>
-        <CardDescription>按人员聚合线索录入、建联、拜访、跟进和逾期情况。</CardDescription>
+        <CardDescription>按人员聚合在管名额、线索录入、建联、拜访、跟进和逾期情况。</CardDescription>
       </CardHeader>
       <CardContent className="max-h-[460px] overflow-auto p-0">
         <Table>
@@ -318,12 +337,12 @@ function ActivityTable({ users }: { users: DailyActivityUserRow[] }) {
           <TableBody>
             {users.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={9} className="py-8 text-center text-sm text-muted-foreground">
                   暂无可统计的业务人员数据
                 </TableCell>
               </TableRow>
             ) : (
-              users.map((row) => <MemberRow key={row.id} row={row} />)
+              users.map((row) => <MemberRow key={row.id} row={row} quotaLimit={quotaLimit} />)
             )}
           </TableBody>
         </Table>
@@ -335,9 +354,11 @@ function ActivityTable({ users }: { users: DailyActivityUserRow[] }) {
 function DepartmentMemberTable({
   users,
   teams,
+  quotaLimit,
 }: {
   users: DailyActivityUserRow[]
   teams: TeamActivityRow[]
+  quotaLimit: number
 }) {
   const groups: { key: string; name: string; members: DailyActivityUserRow[]; team: TeamActivityRow | null }[] = []
   for (const team of teams) {
@@ -353,39 +374,118 @@ function DepartmentMemberTable({
     groups.push({ key: "unassigned", name: "未分配团队", members: unassigned, team: null })
   }
 
+  const stageCellClass = (stageId: string) =>
+    KEY_STAGE_IDS.has(stageId) ? "bg-amber-50/70 font-semibold text-amber-700" : "font-medium"
+
   return (
     <Card className="border-muted-foreground/10 shadow-sm">
       <CardHeader className="border-b border-muted/30">
         <CardTitle className="text-lg">部门成员明细</CardTitle>
-        <CardDescription>按部门展示各成员的线索与跟进数据。</CardDescription>
+        <CardDescription>
+          按部门展示各成员的在管名额与线索阶段分布，口径与上方部门数据对比一致。
+        </CardDescription>
       </CardHeader>
       <CardContent className="max-h-[560px] overflow-auto p-0">
-        <Table>
-          {MEMBER_TABLE_HEADERS}
+        <Table className="min-w-[1100px]">
+          <TableHeader className="sticky top-0 z-10 bg-background">
+            <TableRow>
+              <TableHead className="min-w-[120px]">业务人员</TableHead>
+              <TableHead className="text-right" title="在管有效线索 / 配额上限">
+                在管/名额
+              </TableHead>
+              <TableHead className="text-right whitespace-nowrap">本时段新增</TableHead>
+              {FOLLOW_UP_STAGE_FLOW.map((stage) => (
+                <TableHead
+                  key={stage.id}
+                  className={`whitespace-nowrap text-right ${
+                    KEY_STAGE_IDS.has(stage.id) ? "font-semibold text-amber-600" : ""
+                  }`}
+                >
+                  {stage.label}
+                </TableHead>
+              ))}
+              <TableHead className="text-right">逾期</TableHead>
+            </TableRow>
+          </TableHeader>
           <TableBody>
             {groups.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={13} className="py-8 text-center text-sm text-muted-foreground">
                   暂无可统计的业务人员数据
                 </TableCell>
               </TableRow>
             ) : (
               groups.map((group) => {
-                const wonTotal = group.team?.wonLeads ?? group.members.reduce((sum, m) => sum + m.wonLeads, 0)
+                const stageTotal = (stageId: string) =>
+                  group.team
+                    ? group.team.stageCounts[stageId] ?? 0
+                    : group.members.reduce((sum, m) => sum + (m.stageCounts[stageId] ?? 0), 0)
+                const newTotal = group.team
+                  ? group.team.newLeads
+                  : group.members.reduce((sum, m) => sum + m.newLeads, 0)
                 const overdueTotal = group.members.reduce((sum, m) => sum + m.overdueLeads, 0)
+                const activeTotal = group.team
+                  ? group.team.activeLeads
+                  : group.members.reduce((sum, m) => sum + m.activeLeads, 0)
+                const memberQuota = quotaLimit * group.members.length
                 return (
                   <Fragment key={group.key}>
                     <TableRow className="bg-muted/40 hover:bg-muted/40">
-                      <TableCell colSpan={8}>
-                        <span className="font-semibold text-foreground">{group.name}</span>
-                        <span className="ml-2 text-xs text-muted-foreground">
-                          {group.members.length} 人 · 成交 {wonTotal} · 逾期 {overdueTotal}
+                      <TableCell colSpan={13}>
+                        <span className="font-semibold text-foreground">{group.name}（总计）</span>
+                        <span className="ml-2 text-xs tabular-nums text-muted-foreground">
+                          {group.members.length} 人 · 在管 {activeTotal}
+                          {quotaLimit > 0
+                            ? `/${memberQuota} · 名额占用 ${Math.round((activeTotal / memberQuota) * 100)}%`
+                            : ""}
+                          {" · 本时段新增 "}
+                          {newTotal}
+                          {" · 线下拜访 "}
+                          {stageTotal("offline_visit")}
+                          {" · 方案及报价 "}
+                          {stageTotal("proposal_quotation")}
+                          {" · 成交 "}
+                          {stageTotal("won")}
+                          {" · 逾期 "}
+                          {overdueTotal}
                         </span>
                       </TableCell>
                     </TableRow>
-                    {group.members.map((member) => (
-                      <MemberRow key={member.id} row={member} />
-                    ))}
+                    {group.members.map((member) => {
+                      const quotaRatio = quotaLimit > 0 ? member.activeLeads / quotaLimit : 0
+                      return (
+                        <TableRow key={member.id}>
+                          <TableCell>
+                            <div className="flex items-center gap-3">
+                              <Avatar className="h-8 w-8">
+                                {member.avatarUrl ? (
+                                  <AvatarImage src={member.avatarUrl} alt={member.name} />
+                                ) : null}
+                                <AvatarFallback className="text-xs font-semibold">
+                                  {member.name.trim().slice(0, 1) || "?"}
+                                </AvatarFallback>
+                              </Avatar>
+                              <span className="font-semibold">{member.name}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell className={`text-right tabular-nums ${quotaCellClass(quotaRatio)}`}>
+                            {member.activeLeads}/{quotaLimit}
+                          </TableCell>
+                          <TableCell className="text-right font-medium tabular-nums">{member.newLeads}</TableCell>
+                          {FOLLOW_UP_STAGE_FLOW.map((stage) => (
+                            <TableCell
+                              key={stage.id}
+                              className={`text-right tabular-nums ${stageCellClass(stage.id)}`}
+                            >
+                              {member.stageCounts[stage.id] ?? 0}
+                            </TableCell>
+                          ))}
+                          <TableCell className="text-right font-medium text-red-600">
+                            {member.overdueLeads}
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
                   </Fragment>
                 )
               })
@@ -890,13 +990,17 @@ export function Dashboard() {
             <TeamTable teams={activity?.teams ?? []} />
           </div>
           <TrendChart activity={activity} />
-          <DepartmentMemberTable users={activity?.users ?? []} teams={activity?.teams ?? []} />
+          <DepartmentMemberTable
+            users={activity?.users ?? []}
+            teams={activity?.teams ?? []}
+            quotaLimit={activity?.quotaLimit ?? 60}
+          />
         </>
       ) : mode === "manager" ? (
         <>
           <FunnelCard activity={activity} summary={summary} allTime={timePreset === "all"} />
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.45fr_0.55fr]">
-            <ActivityTable users={activity?.users ?? []} />
+            <ActivityTable users={activity?.users ?? []} quotaLimit={activity?.quotaLimit ?? 60} />
             <AlertsPanel alerts={activity?.alerts ?? []} />
           </div>
           <CustomerDetailsTable rows={activity?.customerDetails ?? []} />

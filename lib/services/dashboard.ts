@@ -25,6 +25,10 @@ export interface DailyActivityUserRow {
   name: string
   avatarUrl: string | null
   teamId: number | null
+  // 在管有效线索数：open、非无效、非成交/到款终态（即占用配额的线索）
+  activeLeads: number
+  // 本时段新增线索的阶段分布（key 为 FOLLOW_UP_STAGE_FLOW 的 stageId），与部门对比同口径
+  stageCounts: Record<string, number>
   newLeads: number
   contactActions: number
   visits: number
@@ -114,6 +118,8 @@ export interface RoleDashboardActivity {
   alerts: DashboardAlert[]
   customerDetails: DashboardCustomerDetailRow[]
   stageFunnel: FollowUpFunnelBand[]
+  // 单人有效线索配额上限（来自系统设置，默认 60）
+  quotaLimit: number
 }
 
 export interface RecentDealSummary {
@@ -548,6 +554,8 @@ export async function fetchRoleDashboardActivity(
       name: (row.full_name as string | null) || id.slice(0, 8),
       avatarUrl: (row.avatar_url as string | null) ?? null,
       teamId,
+      activeLeads: 0,
+      stageCounts: {} as Record<string, number>,
       newLeads: 0,
       contactActions: 0,
       visits: 0,
@@ -669,10 +677,14 @@ export async function fetchRoleDashboardActivity(
     }
 
     // 阶段分布按所选时段内新增的线索统计（当前所处阶段）；
-    // 全部时间（或覆盖全部时间的范围）时即为全量快照
+    // 全部时间（或覆盖全部时间的范围）时即为全量快照。
+    // 同时按负责人累计成员级阶段分布，供部门成员明细与部门对比对齐展示
     if (!isInvalid && createdAt && createdAt >= rangeStart && createdAt < rangeEnd) {
       const stageKey = followUpStage || "uncontacted"
       stageCounts.set(stageKey, (stageCounts.get(stageKey) ?? 0) + 1)
+      if (user) {
+        user.stageCounts[stageKey] = (user.stageCounts[stageKey] ?? 0) + 1
+      }
     }
 
     if (teamKey != null) {
@@ -690,6 +702,7 @@ export async function fetchRoleDashboardActivity(
     }
 
     if (status === "open" && !isInvalid && !terminal) {
+      user && (user.activeLeads += 1)
       const isDueInRange = nextContactAt && nextContactAt >= rangeStart && nextContactAt < rangeEnd
       const isNextContactOverdue = nextContactAt && nextContactAt < now
       const isRiskByAge =
@@ -890,5 +903,6 @@ export async function fetchRoleDashboardActivity(
       })
       .slice(0, 50),
     stageFunnel,
+    quotaLimit,
   }
 }
