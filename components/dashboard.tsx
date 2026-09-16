@@ -575,6 +575,41 @@ function AlertsPanel({ alerts }: { alerts: DashboardAlert[] }) {
   )
 }
 
+function ProcessOverviewCard({ activity }: { activity: RoleDashboardActivity | null }) {
+  const items = [
+    { label: "新增线索", value: activity?.totals.newLeads ?? 0, icon: UserPlus, tone: "text-blue-600 bg-blue-50" },
+    { label: "建联", value: activity?.totals.contactActions ?? 0, icon: PhoneCall, tone: "text-cyan-600 bg-cyan-50" },
+    { label: "拜访", value: activity?.totals.visits ?? 0, icon: Users, tone: "text-violet-600 bg-violet-50" },
+    { label: "跟进", value: activity?.totals.followUps ?? 0, icon: MessageCircle, tone: "text-amber-600 bg-amber-50" },
+  ]
+  return (
+    <Card className="border-muted-foreground/10 shadow-sm">
+      <CardHeader className="border-b border-muted/30">
+        <CardTitle className="text-lg">过程数据</CardTitle>
+        <CardDescription>统计范围内全公司的关键销售动作。</CardDescription>
+      </CardHeader>
+      <CardContent className="pt-5">
+        <div className="grid grid-cols-2 gap-4">
+          {items.map((item) => {
+            const Icon = item.icon
+            return (
+              <div key={item.label} className="flex items-start justify-between gap-3 rounded-lg border border-muted/60 p-3">
+                <div>
+                  <p className="text-3xl font-bold tracking-tight tabular-nums">{formatNumber(item.value)}</p>
+                  <p className="mt-1 text-sm font-semibold text-foreground">{item.label}</p>
+                </div>
+                <div className={`rounded-lg p-2 ${item.tone}`}>
+                  <Icon className="h-4 w-4" />
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 function TrendChart({ activity }: { activity: RoleDashboardActivity | null }) {
   const trendDays = activity?.trends.length ?? 7
   // 点位较少时直接在图上标注数值，总经理无需悬停即可读数
@@ -606,15 +641,15 @@ function TrendChart({ activity }: { activity: RoleDashboardActivity | null }) {
           </div>
         </div>
       </CardHeader>
-      <CardContent className="pt-6">
-        <div className="h-[260px]">
+      <CardContent className="pt-4">
+        <div className="h-[160px]">
           {!activity || activity.trends.length === 0 ? (
             <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
               暂无趋势数据
             </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={activity.trends} margin={{ top: 20, right: 24, left: -10, bottom: 0 }}>
+              <LineChart data={activity.trends} margin={{ top: 22, right: 24, left: -10, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} strokeOpacity={0.4} />
                 <XAxis dataKey="date" tick={{ fontSize: 12 }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fontSize: 12 }} axisLine={false} tickLine={false} allowDecimals={false} />
@@ -633,7 +668,7 @@ function TrendChart({ activity }: { activity: RoleDashboardActivity | null }) {
                   strokeWidth={2.5}
                   dot={{ r: 3 }}
                   activeDot={{ r: 5 }}
-                  label={showLabels ? { position: "top", fontSize: 13, fill: "#2563eb" } : undefined}
+                  label={showLabels ? { position: "top", fontSize: 14, fill: "#2563eb" } : undefined}
                 />
                 <Line
                   type="monotone"
@@ -643,7 +678,7 @@ function TrendChart({ activity }: { activity: RoleDashboardActivity | null }) {
                   strokeWidth={2.5}
                   dot={{ r: 3 }}
                   activeDot={{ r: 5 }}
-                  label={showLabels ? { position: "bottom", fontSize: 13, fill: "#16a34a" } : undefined}
+                  label={showLabels ? { position: "bottom", fontSize: 14, fill: "#16a34a" } : undefined}
                 />
               </LineChart>
             </ResponsiveContainer>
@@ -860,7 +895,10 @@ export function Dashboard() {
             <FunnelCard activity={activity} summary={summary} />
             <TeamTable teams={activity?.teams ?? []} />
           </div>
-          <TrendChart activity={activity} />
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-[0.8fr_1.2fr]">
+            <ProcessOverviewCard activity={activity} />
+            <TrendChart activity={activity} />
+          </div>
           <DepartmentMemberTable users={activity?.users ?? []} teams={activity?.teams ?? []} />
         </>
       ) : mode === "manager" ? (
