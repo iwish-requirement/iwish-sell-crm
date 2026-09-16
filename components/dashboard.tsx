@@ -406,6 +406,7 @@ function TeamTable({ teams }: { teams: TeamActivityRow[] }) {
             <TableRow>
               <TableHead className="min-w-[92px]">部门</TableHead>
               <TableHead className="text-right">成员</TableHead>
+              <TableHead className="text-right">本时段新增</TableHead>
               {FOLLOW_UP_STAGE_FLOW.map((stage) => (
                 <TableHead
                   key={stage.id}
@@ -421,7 +422,7 @@ function TeamTable({ teams }: { teams: TeamActivityRow[] }) {
           <TableBody>
             {teams.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={11} className="py-8 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={12} className="py-8 text-center text-sm text-muted-foreground">
                   暂无可统计的部门数据
                 </TableCell>
               </TableRow>
@@ -430,6 +431,7 @@ function TeamTable({ teams }: { teams: TeamActivityRow[] }) {
                 <TableRow key={team.teamId ?? team.teamName}>
                   <TableCell className="font-semibold">{team.teamName}</TableCell>
                   <TableCell className="text-right font-medium">{team.memberCount}</TableCell>
+                  <TableCell className="text-right font-medium">{team.newLeads}</TableCell>
                   {FOLLOW_UP_STAGE_FLOW.map((stage) => {
                     const isKey = KEY_STAGE_IDS.has(stage.id)
                     const count = team.stageCounts[stage.id] ?? 0
@@ -679,9 +681,7 @@ function FunnelCard({
 }) {
   const bands = activity?.stageFunnel ?? []
   const total = bands.reduce((sum, band) => sum + band.count, 0)
-  const wonCount = bands.find((band) => band.stageId === "won")?.count ?? 0
   const paymentCount = bands.find((band) => band.stageId === "payment_received")?.count ?? 0
-  const paymentRate = wonCount > 0 ? `${((paymentCount / wonCount) * 100).toFixed(1)}%` : "—"
 
   return (
     <Card className="border-muted-foreground/10 shadow-sm">
@@ -692,9 +692,9 @@ function FunnelCard({
             <CardDescription>按当前跟进阶段的线索分布（不含公海与无效线索）。</CardDescription>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="outline">成交 {formatNumber(wonCount)}</Badge>
-            <Badge variant="outline">到款 {formatNumber(paymentCount)}</Badge>
-            <Badge variant="outline">到款率 {paymentRate}</Badge>
+            <Badge variant="outline">本时段新增 {formatNumber(activity?.totals.newLeads ?? 0)}</Badge>
+            <Badge variant="outline">本时段成交 {formatNumber(activity?.totals.wonInRange ?? 0)}</Badge>
+            <Badge variant="outline">到款阶段 {formatNumber(paymentCount)}</Badge>
             <Badge variant="outline">本月回款 {formatCurrency(summary?.monthlyRevenue ?? 0)}</Badge>
           </div>
         </div>
