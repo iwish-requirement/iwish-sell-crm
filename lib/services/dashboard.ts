@@ -16,6 +16,8 @@ export interface DashboardFilterParams {
 export interface DashboardActivityFilterParams extends DashboardFilterParams {
   startDate?: string
   endDate?: string
+  // 全部时间：阶段分布等按全量线索统计，dateLabel 显示"全部"
+  allTime?: boolean
 }
 
 export interface DailyActivityUserRow {
@@ -431,7 +433,8 @@ export async function fetchRoleDashboardActivity(
 ): Promise<RoleDashboardActivity> {
   const supabase = getBrowserSupabaseClient()
   const now = new Date()
-  const { rangeStart, rangeEnd, trendStart, dateLabel } = getDateRange(params)
+  const { rangeStart, rangeEnd, trendStart, dateLabel: autoLabel } = getDateRange(params)
+  const dateLabel = params.allTime ? "全部" : autoLabel
 
   const [
     { data: teamExclusionRow, error: teamExclusionError },
@@ -665,7 +668,9 @@ export async function fetchRoleDashboardActivity(
       user && (user.wonLeads += 1)
     }
 
-    if (!isInvalid) {
+    // 阶段分布按所选时段内新增的线索统计（当前所处阶段）；
+    // 全部时间（或覆盖全部时间的范围）时即为全量快照
+    if (!isInvalid && createdAt && createdAt >= rangeStart && createdAt < rangeEnd) {
       const stageKey = followUpStage || "uncontacted"
       stageCounts.set(stageKey, (stageCounts.get(stageKey) ?? 0) + 1)
     }
@@ -677,7 +682,7 @@ export async function fetchRoleDashboardActivity(
       if (!isInvalid && !terminal && status === "open") stock.activeLeads += 1
       if (isWonLead(lead)) stock.wonLeads += 1
       if (followUpStage === "payment_received") stock.paymentReceived += 1
-      if (!isInvalid) {
+      if (!isInvalid && createdAt && createdAt >= rangeStart && createdAt < rangeEnd) {
         const stageKey = followUpStage || "uncontacted"
         stock.stageCounts[stageKey] = (stock.stageCounts[stageKey] ?? 0) + 1
       }
