@@ -39,6 +39,7 @@ type Allocation = {
   last_synced_at?: string | null
   sync_error?: string | null
   idempotency_key?: string | null
+  confirmed_at?: string | null
 }
 type Person = { id: string; full_name: string }
 
@@ -71,6 +72,7 @@ export function AllocationCenter() {
   const [teams, setTeams] = useState<{ id: number; name: string }[]>([])
   const [people, setPeople] = useState<Person[]>([])
   const [loading, setLoading] = useState(true)
+  const [syncing, setSyncing] = useState(false)
   const [selected, setSelected] = useState<Allocation | null>(null)
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState<Record<string, any>>({})
@@ -79,18 +81,73 @@ export function AllocationCenter() {
     if (!canRead) { setLoading(false); return }
     setLoading(true)
     const supabase = getBrowserSupabaseClient()
-    const [{ data, error }, { data: teamRows }, { data: profileRows }] = await Promise.all([
+    const [{ data, error }, { data: teamRows }, { data: memberRows }] = await Promise.all([
       supabase.rpc("rpc_project_allocations_list"),
       supabase.from("teams").select("id,name").eq("is_active", true).order("name"),
-      supabase.from("profiles_public").select("id,full_name").eq("status", "active").order("full_name"),
+      supabase.from("ops_members").select("id,full_name").eq("is_active", true).order("full_name"),
     ])
     if (error) { const friendly = mapRpcError(error, { title: "加载分配中心失败", description: "请稍后重试" }); toast.error(friendly.title, { description: friendly.description }); setRows([]) }
     else setRows((data ?? []) as Allocation[])
     setTeams((teamRows ?? []) as { id: number; name: string }[])
-    setPeople((profileRows ?? []) as Person[])
+    setPeople((memberRows ?? []) as Person[])
     setLoading(false)
   }
   useEffect(() => { void load() }, [canRead])
+
+  const getAccessToken = async () => {
+    const supabase = getBrowserSupabaseClient()
+    const { data } = await supabase.auth.getSession()
+    return data.session?.access_token ?? ""
+  }
+
+  // 保存分配后把确认卡片发给项目负责人；负责人在飞书卡片上选人提交即完成闭环。
+  const sendNotify = async (leadId: string): Promise<{ ok: boolean; error?: string; pmName?: string }> => {
+    try {
+      const token = await getAccessToken()
+      if (!token) return { ok: false, error: "unauthorized" }
+      const res = await fetch("/api/allocations/notify", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify({ lead_id: leadId }),
+      })
+      const data = (await res.json().catch(() => ({ ok: false, error: "bad_response" }))) as { ok?: boolean; error?: string; pmName?: string }
+      if (!res.ok || !data?.ok) return { ok: false, error: String(data?.error ?? `http_${res.status}`) }
+      return { ok: true, pmName: data.pmName }
+    } catch (err: any) {
+      return { ok: false, error: String(err?.message ?? err) }
+    }
+  }
+
+  const describeNotifyError = (error?: string) => {
+    if (!error) return "请稍后重试"
+    if (error.includes("pm_not_synced")) return "负责人尚未同步到 CRM 通讯录，请先「同步飞书通讯录」"
+    if (error.includes("feishu_not_configured")) return "服务端尚未配置飞书应用凭据"
+    if (error.includes("ERR_NO_PERMISSION")) return "需要分配管理权限"
+    return "请稍后重试"
+  }
+
+  const resendNotify = async (row: Allocation) => {
+    const result = await sendNotify(row.lead_id)
+    if (result.ok) toast.success(`已发送飞书确认卡片给 ${result.pmName ?? row.project_manager_name ?? "项目负责人"}`)
+    else toast.error("发送飞书通知失败", { description: describeNotifyError(result.error) })
+  }
+
+  const syncDirectory = async () => {
+    setSyncing(true)
+    try {
+      const token = await getAccessToken()
+      if (!token) throw new Error("unauthorized")
+      const res = await fetch("/api/jobs/feishu-sync", { method: "POST", headers: { authorization: `Bearer ${token}` } })
+      const data = (await res.json().catch(() => ({ ok: false, error: "bad_response" }))) as { ok?: boolean; error?: string; departments?: number; members?: number; deactivated?: number }
+      if (!res.ok || !data?.ok) throw new Error(String(data?.error ?? `http_${res.status}`))
+      toast.success("飞书通讯录已同步", { description: `部门 ${data.departments} 个，成员 ${data.members} 人，停用 ${data.deactivated} 人` })
+      await load()
+    } catch (err: any) {
+      toast.error("同步飞书通讯录失败", { description: String(err?.message ?? err) })
+    } finally {
+      setSyncing(false)
+    }
+  }
 
   const pending = useMemo(() => rows.filter((r) => r.allocation_status !== "assigned"), [rows])
   const openEditor = (row: Allocation) => {
@@ -118,17 +175,24 @@ export function AllocationCenter() {
       p_note: form.note || null, p_detail_link: form.detail_link || null,
     })
     if (error) { const friendly = mapRpcError(error, { title: "保存分配失败", description: "请稍后重试" }); toast.error(friendly.title, { description: friendly.description }); return }
-    toast.success("项目组分配已保存"); setOpen(false); await load()
+    toast.success("项目组分配已保存"); setOpen(false)
+    const notify = await sendNotify(selected.lead_id)
+    if (notify.ok) toast.success(`已发送飞书确认卡片给 ${notify.pmName ?? "项目负责人"}`)
+    else toast.warning("已保存，但未发出飞书确认卡片", { description: describeNotifyError(notify.error) })
+    await load()
   }
 
   if (!canRead && permissions !== null) return <Card><CardContent className="py-12 text-center text-muted-foreground">暂无分配中心权限，请联系管理员开通。</CardContent></Card>
   return <div className="space-y-6">
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div><h1 className="text-2xl font-bold flex items-center gap-2"><Boxes className="w-6 h-6 text-primary" />分配中心</h1><p className="text-sm text-muted-foreground mt-1">成交客户进入项目组后续执行分配，字段与运营分配表保持一致。</p></div>
-      <Button variant="outline" onClick={() => void load()} disabled={loading}><RefreshCw className="w-4 h-4 mr-2" />刷新</Button>
+      <div className="flex gap-2">
+        {canManage && <Button variant="outline" onClick={() => void syncDirectory()} disabled={syncing}><RefreshCw className={`w-4 h-4 mr-2 ${syncing ? "animate-spin" : ""}`} />{syncing ? "同步中…" : "同步飞书通讯录"}</Button>}
+        <Button variant="outline" onClick={() => void load()} disabled={loading}><RefreshCw className="w-4 h-4 mr-2" />刷新</Button>
+      </div>
     </div>
     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4"><Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">待分配</CardTitle></CardHeader><CardContent className="text-3xl font-bold text-amber-600">{pending.length}</CardContent></Card><Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">已分配</CardTitle></CardHeader><CardContent className="text-3xl font-bold text-emerald-600">{rows.length - pending.length}</CardContent></Card><Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">成交客户总数</CardTitle></CardHeader><CardContent className="text-3xl font-bold">{rows.length}</CardContent></Card></div>
-    <Card><CardHeader><CardTitle>成交客户分配队列</CardTitle></CardHeader><CardContent className="p-0"><div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>客户</TableHead><TableHead>品类</TableHead><TableHead>投放平台</TableHead><TableHead>成交销售</TableHead><TableHead>部门/项目组</TableHead><TableHead>项目负责人</TableHead><TableHead>CRM 状态</TableHead><TableHead>优化系统</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader><TableBody>{loading ? <TableRow><TableCell colSpan={9} className="py-10 text-center">加载中…</TableCell></TableRow> : rows.length === 0 ? <TableRow><TableCell colSpan={9} className="py-10 text-center text-muted-foreground">暂无成交客户</TableCell></TableRow> : rows.map((row) => <TableRow key={row.lead_id}><TableCell><div className="font-semibold">{row.company_name || "未命名客户"}</div><div className="text-xs text-muted-foreground">{row.customer_name || ""}</div></TableCell><TableCell><div className="flex flex-wrap gap-1">{row.product_category || <span className="text-muted-foreground">历史数据未填写</span>}</div></TableCell><TableCell><div className="flex flex-wrap gap-1">{(row.platforms ?? []).length ? (row.platforms ?? []).map((p) => <Badge key={p} variant="secondary" className="text-xs">{platformOptions.find(([key]) => key === p)?.[1] ?? p}</Badge>) : "-"}</div></TableCell><TableCell>{row.sales_owner_name || "-"}</TableCell><TableCell>{row.department_name || "未分配"}</TableCell><TableCell>{row.project_manager_name || "未分配"}</TableCell><TableCell>{row.allocation_status === "assigned" ? <Badge className="bg-emerald-600"><CheckCircle2 className="w-3 h-3 mr-1" />已分配</Badge> : <Badge variant="secondary" className="text-amber-700"><Clock3 className="w-3 h-3 mr-1" />待分配</Badge>}</TableCell><TableCell><Badge variant={row.sync_status === "failed" || row.sync_status === "rejected" ? "destructive" : "outline"}>{syncStatusLabels[row.sync_status ?? "not_connected"]}</Badge>{row.sync_error ? <div className="mt-1 max-w-[180px] truncate text-xs text-destructive" title={row.sync_error}>{row.sync_error}</div> : null}</TableCell><TableCell className="text-right">{canManage && <Button size="sm" variant="outline" onClick={() => openEditor(row)}>{row.allocation_status === "assigned" ? "编辑" : "分配"}</Button>}</TableCell></TableRow>)}</TableBody></Table></div></CardContent></Card>
+    <Card><CardHeader><CardTitle>成交客户分配队列</CardTitle></CardHeader><CardContent className="p-0"><div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>客户</TableHead><TableHead>品类</TableHead><TableHead>投放平台</TableHead><TableHead>成交销售</TableHead><TableHead>部门/项目组</TableHead><TableHead>项目负责人</TableHead><TableHead>CRM 状态</TableHead><TableHead>优化系统</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader><TableBody>{loading ? <TableRow><TableCell colSpan={9} className="py-10 text-center">加载中…</TableCell></TableRow> : rows.length === 0 ? <TableRow><TableCell colSpan={9} className="py-10 text-center text-muted-foreground">暂无成交客户</TableCell></TableRow> : rows.map((row) => <TableRow key={row.lead_id}><TableCell><div className="font-semibold">{row.company_name || "未命名客户"}</div><div className="text-xs text-muted-foreground">{row.customer_name || ""}</div></TableCell><TableCell><div className="flex flex-wrap gap-1">{row.product_category || <span className="text-muted-foreground">历史数据未填写</span>}</div></TableCell><TableCell><div className="flex flex-wrap gap-1">{(row.platforms ?? []).length ? (row.platforms ?? []).map((p) => <Badge key={p} variant="secondary" className="text-xs">{platformOptions.find(([key]) => key === p)?.[1] ?? p}</Badge>) : "-"}</div></TableCell><TableCell>{row.sales_owner_name || "-"}</TableCell><TableCell>{row.department_name || "未分配"}</TableCell><TableCell><div className="font-semibold">{row.project_manager_name || "未分配"}</div>{row.confirmed_at ? <Badge variant="outline" className="mt-1 text-emerald-700 border-emerald-300 text-xs">运营已确认</Badge> : null}</TableCell><TableCell>{row.allocation_status === "assigned" ? <Badge className="bg-emerald-600"><CheckCircle2 className="w-3 h-3 mr-1" />已分配</Badge> : <Badge variant="secondary" className="text-amber-700"><Clock3 className="w-3 h-3 mr-1" />待分配</Badge>}</TableCell><TableCell><Badge variant={row.sync_status === "failed" || row.sync_status === "rejected" ? "destructive" : "outline"}>{syncStatusLabels[row.sync_status ?? "not_connected"]}</Badge>{row.sync_error ? <div className="mt-1 max-w-[180px] truncate text-xs text-destructive" title={row.sync_error}>{row.sync_error}</div> : null}</TableCell><TableCell className="text-right"><div className="flex justify-end gap-2">{canManage && row.allocation_status === "assigned" && row.project_manager_id && <Button size="sm" variant="ghost" onClick={() => void resendNotify(row)}>通知</Button>}{canManage && <Button size="sm" variant="outline" onClick={() => openEditor(row)}>{row.allocation_status === "assigned" ? "编辑" : "分配"}</Button>}</div></TableCell></TableRow>)}</TableBody></Table></div></CardContent></Card>
     <Dialog open={open} onOpenChange={setOpen}><DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-[680px]"><DialogHeader><DialogTitle>分配项目组 · {selected?.company_name}</DialogTitle></DialogHeader><div className="grid grid-cols-1 sm:grid-cols-2 gap-4 py-2"><div className="space-y-2"><Label>部门/项目组 *</Label><Select value={form.department_team_id ?? ""} onValueChange={(v) => setForm({ ...form, department_team_id: v })}><SelectTrigger><SelectValue placeholder="选择项目组" /></SelectTrigger><SelectContent>{teams.map((t) => <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>)}</SelectContent></Select></div><div className="space-y-2"><Label>项目负责人 *</Label><Select value={form.project_manager_id ?? ""} onValueChange={(v) => setForm({ ...form, project_manager_id: v })}><SelectTrigger><SelectValue placeholder="选择负责人" /></SelectTrigger><SelectContent>{people.map((p) => <SelectItem key={p.id} value={p.id}>{p.full_name}</SelectItem>)}</SelectContent></Select></div><div className="space-y-2 sm:col-span-2"><Label>投放平台（可多选）</Label><div className="flex flex-wrap gap-2 rounded-md border p-3">{platformOptions.map(([key, label]) => <label key={key} className="flex items-center gap-2 rounded border px-3 py-2 text-sm"><Checkbox checked={(form.platforms ?? []).includes(key)} onCheckedChange={(checked) => { const next = new Set(form.platforms ?? []); if (checked) next.add(key); else next.delete(key); setForm({ ...form, platforms: Array.from(next) }) }} />{label}</label>)}</div></div>{roleFields.map(([key, label]) => <div className="space-y-2 sm:col-span-2" key={key}><Label>{label}（可多选）</Label><div className="grid grid-cols-1 sm:grid-cols-2 gap-2 rounded-md border p-3 max-h-36 overflow-y-auto">{people.map((p) => <label key={p.id} className="flex items-center gap-2 text-sm"><Checkbox checked={(form[key] ?? []).includes(p.id)} onCheckedChange={(checked) => { const next = new Set(form[key] ?? []); if (checked) next.add(p.id); else next.delete(p.id); setForm({ ...form, [key]: Array.from(next) }) }} />{p.full_name}</label>)}</div></div>)}<div className="space-y-2 sm:col-span-2"><Label>客户详细情况链接</Label><Input value={form.detail_link || ""} onChange={(e) => setForm({ ...form, detail_link: e.target.value })} placeholder="https://docs.google.com/..." /></div><div className="space-y-2 sm:col-span-2"><Label>备注</Label><Input value={form.note || ""} onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder="补充项目执行要求" /></div></div><DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>取消</Button><Button onClick={() => void save()}>保存分配</Button></DialogFooter></DialogContent></Dialog>
   </div>
 }
