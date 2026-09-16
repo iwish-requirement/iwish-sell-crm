@@ -821,6 +821,8 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
   const [searchQuery, setSearchQuery] = useState("")
   const [stageFilter, setStageFilter] = useState<string>("all")
+  // 线索页默认只看在谈线索；已成交/已关闭通过筛选回看（成交明细另有成交中心）
+  const [statusFilter, setStatusFilter] = useState<"open" | "won" | "lost" | "all">("open")
   const [sourceLevel1Filter, setSourceLevel1Filter] = useState<string>("all")
   const [sourceLevel2Filter, setSourceLevel2Filter] = useState<string>("all")
   const [ownerFilter, setOwnerFilter] = useState<string>("all")
@@ -1077,7 +1079,15 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
           let query = supabase
             .from("leads_secure_view")
             .select(LEAD_SELECT_COLUMNS)
-            .in("status", ["open", "closed"])
+
+          // 默认只拉在谈线索；已成交/已关闭通过状态筛选回看
+          if (statusFilter === "open") {
+            query = query.eq("status", "open")
+          } else if (statusFilter === "won" || statusFilter === "lost") {
+            query = query.eq("status", "closed")
+          } else {
+            query = query.in("status", ["open", "closed"])
+          }
 
           if (scopeType === "self" && profile?.id) {
             query = query.eq("owner_id", profile.id)
@@ -1265,7 +1275,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     return () => {
       isMounted = false
     }
-  }, [mePermissions, reloadToken, retryLoad])
+  }, [mePermissions, reloadToken, retryLoad, statusFilter])
 
   useEffect(() => {
     let isMounted = true
@@ -2912,6 +2922,14 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       return false
     }
 
+    // 已成交/已关闭视图下按关闭结果细分（服务端只按 closed 拉取）
+    if (statusFilter === "won" && !(lead.status === "closed" && lead.closeResult === "won")) {
+      return false
+    }
+    if (statusFilter === "lost" && !(lead.status === "closed" && lead.closeResult !== "won")) {
+      return false
+    }
+
     if (stageFilter !== "all" && lead.followUpStage !== stageFilter) {
       return false
     }
@@ -3703,6 +3721,18 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
           />
         </div>
         <div className="flex flex-wrap gap-2">
+          <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as typeof statusFilter)}>
+            <SelectTrigger className="w-[150px]">
+              <SelectValue placeholder="线索状态" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="open">在谈（默认）</SelectItem>
+              <SelectItem value="won">已成交</SelectItem>
+              <SelectItem value="lost">已关闭（丢单）</SelectItem>
+              <SelectItem value="all">全部</SelectItem>
+            </SelectContent>
+          </Select>
+
           <Select value={ownerFilter} onValueChange={setOwnerFilter}>
             <SelectTrigger className="w-[150px]">
               <SelectValue placeholder="负责人筛选" />
@@ -3939,7 +3969,23 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                             {getCustomerAttributeLabel(lead.customerAttribute)}
                           </Badge>
                         </TableCell>
-                        <TableCell>{getFollowUpStageLabel(lead.followUpStage)}</TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <span>{getFollowUpStageLabel(lead.followUpStage)}</span>
+                            {lead.status === "closed" && (
+                              <Badge
+                                variant="outline"
+                                className={`text-[11px] ${
+                                  lead.closeResult === "won"
+                                    ? "border-emerald-400 text-emerald-600"
+                                    : "border-slate-300 text-slate-500"
+                                }`}
+                              >
+                                {lead.closeResult === "won" ? "已成交" : "已关闭"}
+                              </Badge>
+                            )}
+                          </div>
+                        </TableCell>
                         <TableCell className="max-w-[200px] truncate">{sourceLabel}</TableCell>
                         <TableCell className="max-w-[180px] truncate">
                           {lead.productCategory || <span className="text-muted-foreground">历史数据未填写</span>}
