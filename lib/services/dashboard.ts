@@ -101,6 +101,7 @@ export interface RoleDashboardActivity {
     followUps: number
     qualifiedLeads: number
     wonLeads: number
+    wonInRange: number
     overdueLeads: number
     pendingToday: number
     newlyAssigned: number
@@ -567,6 +568,7 @@ export async function fetchRoleDashboardActivity(
   let periodNewLeads = 0
   let qualifiedLeads = 0
   let wonLeads = 0
+  let periodWon = 0
   let overdueLeads = 0
   let pendingInRange = 0
   let newlyAssigned = 0
@@ -706,11 +708,14 @@ export async function fetchRoleDashboardActivity(
   }
 
   if (leadIds.length > 0) {
+    // 趋势点固定取最近 7~31 天；时段统计需要覆盖完整所选范围，
+    // 因此拉取起点取两者中更早的一个
+    const notesSince = trendStart < rangeStart ? trendStart : rangeStart
     const { data: notesRows, error: notesError } = await supabase
       .from("lead_notes")
       .select("author_id, lead_id, note_type, created_at, is_deleted")
       .in("lead_id", leadIds)
-      .gte("created_at", trendStart.toISOString())
+      .gte("created_at", notesSince.toISOString())
       .lte("created_at", rangeEnd.toISOString())
       .limit(5000)
 
@@ -735,6 +740,7 @@ export async function fetchRoleDashboardActivity(
         const detail = isInRange && leadForNote ? addCustomerDetail(leadForNote) : null
 
         if (isWonNote && point) point.won += 1
+        if (isWonNote && isInRange) periodWon += 1
 
         if (isContact) {
           if (point) point.contactActions += 1
@@ -777,6 +783,7 @@ export async function fetchRoleDashboardActivity(
       followUps: 0,
       qualifiedLeads,
       wonLeads,
+      wonInRange: periodWon,
       overdueLeads,
       pendingToday: pendingInRange,
       newlyAssigned,
