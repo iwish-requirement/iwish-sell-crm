@@ -29,6 +29,8 @@ export interface DailyActivityUserRow {
   activeLeads: number
   // 本时段新增线索的阶段分布（key 为 FOLLOW_UP_STAGE_FLOW 的 stageId），与部门对比同口径
   stageCounts: Record<string, number>
+  // 附加团队（成员以主团队计入统计，附加团队明细中仅作查看）
+  additionalTeamIds?: number[]
   newLeads: number
   contactActions: number
   visits: number
@@ -446,10 +448,14 @@ export async function fetchRoleDashboardActivity(
     { data: teamExclusionRow, error: teamExclusionError },
     { data: profileExclusionRow, error: profileExclusionError },
     { data: businessRulesRpcResult, error: businessRulesError },
+    { data: gmExclusionRow, error: gmExclusionError },
+    { data: membershipRows, error: membershipError },
   ] = await Promise.all([
     supabase.from("settings").select("value").eq("key", "analytics.excluded_teams").maybeSingle(),
     supabase.from("settings").select("value").eq("key", "analytics.excluded_profiles").maybeSingle(),
     supabase.rpc("rpc_get_pipeline_business_rules"),
+    supabase.from("settings").select("value").eq("key", "gm_dashboard.excluded_teams").maybeSingle(),
+    supabase.from("profile_team_memberships").select("profile_id, team_id"),
   ])
 
   if (teamExclusionError && teamExclusionError.code !== "PGRST116") {
@@ -461,8 +467,35 @@ export async function fetchRoleDashboardActivity(
   if (businessRulesError) {
     console.error("Failed to load pipeline business rules for role dashboard", businessRulesError)
   }
+  if (gmExclusionError && gmExclusionError.code !== "PGRST116") {
+    console.error("Failed to load GM dashboard excluded teams", gmExclusionError)
+  }
+  if (membershipError) {
+    console.error("Failed to load profile team memberships", membershipError)
+  }
 
   const { excludedTeamIds, excludedProfileIds } = readExcludedIds(teamExclusionRow, profileExclusionRow)
+
+  // 总经理仪表盘专属排除团队：与通用排除一并隐藏（线索、部门行、成员）
+  const gmExcludedTeamIds = new Set<number>(
+    gmExclusionRow &&
+      (gmExclusionRow as any).value &&
+      Array.isArray(((gmExclusionRow as any).value as any).team_ids)
+      ? (((gmExclusionRow as any).value as any).team_ids as any[]).filter((v: any) => typeof v === "number")
+      : [],
+  )
+  const hiddenTeamIds = new Set<number>([...excludedTeamIds, ...gmExcludedTeamIds])
+
+  // 多团队归属：成员以主团队计入统计，附加团队仅在成员明细中可见
+  const membershipsByProfile = new Map<string, number[]>()
+  for (const row of (membershipRows ?? []) as any[]) {
+    const profileId = row.profile_id as string
+    const teamId = Number(row.team_id)
+    if (!profileId || !Number.isFinite(teamId)) continue
+    const list = membershipsByProfile.get(profileId) ?? []
+    list.push(teamId)
+    membershipsByProfile.set(profileId, list)
+  }
 
   let warningHours = 72
   let dangerHours = 168
@@ -530,15 +563,15 @@ export async function fetchRoleDashboardActivity(
   const teamNameById = new Map<number, string>()
   for (const row of (teamRows ?? []) as any[]) {
     if (row.is_active === false) continue
-    // 数据统计设置中被排除的团队不出现在部门对比中
-    if (excludedTeamIds.has(row.id as number)) continue
+    // 通用排除与总经理仪表盘排除的团队均不出现
+    if (hiddenTeamIds.has(row.id as number)) continue
     teamNameById.set(row.id as number, (row.name as string) ?? `团队 ${row.id}`)
   }
 
   const leads = ((leadRows ?? []) as LeadSecureRow[]).filter((lead) => {
     const teamId = lead.team_id ?? null
     const ownerId = lead.owner_id ?? null
-    if (teamId != null && excludedTeamIds.has(teamId)) return false
+    if (teamId != null && hiddenTeamIds.has(teamId)) return false
     if (ownerId && excludedProfileIds.has(ownerId)) return false
     return true
   })
@@ -548,7 +581,7 @@ export async function fetchRoleDashboardActivity(
     const id = row.id as string
     const teamId = (row.team_id as number | null) ?? null
     if (excludedProfileIds.has(id)) continue
-    if (teamId != null && excludedTeamIds.has(teamId)) continue
+    if (teamId != null && hiddenTeamIds.has(teamId)) continue
     usersById.set(id, {
       id,
       name: (row.full_name as string | null) || id.slice(0, 8),
@@ -556,6 +589,10 @@ export async function fetchRoleDashboardActivity(
       teamId,
       activeLeads: 0,
       stageCounts: {} as Record<string, number>,
+      // 附加团队（成员以主团队计入统计，附加团队明细中仅作查看）
+      additionalTeamIds: (membershipsByProfile.get(id) ?? []).filter(
+        (tid) => tid !== teamId && !hiddenTeamIds.has(tid),
+      ),
       newLeads: 0,
       contactActions: 0,
       visits: 0,
