@@ -19,6 +19,8 @@ function isPublicPath(pathname: string): boolean {
   if (
     pathname === '/api/version' ||
     pathname === '/api/jobs/renewal-wecom-notify' ||
+    pathname === '/api/jobs/feishu-sync' ||
+    pathname === '/api/feishu/callback' ||
     pathname.startsWith('/_next/') ||
     pathname.startsWith('/public/') ||
     pathname === '/favicon.ico' ||

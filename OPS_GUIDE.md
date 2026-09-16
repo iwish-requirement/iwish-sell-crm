@@ -176,3 +176,27 @@
   - 公海与导出用例。
 
 > 只要严格遵守以上发布和排查流程，这套系统在日常使用和后续迭代中都能保持“可控、可追踪、可回滚”，不会因为某个隐蔽的权限或导出问题而在生产环境里“突然翻车”。
+
+### 7. 分配中心飞书闭环（运营无需注册 CRM）
+
+**链路：** 飞书通讯录定时同步到 `ops_members` → CRM 保存分配后向项目负责人发飞书选人卡片 → 负责人在卡片上选择各角色执行成员并提交 → 回调校验"操作者=该分配单负责人"后写入 `lead_project_assignments` 并回写卡片。
+
+**Worker 密钥（`wrangler secret put`）：**
+- `FEISHU_APP_ID` / `FEISHU_APP_SECRET`：飞书自建应用凭据；
+- `FEISHU_VERIFICATION_TOKEN`：事件订阅的 Verification Token，回调端强校验；
+- `FEISHU_ENCRYPT_KEY`（推荐）：事件加密密钥，配置后回调载荷为密文；
+- `FEISHU_SYNC_TOKEN`：`POST /api/jobs/feishu-sync` 的 `x-job-token`，供外部定时任务调用。
+
+**飞书开放平台配置清单：**
+1. 权限：`contact:user.base:readonly`、`contact:department.base:readonly`、`im:message`（发消息）、`im:message.cards:write`（更新卡片）；
+2. 可用范围：全员或至少覆盖运营部门（通讯录同步范围由此决定）；
+3. 事件与回调：请求地址填 `https://sell.iwishweb.com/api/feishu/callback`，订阅 `卡片回传交互 (card.action.trigger)`；
+4. 发布版本使权限生效。
+
+**定时同步：** 外部定时任务每日 `POST /api/jobs/feishu-sync`，头部 `x-job-token: <FEISHU_SYNC_TOKEN>`；CRM 分配中心页对有 `allocations.manage` 权限的用户也提供「同步飞书通讯录」按钮。
+
+**安全边界：**
+- `ops_members` 仅开放读（登录用户），写只走 service role（同步与回调）；
+- `public.rpc_allocation_confirm_from_feishu` 仅授予 service_role，回调时校验飞书 open_id 即该分配单的 `project_manager_id`；
+- `feishu_card_messages` 通过 open_message_id 定位分配单，不信任卡片表单内容；
+- CRM 侧编辑分配会重置 `confirmed_at/confirmed_by`（重新确认后才亮「运营已确认」）。
