@@ -575,46 +575,12 @@ function AlertsPanel({ alerts }: { alerts: DashboardAlert[] }) {
   )
 }
 
-function ProcessOverviewCard({ activity }: { activity: RoleDashboardActivity | null }) {
-  const items = [
-    { label: "新增线索", value: activity?.totals.newLeads ?? 0, icon: UserPlus, tone: "text-blue-600 bg-blue-50" },
-    { label: "建联", value: activity?.totals.contactActions ?? 0, icon: PhoneCall, tone: "text-cyan-600 bg-cyan-50" },
-    { label: "拜访", value: activity?.totals.visits ?? 0, icon: Users, tone: "text-violet-600 bg-violet-50" },
-    { label: "跟进", value: activity?.totals.followUps ?? 0, icon: MessageCircle, tone: "text-amber-600 bg-amber-50" },
-  ]
-  return (
-    <Card className="border-muted-foreground/10 shadow-sm">
-      <CardHeader className="border-b border-muted/30">
-        <CardTitle className="text-lg">过程数据</CardTitle>
-        <CardDescription>统计范围内全公司的关键销售动作。</CardDescription>
-      </CardHeader>
-      <CardContent className="pt-5">
-        <div className="grid grid-cols-2 gap-4">
-          {items.map((item) => {
-            const Icon = item.icon
-            return (
-              <div key={item.label} className="flex items-start justify-between gap-3 rounded-lg border border-muted/60 p-3">
-                <div>
-                  <p className="text-3xl font-bold tracking-tight tabular-nums">{formatNumber(item.value)}</p>
-                  <p className="mt-1 text-sm font-semibold text-foreground">{item.label}</p>
-                </div>
-                <div className={`rounded-lg p-2 ${item.tone}`}>
-                  <Icon className="h-4 w-4" />
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      </CardContent>
-    </Card>
-  )
-}
-
 function TrendChart({ activity }: { activity: RoleDashboardActivity | null }) {
   const trendDays = activity?.trends.length ?? 7
   // 点位较少时直接在图上标注数值，总经理无需悬停即可读数
   const showLabels = trendDays <= 10
   const totalNew = activity?.trends.reduce((sum, point) => sum + point.newLeads, 0) ?? 0
+  const totalVisits = activity?.trends.reduce((sum, point) => sum + point.visits, 0) ?? 0
   const totalWon = activity?.trends.reduce((sum, point) => sum + point.won, 0) ?? 0
   return (
     <Card className="border-muted-foreground/10 shadow-sm">
@@ -623,15 +589,20 @@ function TrendChart({ activity }: { activity: RoleDashboardActivity | null }) {
           <div>
             <CardTitle className="flex items-center gap-2 text-lg">
               <BarChart3 className="h-4 w-4 text-blue-600" />
-              最近 {trendDays} 天新增与成交趋势
+              最近 {trendDays} 天新增、拜访与成交趋势
             </CardTitle>
-            <CardDescription>对比每日新增线索与成交数量走势。</CardDescription>
+            <CardDescription>对比每日新增线索、拜访和成交数量走势。</CardDescription>
           </div>
           <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5">
             <div className="flex items-center gap-2 text-sm">
               <span className="h-2.5 w-2.5 rounded-full bg-[#3b82f6]" />
               <span className="font-medium text-foreground">新增线索</span>
               <span className="text-base font-bold tabular-nums text-[#2563eb]">合计 {totalNew}</span>
+            </div>
+            <div className="flex items-center gap-2 text-sm">
+              <span className="h-2.5 w-2.5 rounded-full bg-[#8b5cf6]" />
+              <span className="font-medium text-foreground">拜访</span>
+              <span className="text-base font-bold tabular-nums text-[#7c3aed]">合计 {totalVisits}</span>
             </div>
             <div className="flex items-center gap-2 text-sm">
               <span className="h-2.5 w-2.5 rounded-full bg-[#22c55e]" />
@@ -641,8 +612,8 @@ function TrendChart({ activity }: { activity: RoleDashboardActivity | null }) {
           </div>
         </div>
       </CardHeader>
-      <CardContent className="pt-4">
-        <div className="h-[160px]">
+      <CardContent className="pt-6">
+        <div className="h-[260px]">
           {!activity || activity.trends.length === 0 ? (
             <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
               暂无趋势数据
@@ -669,6 +640,16 @@ function TrendChart({ activity }: { activity: RoleDashboardActivity | null }) {
                   dot={{ r: 3 }}
                   activeDot={{ r: 5 }}
                   label={showLabels ? { position: "top", fontSize: 14, fill: "#2563eb" } : undefined}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="visits"
+                  name="拜访"
+                  stroke="#8b5cf6"
+                  strokeWidth={2.5}
+                  dot={{ r: 3 }}
+                  activeDot={{ r: 5 }}
+                  label={showLabels ? { position: "top", fontSize: 14, fill: "#7c3aed" } : undefined}
                 />
                 <Line
                   type="monotone"
@@ -895,10 +876,7 @@ export function Dashboard() {
             <FunnelCard activity={activity} summary={summary} />
             <TeamTable teams={activity?.teams ?? []} />
           </div>
-          <div className="grid grid-cols-1 gap-6 xl:grid-cols-[0.8fr_1.2fr]">
-            <ProcessOverviewCard activity={activity} />
-            <TrendChart activity={activity} />
-          </div>
+          <TrendChart activity={activity} />
           <DepartmentMemberTable users={activity?.users ?? []} teams={activity?.teams ?? []} />
         </>
       ) : mode === "manager" ? (
