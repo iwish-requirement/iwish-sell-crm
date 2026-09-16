@@ -45,7 +45,7 @@ import {
 import { getBrowserSupabaseClient } from "@/lib/supabase/client"
 
 type RoleDashboardMode = "sales" | "manager" | "director"
-type TimeRangePreset = "today" | "yesterday" | "week" | "month" | "quarter" | "custom"
+type TimeRangePreset = "all" | "today" | "yesterday" | "week" | "month" | "quarter" | "custom"
 
 interface SalesKpiDefinition {
   key: keyof RoleDashboardActivity["totals"]
@@ -109,6 +109,9 @@ function formatDateLabel(value: string | null | undefined): string {
 function getPresetRange(preset: TimeRangePreset): DashboardDateRange {
   const now = new Date()
   const today = startOfLocalDay(now)
+  if (preset === "all") {
+    return { start: new Date(2000, 0, 1), end: addDays(today, 1) }
+  }
   if (preset === "yesterday") {
     const start = addDays(today, -1)
     return { start, end: today }
@@ -191,6 +194,7 @@ function TimeRangeControls({
     { key: "week", label: "本周" },
     { key: "month", label: "本月" },
     { key: "quarter", label: "本季" },
+    { key: "all", label: "全部" },
     { key: "custom", label: "自定义" },
   ]
 
@@ -199,7 +203,9 @@ function TimeRangeControls({
       <CardContent className="flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <p className="text-sm font-semibold text-foreground">时间维度</p>
-          <p className="text-xs text-muted-foreground">统计范围：{getRangeLabel(range)}</p>
+          <p className="text-xs text-muted-foreground">
+            统计范围：{preset === "all" ? "全部时间" : getRangeLabel(range)}
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {presets.map((item) => (
@@ -675,9 +681,11 @@ function TrendChart({ activity }: { activity: RoleDashboardActivity | null }) {
 function FunnelCard({
   activity,
   summary,
+  allTime = false,
 }: {
   activity: RoleDashboardActivity | null
   summary: DashboardSummary | null
+  allTime?: boolean
 }) {
   const bands = activity?.stageFunnel ?? []
   const total = bands.reduce((sum, band) => sum + band.count, 0)
@@ -689,7 +697,11 @@ function FunnelCard({
         <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
           <div>
             <CardTitle className="text-lg">销售漏斗</CardTitle>
-            <CardDescription>按当前跟进阶段的线索分布（不含公海与无效线索）。</CardDescription>
+            <CardDescription>
+              {allTime
+                ? "全部线索按当前跟进阶段的分布（不含公海与无效线索）。"
+                : "所选时段新增线索当前的阶段分布（不含公海与无效线索）。"}
+            </CardDescription>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant="outline">本时段新增 {formatNumber(activity?.totals.newLeads ?? 0)}</Badge>
@@ -746,6 +758,7 @@ export function Dashboard() {
           fetchDashboardSummary(params),
           fetchRoleDashboardActivity({
             ...params,
+            allTime: timePreset === "all",
             startDate: dateRange.start.toISOString(),
             endDate: dateRange.end.toISOString(),
           }),
@@ -768,7 +781,7 @@ export function Dashboard() {
     return () => {
       isMounted = false
     }
-  }, [mePermissions, dateRange])
+  }, [mePermissions, dateRange, timePreset])
 
   useEffect(() => {
     let isMounted = true
@@ -873,7 +886,7 @@ export function Dashboard() {
       {mode === "director" ? (
         <>
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-            <FunnelCard activity={activity} summary={summary} />
+            <FunnelCard activity={activity} summary={summary} allTime={timePreset === "all"} />
             <TeamTable teams={activity?.teams ?? []} />
           </div>
           <TrendChart activity={activity} />
@@ -881,7 +894,7 @@ export function Dashboard() {
         </>
       ) : mode === "manager" ? (
         <>
-          <FunnelCard activity={activity} summary={summary} />
+          <FunnelCard activity={activity} summary={summary} allTime={timePreset === "all"} />
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.45fr_0.55fr]">
             <ActivityTable users={activity?.users ?? []} />
             <AlertsPanel alerts={activity?.alerts ?? []} />
@@ -890,7 +903,7 @@ export function Dashboard() {
         </>
       ) : (
         <>
-          <FunnelCard activity={activity} summary={summary} />
+          <FunnelCard activity={activity} summary={summary} allTime={timePreset === "all"} />
           <KpiGrid activity={activity} />
           <CustomerDetailsTable
             rows={todoRows}
