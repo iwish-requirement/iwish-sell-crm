@@ -62,11 +62,14 @@ export function buildAllocationConfirmCard(payload: AllocationCardPayload): unkn
           tag: "form",
           name: "team_form",
           elements: [
-            ...ROLE_FIELDS.map(([key, label]) => ({
-              tag: "multi_select_person",
-              name_id: key,
-              label: { tag: "plain_text", content: label },
-            })),
+            ...ROLE_FIELDS.flatMap(([key, label]) => [
+              { tag: "div", text: { tag: "lark_md", content: `**${label}**` } },
+              {
+                tag: "multi_select_person",
+                name: key,
+                placeholder: { tag: "plain_text", content: `选择${label}` },
+              },
+            ]),
             {
               tag: "button",
               text: { tag: "plain_text", content: "提交团队名单" },
