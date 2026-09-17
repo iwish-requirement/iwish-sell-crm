@@ -84,7 +84,7 @@ async function feishuGetAll(path: string): Promise<any[]> {
   return items
 }
 
-export type FeishuDepartment = { openDepartmentId: string; name: string }
+export type FeishuDepartment = { openDepartmentId: string; name: string; parentDepartmentId: string | null }
 
 export async function listAllDepartments(): Promise<FeishuDepartment[]> {
   const items = await feishuGetAll(
@@ -92,7 +92,11 @@ export async function listAllDepartments(): Promise<FeishuDepartment[]> {
   )
   return items
     .filter((d) => d?.open_department_id && d?.name)
-    .map((d) => ({ openDepartmentId: String(d.open_department_id), name: String(d.name) }))
+    .map((d) => ({
+      openDepartmentId: String(d.open_department_id),
+      name: String(d.name),
+      parentDepartmentId: d.parent_department_id ? String(d.parent_department_id) : null,
+    }))
 }
 
 export type FeishuDirectoryUser = {

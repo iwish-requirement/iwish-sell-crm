@@ -61,6 +61,37 @@ export async function POST(req: NextRequest) {
     const departments = await listAllDepartments()
     const departmentNameById = new Map(departments.map((d) => [d.openDepartmentId, d.name]))
 
+    const now = new Date().toISOString()
+    const departmentRows = departments.map((d) => ({
+      feishu_department_id: d.openDepartmentId,
+      name: d.name,
+      parent_feishu_department_id: d.parentDepartmentId,
+      is_active: true,
+      synced_at: now,
+    }))
+    for (const part of chunk(departmentRows, 100)) {
+      const { error } = await admin.from("ops_departments").upsert(part, { onConflict: "feishu_department_id" })
+      if (error) {
+        return NextResponse.json({ ok: false, error: `department_upsert_failed:${error.message}` }, { status: 500 })
+      }
+    }
+    // 停用本次未出现的部门
+    const currentDeptIds = new Set(departmentRows.map((r) => r.feishu_department_id))
+    const { data: activeDeptRows, error: activeDeptError } = await admin
+      .from("ops_departments")
+      .select("feishu_department_id")
+      .eq("is_active", true)
+    if (activeDeptError) {
+      return NextResponse.json({ ok: false, error: `load_active_depts_failed:${activeDeptError.message}` }, { status: 500 })
+    }
+    const missingDepts = (activeDeptRows ?? []).map((r) => r.feishu_department_id).filter((id) => !currentDeptIds.has(id))
+    for (const part of chunk(missingDepts, 200)) {
+      const { error } = await admin.from("ops_departments").update({ is_active: false }).in("feishu_department_id", part)
+      if (error) {
+        return NextResponse.json({ ok: false, error: `deactivate_depts_failed:${error.message}` }, { status: 500 })
+      }
+    }
+
     const byOpenId = new Map<string, Awaited<ReturnType<typeof listUsersByDepartment>>[number]>()
     // find_by_department 不返回 department_ids（字段权限限制），
     // 但用户是按部门拉取的，遍历时即可记录归属。
@@ -80,7 +111,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const now = new Date().toISOString()
+    const now2 = new Date().toISOString()
     const rows = Array.from(byOpenId.values()).map((user) => {
       const departmentNameSet = new Set<string>()
       const ids = new Set<string>([...(departmentIdsByUser.get(user.openId) ?? []), ...user.departmentIds])
@@ -97,9 +128,10 @@ export async function POST(req: NextRequest) {
         job_title: user.jobTitle,
         city: user.city,
         employee_type: user.employeeType,
+        department_ids: Array.from(ids),
         department_names: Array.from(departmentNameSet),
         is_active: true,
-        synced_at: now,
+        synced_at: now2,
       }
     })
 

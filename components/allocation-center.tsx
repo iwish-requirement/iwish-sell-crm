@@ -19,7 +19,7 @@ import { mapRpcError } from "@/lib/rpc-error-mapper"
 type Allocation = {
   id: string | null; lead_id: string; company_name: string; customer_name: string | null; website: string | null
   source: string | null; budget: number | null; closed_at: string; allocation_status: string; product_category?: string | null
-  sales_owner_name: string | null; department_team_id: number | null; department_name: string | null
+  sales_owner_name: string | null; department_id: string | null; department_name: string | null
   project_manager_id: string | null; project_manager_name: string | null
   google_optimizer_id: string | null; google_optimizer_name: string | null; meta_optimizer_id: string | null; meta_optimizer_name: string | null
   criteo_optimizer_id: string | null; criteo_optimizer_name: string | null; bing_optimizer_id: string | null; bing_optimizer_name: string | null
@@ -41,7 +41,8 @@ type Allocation = {
   idempotency_key?: string | null
   confirmed_at?: string | null
 }
-type Person = { id: string; full_name: string }
+type Person = { id: string; full_name: string; department_ids?: string[] }
+type Department = { id: string; name: string; feishu_department_id: string; parent_feishu_department_id: string | null }
 
 const platformOptions = [
   ["google", "Google"], ["meta", "Meta"], ["criteo", "Criteo"], ["bing", "Bing"],
@@ -69,7 +70,7 @@ export function AllocationCenter() {
   const canRead = permissions?.canReadAllocations ?? false
   const canManage = permissions?.canManageAllocations ?? false
   const [rows, setRows] = useState<Allocation[]>([])
-  const [teams, setTeams] = useState<{ id: number; name: string }[]>([])
+  const [departments, setDepartments] = useState<Department[]>([])
   const [people, setPeople] = useState<Person[]>([])
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
@@ -81,18 +82,38 @@ export function AllocationCenter() {
     if (!canRead) { setLoading(false); return }
     setLoading(true)
     const supabase = getBrowserSupabaseClient()
-    const [{ data, error }, { data: teamRows }, { data: memberRows }] = await Promise.all([
+    const [{ data, error }, { data: deptRows }, { data: memberRows }] = await Promise.all([
       supabase.rpc("rpc_project_allocations_list"),
-      supabase.from("teams").select("id,name").eq("is_active", true).order("name"),
-      supabase.from("ops_members").select("id,full_name").eq("is_active", true).order("full_name"),
+      supabase.from("ops_departments").select("id,name,feishu_department_id,parent_feishu_department_id").eq("is_active", true).order("name"),
+      supabase.from("ops_members").select("id,full_name,department_ids").eq("is_active", true).order("full_name"),
     ])
     if (error) { const friendly = mapRpcError(error, { title: "加载分配中心失败", description: "请稍后重试" }); toast.error(friendly.title, { description: friendly.description }); setRows([]) }
     else setRows((data ?? []) as Allocation[])
-    setTeams((teamRows ?? []) as { id: number; name: string }[])
+    setDepartments((deptRows ?? []) as Department[])
     setPeople((memberRows ?? []) as Person[])
     setLoading(false)
   }
   useEffect(() => { void load() }, [canRead])
+
+  // 选中部门的子树（含自身及所有下级部门），负责人候选人限定在其中
+  const candidateManagers = useMemo(() => {
+    const deptId = form.department_id as string | undefined
+    if (!deptId) return people
+    const dept = departments.find((d) => d.id === deptId)
+    if (!dept) return people
+    const subtree = new Set<string>([dept.feishu_department_id])
+    let grew = true
+    while (grew) {
+      grew = false
+      for (const d of departments) {
+        if (d.parent_feishu_department_id && subtree.has(d.parent_feishu_department_id) && !subtree.has(d.feishu_department_id)) {
+          subtree.add(d.feishu_department_id)
+          grew = true
+        }
+      }
+    }
+    return people.filter((p) => (p.department_ids ?? []).some((id) => subtree.has(id)))
+  }, [form.department_id, departments, people])
 
   const getAccessToken = async () => {
     const supabase = getBrowserSupabaseClient()
@@ -153,18 +174,18 @@ export function AllocationCenter() {
   const openEditor = (row: Allocation) => {
     setSelected(row)
     const next: Record<string, any> = {
-      department_team_id: row.department_team_id ? String(row.department_team_id) : "",
+      department_id: row.department_id ?? "",
       project_manager_id: row.project_manager_id ?? "", note: row.note ?? "", detail_link: row.detail_link ?? "",
       platforms: row.platforms ?? [],
     }
     setForm(next); setOpen(true)
   }
   const save = async () => {
-    if (!selected || !form.department_team_id || !form.project_manager_id) { toast.error("请选择项目组和项目负责人"); return }
+    if (!selected || !form.department_id || !form.project_manager_id) { toast.error("请选择部门/项目组和项目负责人"); return }
     const supabase = getBrowserSupabaseClient()
     const managerChanged = selected.project_manager_id !== form.project_manager_id
     const { error } = await supabase.rpc("rpc_project_allocation_upsert", {
-      p_lead_id: selected.lead_id, p_department_team_id: Number(form.department_team_id), p_project_manager_id: form.project_manager_id,
+      p_lead_id: selected.lead_id, p_department_id: form.department_id, p_project_manager_id: form.project_manager_id,
       p_platforms: form.platforms ?? [],
       p_note: form.note || null, p_detail_link: form.detail_link || null,
       p_preserve_team: true,
@@ -191,7 +212,7 @@ export function AllocationCenter() {
     </div>
     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4"><Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">待分配</CardTitle></CardHeader><CardContent className="text-3xl font-bold text-amber-600">{pending.length}</CardContent></Card><Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">已分配</CardTitle></CardHeader><CardContent className="text-3xl font-bold text-emerald-600">{rows.length - pending.length}</CardContent></Card><Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">成交客户总数</CardTitle></CardHeader><CardContent className="text-3xl font-bold">{rows.length}</CardContent></Card></div>
     <Card><CardHeader><CardTitle>成交客户分配队列</CardTitle></CardHeader><CardContent className="p-0"><div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>客户</TableHead><TableHead>品类</TableHead><TableHead>投放平台</TableHead><TableHead>成交销售</TableHead><TableHead>部门/项目组</TableHead><TableHead>项目负责人</TableHead><TableHead>CRM 状态</TableHead><TableHead>优化系统</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader><TableBody>{loading ? <TableRow><TableCell colSpan={9} className="py-10 text-center">加载中…</TableCell></TableRow> : rows.length === 0 ? <TableRow><TableCell colSpan={9} className="py-10 text-center text-muted-foreground">暂无成交客户</TableCell></TableRow> : rows.map((row) => <TableRow key={row.lead_id}><TableCell><div className="font-semibold">{row.company_name || "未命名客户"}</div><div className="text-xs text-muted-foreground">{row.customer_name || ""}</div></TableCell><TableCell><div className="flex flex-wrap gap-1">{row.product_category || <span className="text-muted-foreground">历史数据未填写</span>}</div></TableCell><TableCell><div className="flex flex-wrap gap-1">{(row.platforms ?? []).length ? (row.platforms ?? []).map((p) => <Badge key={p} variant="secondary" className="text-xs">{platformOptions.find(([key]) => key === p)?.[1] ?? p}</Badge>) : "-"}</div></TableCell><TableCell>{row.sales_owner_name || "-"}</TableCell><TableCell>{row.department_name || "未分配"}</TableCell><TableCell><div className="font-semibold">{row.project_manager_name || "未分配"}</div>{row.confirmed_at ? <Badge variant="outline" className="mt-1 text-emerald-700 border-emerald-300 text-xs">运营已确认</Badge> : null}</TableCell><TableCell>{row.allocation_status === "assigned" ? <Badge className="bg-emerald-600"><CheckCircle2 className="w-3 h-3 mr-1" />已分配</Badge> : <Badge variant="secondary" className="text-amber-700"><Clock3 className="w-3 h-3 mr-1" />待分配</Badge>}</TableCell><TableCell><Badge variant={row.sync_status === "failed" || row.sync_status === "rejected" ? "destructive" : "outline"}>{syncStatusLabels[row.sync_status ?? "not_connected"]}</Badge>{row.sync_error ? <div className="mt-1 max-w-[180px] truncate text-xs text-destructive" title={row.sync_error}>{row.sync_error}</div> : null}</TableCell><TableCell className="text-right"><div className="flex justify-end gap-2">{canManage && row.allocation_status === "assigned" && row.project_manager_id && <Button size="sm" variant="ghost" onClick={() => void resendNotify(row)}>通知</Button>}{canManage && <Button size="sm" variant="outline" onClick={() => openEditor(row)}>{row.allocation_status === "assigned" ? "编辑" : "分配"}</Button>}</div></TableCell></TableRow>)}</TableBody></Table></div></CardContent></Card>
-    <Dialog open={open} onOpenChange={setOpen}><DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-[680px]"><DialogHeader><DialogTitle>分配项目组 · {selected?.company_name}</DialogTitle></DialogHeader><div className="grid grid-cols-1 sm:grid-cols-2 gap-4 py-2"><div className="space-y-2"><Label>部门/项目组 *</Label><Select value={form.department_team_id ?? ""} onValueChange={(v) => setForm({ ...form, department_team_id: v })}><SelectTrigger><SelectValue placeholder="选择项目组" /></SelectTrigger><SelectContent>{teams.map((t) => <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>)}</SelectContent></Select></div><div className="space-y-2"><Label>项目负责人 *</Label><Select value={form.project_manager_id ?? ""} onValueChange={(v) => setForm({ ...form, project_manager_id: v })}><SelectTrigger><SelectValue placeholder="选择负责人" /></SelectTrigger><SelectContent>{people.map((p) => <SelectItem key={p.id} value={p.id}>{p.full_name}</SelectItem>)}</SelectContent></Select></div><div className="space-y-2 sm:col-span-2"><Label>投放平台（可多选）</Label><div className="flex flex-wrap gap-2 rounded-md border p-3">{platformOptions.map(([key, label]) => <label key={key} className="flex items-center gap-2 rounded border px-3 py-2 text-sm"><Checkbox checked={(form.platforms ?? []).includes(key)} onCheckedChange={(checked) => { const next = new Set(form.platforms ?? []); if (checked) next.add(key); else next.delete(key); setForm({ ...form, platforms: Array.from(next) }) }} />{label}</label>)}</div></div>{selected?.allocation_status === "assigned" && <div className="space-y-2 sm:col-span-2 rounded-md border p-3"><div className="flex items-center justify-between"><Label>项目组成员（负责人在飞书确认）</Label>{selected.confirmed_at ? <Badge variant="outline" className="border-emerald-300 text-emerald-700 text-xs">已确认</Badge> : <Badge variant="secondary" className="text-amber-700 text-xs">待负责人确认</Badge>}</div>{roleFields.map(([key, label, namesKey]) => <div key={key} className="flex gap-2 text-sm"><span className="w-32 shrink-0 text-muted-foreground">{label}</span><span>{((selected as any)[namesKey] as string[] | null)?.length ? ((selected as any)[namesKey] as string[]).join("、") : "未指定"}</span></div>)}</div>}
+    <Dialog open={open} onOpenChange={setOpen}><DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-[680px]"><DialogHeader><DialogTitle>分配项目组 · {selected?.company_name}</DialogTitle></DialogHeader><div className="grid grid-cols-1 sm:grid-cols-2 gap-4 py-2"><div className="space-y-2"><Label>部门/项目组 *</Label><Select value={form.department_id ?? ""} onValueChange={(v) => setForm({ ...form, department_id: v, project_manager_id: "" })}><SelectTrigger><SelectValue placeholder="选择部门" /></SelectTrigger><SelectContent>{departments.map((d) => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}</SelectContent></Select></div><div className="space-y-2"><Label>项目负责人 *</Label><Select value={form.project_manager_id ?? ""} onValueChange={(v) => setForm({ ...form, project_manager_id: v })}><SelectTrigger><SelectValue placeholder={form.department_id ? "选择负责人" : "先选择部门"} /></SelectTrigger><SelectContent>{candidateManagers.map((p) => <SelectItem key={p.id} value={p.id}>{p.full_name}</SelectItem>)}</SelectContent></Select>{form.department_id && candidateManagers.length === 0 ? <p className="text-xs text-amber-600">该部门（含下级）暂无在职成员，可先「同步飞书通讯录」或选择上级部门。</p> : null}</div><div className="space-y-2 sm:col-span-2"><Label>投放平台（可多选）</Label><div className="flex flex-wrap gap-2 rounded-md border p-3">{platformOptions.map(([key, label]) => <label key={key} className="flex items-center gap-2 rounded border px-3 py-2 text-sm"><Checkbox checked={(form.platforms ?? []).includes(key)} onCheckedChange={(checked) => { const next = new Set(form.platforms ?? []); if (checked) next.add(key); else next.delete(key); setForm({ ...form, platforms: Array.from(next) }) }} />{label}</label>)}</div></div>{selected?.allocation_status === "assigned" && <div className="space-y-2 sm:col-span-2 rounded-md border p-3"><div className="flex items-center justify-between"><Label>项目组成员（负责人在飞书确认）</Label>{selected.confirmed_at ? <Badge variant="outline" className="border-emerald-300 text-emerald-700 text-xs">已确认</Badge> : <Badge variant="secondary" className="text-amber-700 text-xs">待负责人确认</Badge>}</div>{roleFields.map(([key, label, namesKey]) => <div key={key} className="flex gap-2 text-sm"><span className="w-32 shrink-0 text-muted-foreground">{label}</span><span>{((selected as any)[namesKey] as string[] | null)?.length ? ((selected as any)[namesKey] as string[]).join("、") : "未指定"}</span></div>)}</div>}
 <div className="space-y-2 sm:col-span-2"><Label>客户详细情况链接</Label><Input value={form.detail_link || ""} onChange={(e) => setForm({ ...form, detail_link: e.target.value })} placeholder="https://docs.google.com/..." /></div><div className="space-y-2 sm:col-span-2"><Label>备注</Label><Input value={form.note || ""} onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder="补充项目执行要求" /></div><div className="space-y-1 sm:col-span-2 rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">各角色执行成员无需在此填写：保存后系统向项目负责人发送飞书确认卡片，由负责人在飞书中选定并提交团队名单；更换负责人或部门后需重新确认。</div></div><DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>取消</Button><Button onClick={() => void save()}>保存分配</Button></DialogFooter></DialogContent></Dialog>
   </div>
 }
