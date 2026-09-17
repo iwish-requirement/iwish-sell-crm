@@ -17,8 +17,7 @@ import { ProfileCenter } from "@/components/profile-center"
 
 import { toast } from "sonner"
 import { getBrowserSupabaseClient } from "@/lib/supabase/client"
-import { fetchCurrentUserPublicProfile } from "@/lib/auth/profile"
-import { allocationCenterNavigationEnabled, isAllocationCenterBetaUser } from "@/lib/feature-flags"
+import { allocationCenterNavigationEnabled } from "@/lib/feature-flags"
 import { APP_VERSION } from "@/lib/app-version"
 
 
@@ -121,10 +120,7 @@ export function AppRoot() {
     async function loadPermissions() {
       try {
         const supabase = getBrowserSupabaseClient()
-        const [{ data, error }, publicProfile] = await Promise.all([
-          supabase.rpc("rpc_me_permissions"),
-          fetchCurrentUserPublicProfile(supabase),
-        ])
+        const { data, error } = await supabase.rpc("rpc_me_permissions")
 
         if (!isMounted) return
 
@@ -156,7 +152,6 @@ export function AppRoot() {
 
         const value = (data as any) ?? {}
         const canReadAllocations = Boolean(value.canReadAllocations)
-        const isAllocationBetaUser = isAllocationCenterBetaUser(publicProfile)
         setMePermissions({
           canAssignLeads: Boolean(value.canAssignLeads),
           canClaimLeads: Boolean(value.canClaimLeads),
@@ -172,9 +167,8 @@ export function AppRoot() {
           canManageContracts: Boolean(value.canManageContracts),
           canReadAllocations,
           canManageAllocations: Boolean(value.canManageAllocations),
-          // The beta identity still must hold the normal allocations.read
-          // permission. This flag only gates UI exposure during rollout.
-          canAccessAllocationCenter: canReadAllocations && (allocationCenterNavigationEnabled || isAllocationBetaUser),
+          // Supabase permissions are authoritative; the nav flag only hides the entry.
+          canAccessAllocationCenter: canReadAllocations && allocationCenterNavigationEnabled,
           canImportLeads: Boolean(value.canImportLeads),
           leadScopeType: (value.leadScopeType as MePermissions["leadScopeType"]) ?? "self",
           leadCreateScopeType: (value.leadCreateScopeType as MePermissions["leadCreateScopeType"]) ?? "self",
