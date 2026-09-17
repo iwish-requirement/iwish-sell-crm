@@ -31,7 +31,6 @@ export type AllocationCardPayload = {
   salesOwnerName?: string | null
   platforms: string[]
   note?: string | null
-  detailLink?: string | null
 }
 
 export function buildAllocationConfirmCard(payload: AllocationCardPayload): unknown {
@@ -41,9 +40,6 @@ export function buildAllocationConfirmCard(payload: AllocationCardPayload): unkn
   ]
   if (payload.platforms.length) {
     lines.push(`**投放平台**：${payload.platforms.map(platformLabel).join("、")}`)
-  }
-  if (payload.detailLink) {
-    lines.push(`[客户详细情况](${payload.detailLink})`)
   }
   if (payload.note) {
     lines.push(`**备注**：${payload.note}`)

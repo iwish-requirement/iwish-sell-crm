@@ -82,7 +82,6 @@ export async function POST(req: NextRequest) {
     salesOwnerName: null,
     platforms: payload.platforms ?? [],
     note: payload.note,
-    detailLink: payload.detail_link,
   })
 
   const sent = await sendCardToUser(payload.pm_open_id, card)
