@@ -27,6 +27,7 @@ type NotifyPayload = {
   detail_link: string | null
   pm_open_id: string | null
   pm_name: string | null
+  sales_owner_name: string | null
   confirmed_at: string | null
 }
 
@@ -79,7 +80,7 @@ export async function POST(req: NextRequest) {
     companyName: payload.company_name || "未命名客户",
     customerName: payload.customer_name,
     departmentName: payload.department_name,
-    salesOwnerName: null,
+    salesOwnerName: payload.sales_owner_name,
     platforms: payload.platforms ?? [],
     note: payload.note,
   })
