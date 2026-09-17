@@ -14,3 +14,4 @@ test-results/
 *.crdownload
 *.log
 *.tsbuildinfo
+.feishu-sync-token.local
