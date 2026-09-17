@@ -62,27 +62,46 @@ export async function POST(req: NextRequest) {
     const departmentNameById = new Map(departments.map((d) => [d.openDepartmentId, d.name]))
 
     const byOpenId = new Map<string, Awaited<ReturnType<typeof listUsersByDepartment>>[number]>()
+    // find_by_department 不返回 department_ids（字段权限限制），
+    // 但用户是按部门拉取的，遍历时即可记录归属。
+    const departmentIdsByUser = new Map<string, Set<string>>()
     for (const departmentId of ["0", ...departments.map((d) => d.openDepartmentId)]) {
       const users = await listUsersByDepartment(departmentId)
       for (const user of users) {
         if (!byOpenId.has(user.openId)) byOpenId.set(user.openId, user)
+        if (departmentId !== "0") {
+          let set = departmentIdsByUser.get(user.openId)
+          if (!set) {
+            set = new Set()
+            departmentIdsByUser.set(user.openId, set)
+          }
+          set.add(departmentId)
+        }
       }
     }
 
     const now = new Date().toISOString()
-    const rows = Array.from(byOpenId.values()).map((user) => ({
-      feishu_user_id: user.openId,
-      feishu_union_id: user.unionId,
-      full_name: user.name,
-      email: user.email,
-      mobile: user.mobile,
-      job_title: user.jobTitle,
-      city: user.city,
-      employee_type: user.employeeType,
-      department_names: user.departmentIds.map((id) => departmentNameById.get(id)).filter((n): n is string => Boolean(n)),
-      is_active: true,
-      synced_at: now,
-    }))
+    const rows = Array.from(byOpenId.values()).map((user) => {
+      const departmentNameSet = new Set<string>()
+      const ids = new Set<string>([...(departmentIdsByUser.get(user.openId) ?? []), ...user.departmentIds])
+      for (const id of ids) {
+        const name = departmentNameById.get(id)
+        if (name) departmentNameSet.add(name)
+      }
+      return {
+        feishu_user_id: user.openId,
+        feishu_union_id: user.unionId,
+        full_name: user.name,
+        email: user.email,
+        mobile: user.mobile,
+        job_title: user.jobTitle,
+        city: user.city,
+        employee_type: user.employeeType,
+        department_names: Array.from(departmentNameSet),
+        is_active: true,
+        synced_at: now,
+      }
+    })
 
     for (const part of chunk(rows, 100)) {
       const { error } = await admin.from("ops_members").upsert(part, { onConflict: "feishu_user_id" })
