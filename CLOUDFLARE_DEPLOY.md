@@ -18,14 +18,9 @@
 
 ## 成交中心灰度
 
-分配中心目前默认关闭导航，仅允许 `lin88@iwishweb.com` 在直接访问 `/allocations` 时进行灰度测试。灰度开关位于 `lib/feature-flags.ts`：
+分配中心已于 2026-09-17 正式上线：导航默认对持有 `allocations.read` 权限的账号显示。开关位于 `lib/feature-flags.ts`：
 
-- `NEXT_PUBLIC_ALLOCATION_CENTER_NAV_ENABLED=true`：重新显示有权限账号的导航；
-- `NEXT_PUBLIC_ALLOCATION_CENTER_BETA_EMAILS`：逗号分隔的灰度账号邮箱；
-- `NEXT_PUBLIC_ALLOCATION_CENTER_BETA_USER_IDS`：逗号分隔的 Supabase 用户 ID；
-- `NEXT_PUBLIC_ALLOCATION_CENTER_BETA_NAMES`：没有邮箱可用时的显示名匹配。
-
-这些变量参与前端构建，应配置在 Workers Git 集成的构建环境中，而不是只配置为 Worker 运行时 Secret。数据库权限仍由 `allocations.read` / `allocations.manage` 控制。
+- `NEXT_PUBLIC_ALLOCATION_CENTER_NAV_ENABLED=false`：需要临时隐藏入口时在构建环境设置（不设置或设为其他值均为显示）。
 
 ## 将生产域名切到 Worker
 
