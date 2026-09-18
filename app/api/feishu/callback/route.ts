@@ -42,15 +42,15 @@ function toStringArray(value: unknown): string[] {
   return []
 }
 
-function logCallback(
+async function logCallback(
   admin: ReturnType<typeof createAdminSupabaseClient>,
   outcome: string,
   detail: unknown,
   eventType?: string,
   messageId?: string,
   operatorOpenId?: string,
-): void {
-  // 异步写日志即可，不阻塞回调响应。
+): Promise<void> {
+  // 必须等待写入完成：Worker 在返回响应后会取消后台 I/O。
   await admin
     .from("feishu_callback_log")
     .insert({
