@@ -40,6 +40,7 @@ import {
   Clock,
   LayoutGrid,
   List,
+  Pencil,
 } from "lucide-react"
 
 import { toast } from "sonner"
@@ -767,6 +768,11 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     type: "",
     nextDate: "",
   })
+
+  // 下一步行动卡片的日期快捷修改
+  const [isEditingNextAction, setIsEditingNextAction] = useState(false)
+  const [nextActionDate, setNextActionDate] = useState("")
+  const [isSavingNextAction, setIsSavingNextAction] = useState(false)
 
   const [advanceDialogOpen, setAdvanceDialogOpen] = useState(false)
   const [upgradeReason, setUpgradeReason] = useState("")
@@ -2332,8 +2338,46 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     }
   }
 
+  const handleSaveNextActionDate = async () => {
+    if (!selectedLead || !nextActionDate) {
+      return
+    }
+    const todayStr = new Date().toLocaleDateString("en-CA")
+    if (nextActionDate < todayStr) {
+      toast.error("下次跟进日期不能早于今天")
+      return
+    }
+
+    try {
+      setIsSavingNextAction(true)
+      await updateLead(selectedLead.id as string, { next_contact_at: nextActionDate })
+      setLeads((prev) =>
+        prev.map((l) => (l.id === selectedLead.id ? { ...l, nextContactAt: nextActionDate } : l)),
+      )
+      setSelectedLead({ ...selectedLead, nextContactAt: nextActionDate })
+      toast.success("下次跟进日期已更新")
+      setIsEditingNextAction(false)
+    } catch (err) {
+      const friendly = mapRpcError(err as any, {
+        title: "更新下次跟进日期失败",
+        description: "请稍后重试",
+      })
+      toast.error(friendly.title, { description: friendly.description })
+    } finally {
+      setIsSavingNextAction(false)
+    }
+  }
+
   const handleLogFollowUp = async () => {
     if (!selectedLead || !followUp.content || !followUp.type) {
+      return
+    }
+
+    const todayStr = new Date().toLocaleDateString("en-CA")
+    if (followUp.nextDate && followUp.nextDate < todayStr) {
+      toast.error("下次跟进日期不能早于今天", {
+        description: "请选择今天或未来的日期",
+      })
       return
     }
 
@@ -4356,14 +4400,68 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                         <Clock className="w-3 h-3" />
                         下一步行动
                       </p>
-                      {selectedLead.nextContactAt && (
-                        <span className="rounded-full bg-emerald-500/10 text-emerald-700 px-2 py-0.5 text-[11px]">
-                          下次跟进已安排
-                        </span>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {selectedLead.nextContactAt && (
+                          (() => {
+                            const todayStr = new Date().toLocaleDateString("en-CA")
+                            const dateStr = selectedLead.nextContactAt.slice(0, 10)
+                            const isOverdue = dateStr < todayStr
+                            return (
+                              <span
+                                className={`rounded-full px-2 py-0.5 text-[11px] ${
+                                  isOverdue
+                                    ? "bg-red-500/10 text-red-600"
+                                    : "bg-emerald-500/10 text-emerald-700"
+                                }`}
+                              >
+                                {isOverdue ? "下次跟进已逾期" : "下次跟进已安排"}
+                              </span>
+                            )
+                          })()
+                        )}
+                        {!isEditingNextAction && (
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+                            onClick={() => {
+                              setNextActionDate(
+                                selectedLead.nextContactAt ? selectedLead.nextContactAt.slice(0, 10) : "",
+                              )
+                              setIsEditingNextAction(true)
+                            }}
+                          >
+                            <Pencil className="w-3 h-3" />
+                            修改
+                          </button>
+                        )}
+                      </div>
                     </div>
                     <div className="space-y-1">
-                      {selectedLead.nextContactAt ? (
+                      {isEditingNextAction ? (
+                        <div className="flex items-center gap-2">
+                          <Input
+                            type="date"
+                            min={new Date().toLocaleDateString("en-CA")}
+                            value={nextActionDate}
+                            onChange={(e) => setNextActionDate(e.target.value)}
+                            className="h-8 text-sm"
+                          />
+                          <Button
+                            size="sm"
+                            onClick={handleSaveNextActionDate}
+                            disabled={isSavingNextAction || !nextActionDate}
+                          >
+                            {isSavingNextAction ? "保存中..." : "保存"}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setIsEditingNextAction(false)}
+                          >
+                            取消
+                          </Button>
+                        </div>
+                      ) : selectedLead.nextContactAt ? (
                         <p className="text-sm">
                           下次跟进日期：
 
@@ -4899,6 +4997,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                       <Input
                         type="date"
                         placeholder="下次跟进日期"
+                        min={new Date().toLocaleDateString("en-CA")}
                         value={followUp.nextDate}
                         onChange={(e) => setFollowUp({ ...followUp, nextDate: e.target.value })}
                       />
