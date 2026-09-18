@@ -56,6 +56,17 @@ async function handleCardAction(body: CardActionBody): Promise<void> {
     .maybeSingle()
   if (mappingError || !mapping?.assignment_id) {
     console.error("feishu card mapping not found", { messageId, mappingError })
+    // 给点击者可见反馈，避免"点了没反应"
+    await updateCardMessage(messageId, {
+      schema: "2.0",
+      config: { update_multi: true },
+      header: { title: { tag: "plain_text", content: "卡片已失效" }, template: "red" },
+      body: {
+        elements: [
+          { tag: "div", text: { tag: "lark_md", content: "该卡片对应的分配单不存在或已被重新分配。请在 CRM 分配中心点击「通知」重新发送确认卡片。" } },
+        ],
+      },
+    }).catch(() => undefined)
     return
   }
 
