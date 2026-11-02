@@ -3527,94 +3527,95 @@ function OrganizationTab() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
-
-          <Dialog
-            open={disableDialogOpen}
-            onOpenChange={(open) => {
-              setDisableDialogOpen(open)
-              if (!open) {
-                setDisableReason("")
-                setStatusDialogTarget(null)
-              }
-            }}
-          >
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle className="text-xl font-bold">禁用账号: {statusDialogTarget?.name}</DialogTitle>
-                <DialogDescription className="text-sm">禁用后该成员将无法登录系统，操作会记录在审计日志中。</DialogDescription>
-              </DialogHeader>
-              <div className="py-4 space-y-3">
-                <div className="space-y-2">
-                  <Label htmlFor="disableReason" className="text-sm font-medium">禁用原因</Label>
-                  <Textarea
-                    id="disableReason"
-                    value={disableReason}
-                    onChange={(e) => setDisableReason(e.target.value)}
-                    placeholder="请输入禁用原因，例如长期未在岗、违反销售规范等"
-                    className="text-sm"
-                  />
-                  <p className="text-xs text-muted-foreground">原因会写入审计日志，方便后续追溯。</p>
-                </div>
-              </div>
-
-              <DialogFooter>
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setDisableDialogOpen(false)
-                    setDisableReason("")
-                    setStatusDialogTarget(null)
-                  }}
-                >
-                  取消
-                </Button>
-                <Button
-                  variant="destructive"
-                  onClick={handleDisableAccount}
-                  disabled={isDisablingUser || !disableReason.trim() || !statusDialogTarget}
-                >
-                  {isDisablingUser ? "正在禁用..." : "确认禁用"}
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-
-          <Dialog
-            open={restoreDialogOpen}
-            onOpenChange={(open) => {
-              setRestoreDialogOpen(open)
-              if (!open) {
-                setStatusDialogTarget(null)
-              }
-            }}
-          >
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>恢复账号: {statusDialogTarget?.name}</DialogTitle>
-                <DialogDescription>恢复后该成员将重新变为在职状态，并可以登录系统。</DialogDescription>
-              </DialogHeader>
-              <DialogFooter>
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setRestoreDialogOpen(false)
-                    setStatusDialogTarget(null)
-                  }}
-                >
-                  取消
-                </Button>
-                <Button
-                  onClick={handleRestoreAccount}
-                  disabled={isRestoringUser || !statusDialogTarget}
-                  className="bg-green-600 hover:bg-green-700"
-                >
-                  {isRestoringUser ? "正在恢复..." : "确认恢复"}
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
         </TabsContent>
       </Tabs>
+
+      {/* 禁用/恢复弹窗挂在 Tabs 外，避免「在职成员」Tab 下 pending 内容未挂载导致点击无反应 */}
+      <Dialog
+        open={disableDialogOpen}
+        onOpenChange={(open) => {
+          setDisableDialogOpen(open)
+          if (!open) {
+            setDisableReason("")
+            setStatusDialogTarget(null)
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold">禁用账号: {statusDialogTarget?.name}</DialogTitle>
+            <DialogDescription className="text-sm">禁用后该成员将无法登录系统，操作会记录在审计日志中。</DialogDescription>
+          </DialogHeader>
+          <div className="py-4 space-y-3">
+            <div className="space-y-2">
+              <Label htmlFor="disableReason" className="text-sm font-medium">禁用原因</Label>
+              <Textarea
+                id="disableReason"
+                value={disableReason}
+                onChange={(e) => setDisableReason(e.target.value)}
+                placeholder="请输入禁用原因，例如长期未在岗、违反销售规范等"
+                className="text-sm"
+              />
+              <p className="text-xs text-muted-foreground">原因会写入审计日志，方便后续追溯。</p>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setDisableDialogOpen(false)
+                setDisableReason("")
+                setStatusDialogTarget(null)
+              }}
+            >
+              取消
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDisableAccount}
+              disabled={isDisablingUser || !disableReason.trim() || !statusDialogTarget}
+            >
+              {isDisablingUser ? "正在禁用..." : "确认禁用"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={restoreDialogOpen}
+        onOpenChange={(open) => {
+          setRestoreDialogOpen(open)
+          if (!open) {
+            setStatusDialogTarget(null)
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>恢复账号: {statusDialogTarget?.name}</DialogTitle>
+            <DialogDescription>恢复后该成员将重新变为在职状态，并可以登录系统。</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setRestoreDialogOpen(false)
+                setStatusDialogTarget(null)
+              }}
+            >
+              取消
+            </Button>
+            <Button
+              onClick={handleRestoreAccount}
+              disabled={isRestoringUser || !statusDialogTarget}
+              className="bg-green-600 hover:bg-green-700"
+            >
+              {isRestoringUser ? "正在恢复..." : "确认恢复"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
