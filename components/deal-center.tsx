@@ -1,6 +1,8 @@
 "use client"
 
 import { useContext, useEffect, useMemo, useState } from "react"
+import { DealContractSubmissionDialog } from "@/components/deal-contract-submission"
+import { DealHistory } from "@/components/deal-history"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -11,6 +13,7 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { formatDealDate } from "@/lib/services/deal-date"
 import { DollarSign, Search } from "lucide-react"
 import { toast } from "sonner"
 
@@ -24,7 +27,7 @@ import type { UserProfile } from "@/lib/auth/profile"
 import type { LeadSecureRow, LeadSecureQueryParams } from "@/lib/services/leads"
 import { fetchLeadsSecureView } from "@/lib/services/leads"
 import type { ContractRow, ContractPaymentRow } from "@/lib/services/contracts"
-import { fetchContractByLeadId, upsertContractForLead, fetchContractPayments, addContractPayment } from "@/lib/services/contracts"
+import { fetchContractByLeadId, upsertContractForLead, fetchContractPayments } from "@/lib/services/contracts"
 
 
 
@@ -66,6 +69,25 @@ function normalizeCurrency(value: string | null | undefined): string {
 }
 
 export function DealCenter() {
+  const permissions = useContext(MePermissionsContext)
+  const [view, setView] = useState<"current" | "history">("current")
+
+  return (
+    <div className="space-y-4">
+      {permissions?.canReadContracts && (
+        <nav aria-label="成交中心视图" className="flex flex-wrap gap-2">
+          <Button variant={view === "current" ? "default" : "outline"} size="sm" aria-pressed={view === "current"}
+            onClick={() => setView("current")}>成交明细</Button>
+          <Button variant={view === "history" ? "default" : "outline"} size="sm" aria-pressed={view === "history"}
+            onClick={() => setView("history")}>历史成交</Button>
+        </nav>
+      )}
+      {view === "history" && permissions?.canReadContracts ? <DealHistory /> : <CurrentDealCenter />}
+    </div>
+  )
+}
+
+function CurrentDealCenter() {
   const mePermissions = useContext(MePermissionsContext)
   const [currentProfile, setCurrentProfile] = useState<UserProfile | null>(null)
   const [timeFilter, setTimeFilter] = useState<string>("90d")
@@ -74,6 +96,7 @@ export function DealCenter() {
   const [deals, setDeals] = useState<DealRow[]>([])
   const [selectedDeal, setSelectedDeal] = useState<DealRow | null>(null)
   const [isDetailOpen, setIsDetailOpen] = useState(false)
+  const [isSubmissionOpen, setIsSubmissionOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
   const [sourceFilter, setSourceFilter] = useState<string>("all")
   const [sortOption, setSortOption] = useState<string>("recent")
@@ -88,11 +111,6 @@ export function DealCenter() {
   const [isContractDialogOpen, setIsContractDialogOpen] = useState(false)
   const [contractPayments, setContractPayments] = useState<ContractPaymentRow[]>([])
   const [isPaymentsLoading, setIsPaymentsLoading] = useState(false)
-  const [isPaymentDialogOpen, setIsPaymentDialogOpen] = useState(false)
-  const [paymentAmountInput, setPaymentAmountInput] = useState("")
-  const [paymentPaidAtInput, setPaymentPaidAtInput] = useState("")
-  const [paymentMethodInput, setPaymentMethodInput] = useState("")
-  const [paymentNoteInput, setPaymentNoteInput] = useState("")
 
   const [contractNumberInput, setContractNumberInput] = useState("")
   const [contractTitleInput, setContractTitleInput] = useState("")
@@ -442,7 +460,10 @@ export function DealCenter() {
         return
       }
 
+      setSelectedContract(null)
+      setContractPayments([])
       setIsContractLoading(true)
+      setIsPaymentsLoading(false)
       let contract: ContractRow | null = null
       try {
         contract = await fetchContractByLeadId(selectedDeal.id)
@@ -584,14 +605,14 @@ export function DealCenter() {
   }, [filteredDeals])
 
   const firstPaymentDate = useMemo(() => {
-    if (contractPayments.length === 0) {
+    if (selectedContract?.leadId !== selectedDeal?.id || contractPayments.length === 0) {
       return null
     }
     const sorted = [...contractPayments].filter((p) => !!p.paidAt).sort((a, b) => {
       return new Date(a.paidAt ?? "1970-01-01").getTime() - new Date(b.paidAt ?? "1970-01-01").getTime()
     })
     return sorted.length > 0 ? sorted[0].paidAt : null
-  }, [contractPayments])
+  }, [contractPayments, selectedContract?.leadId, selectedDeal?.id])
 
   if (isPermissionsLoading) {
     return (
@@ -789,9 +810,9 @@ export function DealCenter() {
                 <TableHeader>
                   <TableRow>
                     <TableHead className="whitespace-nowrap text-xs font-semibold">成交日期</TableHead>
-                    <TableHead className="whitespace-nowrap text-xs font-semibold">客户 / 公司</TableHead>
+                    <TableHead className="whitespace-nowrap text-xs font-semibold">客户全称</TableHead>
                     <TableHead className="whitespace-nowrap text-xs font-semibold">来源</TableHead>
-                    <TableHead className="whitespace-nowrap text-xs font-semibold">负责人</TableHead>
+                    <TableHead className="whitespace-nowrap text-xs font-semibold">销售人员</TableHead>
                     <TableHead className="whitespace-nowrap text-right text-xs font-semibold">成交金额</TableHead>
                     <TableHead className="whitespace-nowrap text-xs font-semibold">项目组状态</TableHead>
                   </TableRow>
@@ -810,7 +831,7 @@ export function DealCenter() {
 
                       <TableCell className="whitespace-nowrap">
                         {(deal.closedAt ?? deal.createdAt)
-                          ? new Date(deal.closedAt ?? deal.createdAt).toLocaleDateString("zh-CN")
+                          ? formatDealDate(deal.closedAt ?? deal.createdAt)
                           : "--"}
                       </TableCell>
 
@@ -863,7 +884,7 @@ export function DealCenter() {
                     <SheetTitle className="text-left text-xl font-bold truncate">{selectedDeal.companyName}</SheetTitle>
                     <p className="text-sm text-muted-foreground truncate">
                       {selectedDeal.customerName} · {selectedDeal.source}
-                      {selectedDeal.ownerName ? ` · 负责人：${selectedDeal.ownerName}` : ""}
+                      {selectedDeal.ownerName ? ` · 销售人员 ${selectedDeal.ownerName}` : ""}
                     </p>
 
                   </div>
@@ -878,15 +899,15 @@ export function DealCenter() {
                     <p className="text-xs text-muted-foreground">创建时间</p>
                     <p className="font-semibold text-foreground">
                       {selectedDeal.createdAt
-                        ? new Date(selectedDeal.createdAt).toLocaleDateString("zh-CN")
+                        ? formatDealDate(selectedDeal.createdAt)
                         : "--"}
                     </p>
                   </div>
                   <div className="space-y-1">
-                    <p className="text-xs text-muted-foreground">成交时间（首笔回款）</p>
+                    <p className="text-xs text-muted-foreground" title="首笔回款">实际到款时间</p>
                     <p className="font-semibold text-foreground">
                       {firstPaymentDate
-                        ? new Date(firstPaymentDate).toLocaleDateString("zh-CN")
+                        ? formatDealDate(firstPaymentDate)
                         : "尚未回款"}
                     </p>
                   </div>
@@ -908,7 +929,7 @@ export function DealCenter() {
                     </p>
                   </div>
                   <div className="space-y-1">
-                    <p className="text-xs text-muted-foreground">负责销售</p>
+                    <p className="text-xs text-muted-foreground">销售人员</p>
                     <p className="font-semibold text-foreground">
                       {selectedDeal.ownerName ?? "未分配"}
                     </p>
@@ -922,184 +943,9 @@ export function DealCenter() {
                   )}
                 </div>
 
-                <div className="space-y-3 pt-4 border-t border-border/60 mt-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-sm font-bold text-foreground uppercase tracking-wider">合同信息</p>
-                    {canManageContracts && selectedDeal && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-7 px-2 text-xs"
-                        onClick={() => {
-
-                          if (selectedContract) {
-                            setContractNumberInput(selectedContract.contractNumber)
-                            setContractTitleInput(selectedContract.title ?? "")
-                            setContractAmountInput(String(selectedContract.amount ?? ""))
-                            setContractCurrencyInput(selectedContract.currency || "CNY")
-                            setContractSignedAtInput(
-                              selectedContract.signedAt
-                                ? new Date(selectedContract.signedAt).toISOString().slice(0, 10)
-                                : "",
-                            )
-                            setContractStartDateInput(
-                              selectedContract.startDate
-                                ? new Date(selectedContract.startDate).toISOString().slice(0, 10)
-                                : "",
-                            )
-                            setContractEndDateInput(
-                              selectedContract.endDate
-                                ? new Date(selectedContract.endDate).toISOString().slice(0, 10)
-                                : "",
-                            )
-                            setContractIsRenewalInput(Boolean(selectedContract.isRenewal))
-                          } else {
-                            setContractNumberInput("")
-                            setContractTitleInput("")
-                            setContractAmountInput("")
-                            setContractCurrencyInput("CNY")
-                            setContractSignedAtInput("")
-                            setContractStartDateInput("")
-                            setContractEndDateInput("")
-                            setContractIsRenewalInput(false)
-                          }
-                          setIsContractDialogOpen(true)
-                        }}
-                      >
-                        {selectedContract ? "编辑合同" : "新增合同"}
-                      </Button>
-                    )}
-                  </div>
-                  {isContractLoading ? (
-
-                    <div className="space-y-2 text-sm">
-                      <Skeleton className="h-4 w-32" />
-                      <Skeleton className="h-4 w-40" />
-                    </div>
-                  ) : !selectedContract ? (
-                    <p className="text-xs text-muted-foreground">
-                      当前成交尚未关联合同，可以使用右上角按钮补充合同编号、签约金额与服务周期。
-                    </p>
-                  ) : (
-                    <div className="grid grid-cols-2 gap-4 text-sm">
-                      <div className="space-y-1">
-                        <p className="text-xs text-muted-foreground">合同编号</p>
-                        <p className="font-semibold text-foreground break-words">
-                          {selectedContract.contractNumber}
-                        </p>
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-xs text-muted-foreground">合同金额</p>
-                        <p className="font-bold text-primary">
-                          {new Intl.NumberFormat("zh-CN", {
-                            style: "currency",
-                            currency: normalizeCurrency(selectedContract.currency),
-                            maximumFractionDigits: 0,
-                          }).format(selectedContract.amount || 0)}
-                        </p>
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-xs text-muted-foreground">签约时间</p>
-                        <p className="font-semibold text-foreground">
-                          {selectedContract.signedAt
-                            ? new Date(selectedContract.signedAt).toLocaleDateString("zh-CN")
-                            : "--"}
-                        </p>
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-xs text-muted-foreground">合同周期</p>
-                        <p className="font-semibold text-foreground">
-                          {selectedContract.startDate
-                            ? `${new Date(selectedContract.startDate).toLocaleDateString("zh-CN")} ~ ${selectedContract.endDate ? new Date(selectedContract.endDate).toLocaleDateString("zh-CN") : "--"}`
-                            : "--"}
-                        </p>
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-xs text-muted-foreground">是否续费合同</p>
-                        <p className="font-semibold text-foreground">
-                          {selectedContract.isRenewal ? "续费合同" : "首单合同"}
-                        </p>
-                      </div>
-                    </div>
-                  )}
+                <div className="border-t pt-4">
+                  <Button type="button" onClick={() => setIsSubmissionOpen(true)}>合同资料提交</Button>
                 </div>
-
-                <div className="space-y-3 pt-4 border-t border-border/60 mt-4">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-sm font-bold text-foreground uppercase tracking-wider">回款记录</p>
-                    {canManageContracts && selectedContract && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-7 px-2 text-xs"
-                        onClick={() => {
-                          const today = new Date()
-                          const todayStr = today.toISOString().slice(0, 10)
-                          setPaymentAmountInput("")
-                          setPaymentPaidAtInput(todayStr)
-                          setPaymentMethodInput("")
-                          setPaymentNoteInput("")
-                          setIsPaymentDialogOpen(true)
-                        }}
-                      >
-                        新增回款
-                      </Button>
-                    )}
-                  </div>
-                  {isPaymentsLoading ? (
-                    <div className="space-y-2 text-sm">
-                      <Skeleton className="h-4 w-32" />
-                      <Skeleton className="h-4 w-40" />
-                    </div>
-                  ) : contractPayments.length === 0 ? (
-                    <p className="text-xs text-muted-foreground">当前合同暂无回款记录。</p>
-                  ) : (
-                    <div className="w-full overflow-x-auto">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead className="whitespace-nowrap text-xs font-semibold">到账日期</TableHead>
-                            <TableHead className="whitespace-nowrap text-right text-xs font-semibold">回款金额</TableHead>
-                            <TableHead className="whitespace-nowrap text-xs font-semibold">方式</TableHead>
-                            <TableHead className="whitespace-nowrap text-xs font-semibold">备注</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {contractPayments.map((payment) => (
-                            <TableRow key={payment.id} className="text-xs">
-                              <TableCell className="whitespace-nowrap">
-                                {payment.paidAt
-                                  ? new Date(payment.paidAt).toLocaleDateString("zh-CN")
-                                  : "--"}
-                              </TableCell>
-                              <TableCell className="text-right whitespace-nowrap text-foreground font-semibold">
-                                {new Intl.NumberFormat("zh-CN", {
-                                  style: "currency",
-                                  currency: normalizeCurrency(payment.currency),
-                                  maximumFractionDigits: 0,
-                                }).format(payment.amount || 0)}
-                              </TableCell>
-                              <TableCell className="whitespace-nowrap">
-                                <span className="text-muted-foreground">
-                                  {payment.method || "-"}
-                                </span>
-                              </TableCell>
-                              <TableCell className="max-w-[220px]">
-                                <span className="text-muted-foreground truncate inline-block align-top max-w-full">
-                                  {payment.note || "-"}
-                                </span>
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </div>
-                  )}
-                </div>
-
-                <p className="text-xs text-muted-foreground">
-                  该视图基于线索的成交结果与预算字段进行统计，并挂载合同与回款视图中的核心信息，后续可以在续费中心与分析看板中继续扩展回款相关指标。
-                </p>
 
 
 
@@ -1108,6 +954,179 @@ export function DealCenter() {
           )}
         </SheetContent>
       </Sheet>
+
+      {selectedDeal && (
+        <DealContractSubmissionDialog key={selectedDeal.id}
+          leadId={selectedDeal.id} companyName={selectedDeal.companyName} salesperson={selectedDeal.ownerName}
+          open={isSubmissionOpen} onOpenChange={setIsSubmissionOpen}>
+          <details className="border-t pt-4">
+            <summary className="cursor-pointer text-sm font-semibold">已有合同与回款记录</summary>
+          <div className="space-y-3 pt-4 border-t border-border/60 mt-2">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-bold text-foreground uppercase tracking-wider">合同信息</p>
+              {canManageContracts && selectedDeal && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => {
+
+                    if (selectedContract) {
+                      setContractNumberInput(selectedContract.contractNumber)
+                      setContractTitleInput(selectedContract.title ?? "")
+                      setContractAmountInput(String(selectedContract.amount ?? ""))
+                      setContractCurrencyInput(selectedContract.currency || "CNY")
+                      setContractSignedAtInput(
+                        selectedContract.signedAt
+                          ? new Date(selectedContract.signedAt).toISOString().slice(0, 10)
+                          : "",
+                      )
+                      setContractStartDateInput(
+                        selectedContract.startDate
+                          ? new Date(selectedContract.startDate).toISOString().slice(0, 10)
+                          : "",
+                      )
+                      setContractEndDateInput(
+                        selectedContract.endDate
+                          ? new Date(selectedContract.endDate).toISOString().slice(0, 10)
+                          : "",
+                      )
+                      setContractIsRenewalInput(Boolean(selectedContract.isRenewal))
+                    } else {
+                      setContractNumberInput("")
+                      setContractTitleInput("")
+                      setContractAmountInput("")
+                      setContractCurrencyInput("CNY")
+                      setContractSignedAtInput("")
+                      setContractStartDateInput("")
+                      setContractEndDateInput("")
+                      setContractIsRenewalInput(false)
+                    }
+                    setIsContractDialogOpen(true)
+                  }}
+                >
+                  {selectedContract ? "编辑合同" : "新增合同"}
+                </Button>
+              )}
+            </div>
+            {isContractLoading ? (
+
+              <div className="space-y-2 text-sm">
+                <Skeleton className="h-4 w-32" />
+                <Skeleton className="h-4 w-40" />
+              </div>
+            ) : !selectedContract ? (
+              <p className="text-xs text-muted-foreground">
+                当前成交尚未关联合同。可补充合同编号、签订合同时间和服务日期。
+              </p>
+            ) : (
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div className="space-y-1">
+                  <p className="text-xs text-muted-foreground">合同编号</p>
+                  <p className="font-semibold text-foreground break-words">
+                    {selectedContract.contractNumber}
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-xs text-muted-foreground">合同金额</p>
+                  <p className="font-bold text-primary">
+                    {new Intl.NumberFormat("zh-CN", {
+                      style: "currency",
+                      currency: normalizeCurrency(selectedContract.currency),
+                      maximumFractionDigits: 0,
+                    }).format(selectedContract.amount || 0)}
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-xs text-muted-foreground">签订合同时间</p>
+                  <p className="font-semibold text-foreground">
+                    {selectedContract.signedAt
+                      ? formatDealDate(selectedContract.signedAt)
+                      : "--"}
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-xs text-muted-foreground">合同服务开始计算日期</p>
+                  <p className="font-semibold text-foreground">
+                    {selectedContract.startDate
+                      ? formatDealDate(selectedContract.startDate)
+                      : "--"}
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-xs text-muted-foreground">合同结束日期</p>
+                  <p className="font-semibold text-foreground">
+                    {selectedContract.endDate ? formatDealDate(selectedContract.endDate) : "--"}
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-xs text-muted-foreground">是否续费合同</p>
+                  <p className="font-semibold text-foreground">
+                    {selectedContract.isRenewal ? "续费合同" : "首单合同"}
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-3 pt-4 border-t border-border/60 mt-4">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-bold text-foreground uppercase tracking-wider">回款记录</p>
+            </div>
+            {isPaymentsLoading ? (
+              <div className="space-y-2 text-sm">
+                <Skeleton className="h-4 w-32" />
+                <Skeleton className="h-4 w-40" />
+              </div>
+            ) : contractPayments.length === 0 ? (
+              <p className="text-xs text-muted-foreground">当前合同暂无回款记录。</p>
+            ) : (
+              <div className="w-full overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="whitespace-nowrap text-xs font-semibold">确认到账日期</TableHead>
+                      <TableHead className="whitespace-nowrap text-right text-xs font-semibold">确认到账金额</TableHead>
+                      <TableHead className="whitespace-nowrap text-xs font-semibold">方式</TableHead>
+                      <TableHead className="whitespace-nowrap text-xs font-semibold">备注</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {contractPayments.map((payment) => (
+                      <TableRow key={payment.id} className="text-xs">
+                        <TableCell className="whitespace-nowrap">
+                          {payment.paidAt
+                            ? formatDealDate(payment.paidAt)
+                            : "--"}
+                        </TableCell>
+                        <TableCell className="text-right whitespace-nowrap text-foreground font-semibold">
+                          {new Intl.NumberFormat("zh-CN", {
+                            style: "currency",
+                            currency: normalizeCurrency(payment.currency),
+                            maximumFractionDigits: 0,
+                          }).format(payment.amount || 0)}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          <span className="text-muted-foreground">
+                            {payment.method || "-"}
+                          </span>
+                        </TableCell>
+                        <TableCell className="max-w-[220px]">
+                          <span className="text-muted-foreground truncate inline-block align-top max-w-full">
+                            {payment.note || "-"}
+                          </span>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </div>
+
+          </details>
+        </DealContractSubmissionDialog>
+      )}
 
       {selectedDeal && canManageContracts && (
         <Dialog open={isContractDialogOpen} onOpenChange={setIsContractDialogOpen}>
@@ -1157,7 +1176,7 @@ export function DealCenter() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-2">
-                  <Label htmlFor="signedAt">签约日期</Label>
+                  <Label htmlFor="signedAt">签订合同时间</Label>
                   <Input
                     id="signedAt"
                     type="date"
@@ -1166,7 +1185,7 @@ export function DealCenter() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="startDate">合同开始日期</Label>
+                  <Label htmlFor="startDate">合同服务开始计算日期</Label>
                   <Input
                     id="startDate"
                     type="date"
@@ -1219,19 +1238,19 @@ export function DealCenter() {
 
                   const amount = Number.parseFloat(contractAmountInput || "0")
                   if (!contractNumberInput.trim() || !contractSignedAtInput || Number.isNaN(amount) || amount <= 0) {
-                    toast.error("请完善合同编号、签约日期和合法的合同金额")
+                    toast.error("请填写合同编号、签订合同时间和有效的合同金额")
                     return
                   }
 
                   if (!contractStartDateInput || !contractEndDateInput) {
-                    toast.error("请填写合同开始日期和结束日期")
+                    toast.error("请填写合同服务开始计算日期和合同结束日期")
                     return
                   }
 
                   const startDate = new Date(contractStartDateInput)
                   const endDate = new Date(contractEndDateInput)
                   if (endDate.getTime() < startDate.getTime()) {
-                    toast.error("合同结束日期不能早于开始日期")
+                    toast.error("合同结束日期不能早于合同服务开始计算日期")
                     return
                   }
 
@@ -1269,105 +1288,7 @@ export function DealCenter() {
         </Dialog>
       )}
 
-      {selectedContract && canManageContracts && (
-        <Dialog open={isPaymentDialogOpen} onOpenChange={setIsPaymentDialogOpen}>
-          <DialogContent className="sm:max-w-[420px]">
-            <DialogHeader>
-              <DialogTitle>新增回款</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4 py-2">
-              <div className="space-y-2">
-                <Label htmlFor="paymentAmount">回款金额</Label>
-                <Input
-                  id="paymentAmount"
-                  type="number"
-                  min="0"
-                  value={paymentAmountInput}
-                  onChange={(e) => setPaymentAmountInput(e.target.value)}
-                  placeholder="单位：元"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="paymentPaidAt">到账日期</Label>
-                <Input
-                  id="paymentPaidAt"
-                  type="date"
-                  value={paymentPaidAtInput}
-                  onChange={(e) => setPaymentPaidAtInput(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="paymentMethod">回款方式（可选）</Label>
-                <Input
-                  id="paymentMethod"
-                  value={paymentMethodInput}
-                  onChange={(e) => setPaymentMethodInput(e.target.value)}
-                  placeholder="例如：银行转账 / 微信 / 支付宝"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="paymentNote">备注（可选）</Label>
-                <Input
-                  id="paymentNote"
-                  value={paymentNoteInput}
-                  onChange={(e) => setPaymentNoteInput(e.target.value)}
-                  placeholder="例如：2025 年度服务首期回款"
-                />
-              </div>
-            </div>
-            <DialogFooter>
-              <Button
-                variant="outline"
-                onClick={() => setIsPaymentDialogOpen(false)}
-              >
-                取消
-              </Button>
-              <Button
-                onClick={() => {
-                  if (!selectedContract) {
-                    return
-                  }
 
-                  const amount = Number.parseFloat(paymentAmountInput || "0")
-                  if (Number.isNaN(amount) || amount <= 0) {
-                    toast.error("请填写合法的回款金额")
-                    return
-                  }
-
-                  if (!paymentPaidAtInput) {
-                    toast.error("请填写到账日期")
-                    return
-                  }
-
-                  const paidAtIso = new Date(paymentPaidAtInput).toISOString()
-
-                  addContractPayment(selectedContract.id, {
-                    amount,
-                    currency: normalizeCurrency(selectedContract.currency),
-                    paidAt: paidAtIso,
-                    method: paymentMethodInput || undefined,
-                    note: paymentNoteInput || undefined,
-                  })
-                    .then(async () => {
-                      const refreshed = await fetchContractPayments(selectedContract.id)
-                      setContractPayments(refreshed)
-                      toast.success("回款记录已保存")
-                      setIsPaymentDialogOpen(false)
-                    })
-                    .catch((error) => {
-                      console.error("Failed to add contract payment", error)
-                      toast.error("保存回款失败", {
-                        description: "请稍后重试或联系管理员",
-                      })
-                    })
-                }}
-              >
-                保存回款
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      )}
     </div>
   )
 }
