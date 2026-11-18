@@ -1,6 +1,6 @@
 "use client"
 
-import { Fragment, useContext, useEffect, useMemo, useState } from "react"
+import { useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react"
 import {
   AlertTriangle,
   BarChart3,
@@ -24,21 +24,27 @@ import {
 
 import { MePermissionsContext } from "@/components/app-root"
 import { FollowUpFunnel } from "@/components/follow-up-funnel"
-import { ChartSkeleton, KPICardSkeleton, TableSkeleton } from "@/components/skeleton-loaders"
+import { ChartSkeleton } from "@/components/skeleton-loaders"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { fetchCurrentUserProfile, fetchCurrentUserPublicProfile } from "@/lib/auth/profile"
+import { fetchCurrentUserPublicProfile } from "@/lib/auth/profile"
+import { DASHBOARD_REQUEST_TIMEOUT_MS, loadDashboardSection } from "@/lib/services/dashboard-request"
 import {
-  fetchDashboardSummary,
-  fetchRoleDashboardActivity,
+  fetchDashboardActivitySnapshot,
+  fetchDashboardMonthlyRevenue,
   FOLLOW_UP_STAGE_FLOW,
   type DailyActivityUserRow,
   type DashboardCustomerDetailRow,
   type DashboardAlert,
-  type DashboardSummary,
+  type DashboardActivityFilterParams,
+  type DashboardActivitySnapshot,
+  type DashboardCursor,
+  type DashboardMemberFilter,
+  type DashboardPage,
   type RoleDashboardActivity,
   type TeamActivityRow,
 } from "@/lib/services/dashboard"
@@ -354,41 +360,15 @@ function ActivityTable({
 function DepartmentMemberTable({
   users,
   teams,
+  department,
   quotaLimit,
 }: {
   users: DailyActivityUserRow[]
   teams: TeamActivityRow[]
+  department: TeamActivityRow | undefined
   quotaLimit: number
 }) {
-  const groups: {
-    key: string
-    name: string
-    team: TeamActivityRow | null
-    rows: { user: DailyActivityUserRow; isAdditional: boolean }[]
-  }[] = []
-  const teamNameById = new Map<number, string>(teams.map((team) => [team.teamId as number, team.teamName]))
-  for (const team of teams) {
-    const rows: { user: DailyActivityUserRow; isAdditional: boolean }[] = []
-    for (const user of users) {
-      if (user.teamId === team.teamId) rows.push({ user, isAdditional: false })
-      else if ((user.additionalTeamIds ?? []).includes(team.teamId as number))
-        rows.push({ user, isAdditional: true })
-    }
-    if (rows.length > 0) {
-      groups.push({ key: `team-${team.teamId}`, name: team.teamName, team, rows })
-    }
-  }
-  const groupedIds = new Set(groups.flatMap((group) => group.rows.map((row) => row.user.id)))
-  const unassigned = users.filter((user) => !groupedIds.has(user.id))
-  if (unassigned.length > 0) {
-    groups.push({
-      key: "unassigned",
-      name: "未分配团队",
-      team: null,
-      rows: unassigned.map((user) => ({ user, isAdditional: false })),
-    })
-  }
-
+  const teamNameById = new Map(teams.map((team) => [team.teamId, team.teamName]))
   const stageCellClass = (stageId: string) =>
     KEY_STAGE_IDS.has(stageId) ? "bg-amber-50/70 font-semibold text-amber-700" : "font-medium"
 
@@ -423,99 +403,75 @@ function DepartmentMemberTable({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {groups.length === 0 ? (
+            {department && (
+              <TableRow className="bg-muted/40 hover:bg-muted/40">
+                <TableCell colSpan={13}>
+                  <span className="font-semibold">{department.teamName}（总计）</span>
+                  <span className="ml-2 text-xs tabular-nums text-muted-foreground">
+                    {department.memberCount} 人 · 在管 {department.activeLeads}
+                    {department.memberCount > 0 && department.quotaUsage !== null &&
+                      `/${quotaLimit * department.memberCount} · 名额占用 ${Math.round(department.quotaUsage * 100)}%`}
+                    {" · 本时段新增 "}{department.newLeads}
+                    {" · 线下拜访 "}{department.stageCounts.offline_visit ?? 0}
+                    {" · 方案及报价 "}{department.stageCounts.proposal_quotation ?? 0}
+                    {" · 成交 "}{department.stageCounts.won ?? 0}
+                    {" · 逾期 "}{department.overdueLeads}
+                  </span>
+                </TableCell>
+              </TableRow>
+            )}
+            {users.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={13} className="py-8 text-center text-sm text-muted-foreground">
                   暂无可统计的业务人员数据
                 </TableCell>
               </TableRow>
-            ) : (
-              groups.map((group) => {
-                const primaryRows = group.rows.filter((row) => !row.isAdditional)
-                const stageTotal = (stageId: string) =>
-                  group.team
-                    ? group.team.stageCounts[stageId] ?? 0
-                    : primaryRows.reduce((sum, r) => sum + (r.user.stageCounts[stageId] ?? 0), 0)
-                const newTotal = group.team
-                  ? group.team.newLeads
-                  : primaryRows.reduce((sum, r) => sum + r.user.newLeads, 0)
-                const overdueTotal = primaryRows.reduce((sum, r) => sum + r.user.overdueLeads, 0)
-                const activeTotal = group.team
-                  ? group.team.activeLeads
-                  : primaryRows.reduce((sum, r) => sum + r.user.activeLeads, 0)
-                const memberQuota = quotaLimit * primaryRows.length
-                return (
-                  <Fragment key={group.key}>
-                    <TableRow className="bg-muted/40 hover:bg-muted/40">
-                      <TableCell colSpan={13}>
-                        <span className="font-semibold text-foreground">{group.name}（总计）</span>
-                        <span className="ml-2 text-xs tabular-nums text-muted-foreground">
-                          {primaryRows.length} 人 · 在管 {activeTotal}
-                          {quotaLimit > 0
-                            ? `/${memberQuota} · 名额占用 ${Math.round((activeTotal / memberQuota) * 100)}%`
-                            : ""}
-                          {" · 本时段新增 "}
-                          {newTotal}
-                          {" · 线下拜访 "}
-                          {stageTotal("offline_visit")}
-                          {" · 方案及报价 "}
-                          {stageTotal("proposal_quotation")}
-                          {" · 成交 "}
-                          {stageTotal("won")}
-                          {" · 逾期 "}
-                          {overdueTotal}
+            ) : users.map((member) => {
+              const isAdditional = member.isAdditional
+              const quotaRatio = quotaLimit > 0 ? member.activeLeads / quotaLimit : 0
+              const primaryTeamName = isAdditional
+                ? teamNameById.get(member.teamId) ?? "主团队"
+                : null
+              return (
+                <TableRow key={member.id}>
+                  <TableCell>
+                    <div className="flex flex-col gap-0.5">
+                      <div className="flex items-center gap-3">
+                        <Avatar className="h-8 w-8">
+                          {member.avatarUrl ? (
+                            <AvatarImage src={member.avatarUrl} alt={member.name} />
+                          ) : null}
+                          <AvatarFallback className="text-xs font-semibold">
+                            {member.name.trim().slice(0, 1) || "?"}
+                          </AvatarFallback>
+                        </Avatar>
+                        <span className={isAdditional ? "font-medium" : "font-semibold"}>{member.name}</span>
+                      </div>
+                      {isAdditional && primaryTeamName ? (
+                        <span className="text-[11px] text-muted-foreground">
+                          附加成员 · 数据计入主团队「{primaryTeamName}」
                         </span>
-                      </TableCell>
-                    </TableRow>
-                    {group.rows.map(({ user: member, isAdditional }) => {
-                      const quotaRatio = quotaLimit > 0 ? member.activeLeads / quotaLimit : 0
-                      const primaryTeamName = isAdditional
-                        ? teamNameById.get(member.teamId as number) ?? "主团队"
-                        : null
-                      return (
-                        <TableRow key={member.id}>
-                          <TableCell>
-                            <div className="flex flex-col gap-0.5">
-                              <div className="flex items-center gap-3">
-                                <Avatar className="h-8 w-8">
-                                  {member.avatarUrl ? (
-                                    <AvatarImage src={member.avatarUrl} alt={member.name} />
-                                  ) : null}
-                                  <AvatarFallback className="text-xs font-semibold">
-                                    {member.name.trim().slice(0, 1) || "?"}
-                                  </AvatarFallback>
-                                </Avatar>
-                                <span className={isAdditional ? "font-medium" : "font-semibold"}>{member.name}</span>
-                              </div>
-                              {isAdditional && primaryTeamName ? (
-                                <span className="text-[11px] text-muted-foreground">
-                                  附加成员 · 数据计入主团队「{primaryTeamName}」
-                                </span>
-                              ) : null}
-                            </div>
-                          </TableCell>
-                          <TableCell className={`text-right tabular-nums ${quotaCellClass(quotaRatio)}`}>
-                            {member.activeLeads}/{quotaLimit}
-                          </TableCell>
-                          <TableCell className="text-right font-medium tabular-nums">{member.newLeads}</TableCell>
-                          {FOLLOW_UP_STAGE_FLOW.map((stage) => (
-                            <TableCell
-                              key={stage.id}
-                              className={`text-right tabular-nums ${stageCellClass(stage.id)}`}
-                            >
-                              {member.stageCounts[stage.id] ?? 0}
-                            </TableCell>
-                          ))}
-                          <TableCell className="text-right font-medium text-red-600">
-                            {member.overdueLeads}
-                          </TableCell>
-                        </TableRow>
-                      )
-                    })}
-                  </Fragment>
-                )
-              })
-            )}
+                      ) : null}
+                    </div>
+                  </TableCell>
+                  <TableCell className={`text-right tabular-nums ${quotaCellClass(quotaRatio)}`}>
+                    {member.activeLeads}/{quotaLimit}
+                  </TableCell>
+                  <TableCell className="text-right font-medium tabular-nums">{member.newLeads}</TableCell>
+                  {FOLLOW_UP_STAGE_FLOW.map((stage) => (
+                    <TableCell
+                      key={stage.id}
+                      className={`text-right tabular-nums ${stageCellClass(stage.id)}`}
+                    >
+                      {member.stageCounts[stage.id] ?? 0}
+                    </TableCell>
+                  ))}
+                  <TableCell className="text-right font-medium text-red-600">
+                    {member.overdueLeads}
+                  </TableCell>
+                </TableRow>
+              )
+            })}
           </TableBody>
         </Table>
       </CardContent>
@@ -605,7 +561,6 @@ function CustomerDetailsTable({
             <CardTitle className="text-lg">{title}</CardTitle>
             <CardDescription>{description}</CardDescription>
           </div>
-          <Badge variant="outline">最多展示 50 条</Badge>
         </div>
       </CardHeader>
       <CardContent className="max-h-[560px] overflow-auto p-0">
@@ -806,11 +761,11 @@ function TrendChart({ activity }: { activity: RoleDashboardActivity | null }) {
 
 function FunnelCard({
   activity,
-  summary,
+  monthlyRevenue,
   allTime = false,
 }: {
   activity: RoleDashboardActivity | null
-  summary: DashboardSummary | null
+  monthlyRevenue: number | null
   allTime?: boolean
 }) {
   const bands = activity?.stageFunnel ?? []
@@ -822,37 +777,204 @@ function FunnelCard({
       <CardHeader className="border-b border-muted/30">
         <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
           <div>
-            <CardTitle className="text-lg">销售漏斗</CardTitle>
-            <CardDescription>
-              {allTime
-                ? "全部线索按当前跟进阶段的分布（不含公海与无效线索）。"
-                : "所选时段新增线索当前的阶段分布（不含公海与无效线索）。"}
-            </CardDescription>
+            <CardTitle className="text-lg">{activity ? "销售漏斗" : "回款概览"}</CardTitle>
+            {activity && (
+              <CardDescription>
+                {allTime
+                  ? "全部线索按当前跟进阶段的分布（不含公海与无效线索）。"
+                  : "所选时段新增线索当前的阶段分布（不含公海与无效线索）。"}
+              </CardDescription>
+            )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="outline">本时段新增 {formatNumber(activity?.totals.newLeads ?? 0)}</Badge>
-            <Badge variant="outline">本时段成交 {formatNumber(activity?.totals.wonInRange ?? 0)}</Badge>
-            <Badge variant="outline">到款阶段 {formatNumber(paymentCount)}</Badge>
-            <Badge variant="outline">本月回款 {formatCurrency(summary?.monthlyRevenue ?? 0)}</Badge>
+            {activity && (
+              <>
+                <Badge variant="outline">本时段新增 {formatNumber(activity.totals.newLeads)}</Badge>
+                <Badge variant="outline">本时段成交 {formatNumber(activity.totals.wonInRange)}</Badge>
+                <Badge variant="outline">到款阶段 {formatNumber(paymentCount)}</Badge>
+              </>
+            )}
+            {monthlyRevenue !== null && <Badge variant="outline">本月回款 {formatCurrency(monthlyRevenue)}</Badge>}
           </div>
         </div>
       </CardHeader>
-      <CardContent className="pt-5">
-        <FollowUpFunnel bands={bands} total={total} />
-      </CardContent>
+      {activity && (
+        <CardContent className="pt-5">
+          <FollowUpFunnel bands={bands} total={total} />
+        </CardContent>
+      )}
     </Card>
   )
 }
 
+type SectionResult<T> = { status: "ready"; data: T } | { status: "error" }
+
+function useDashboardSection<T>(load: ((signal: AbortSignal) => Promise<T>) | null) {
+  const [attempt, setAttempt] = useState(0)
+  const [settled, setSettled] = useState<{ load: typeof load; attempt: number; result: SectionResult<T> } | null>(null)
+
+  useEffect(() => {
+    if (!load) return
+    const controller = new AbortController()
+    void loadDashboardSection(load, controller.signal).then(
+      (data) => {
+        if (!controller.signal.aborted) setSettled({ load, attempt, result: { status: "ready", data } })
+      },
+      (error) => {
+        if (controller.signal.aborted) return
+        console.error("Failed to load dashboard section", error)
+        setSettled({ load, attempt, result: { status: "error" } })
+      },
+    )
+    return () => controller.abort()
+  }, [load, attempt])
+
+  const result = settled?.load === load && settled.attempt === attempt
+    ? settled.result
+    : { status: "loading" as const }
+
+  return { result, retry: () => setAttempt((current) => current + 1) }
+}
+
+function DashboardLoadNotice({ label, status, retry }: {
+  label: string
+  status: "loading" | "ready" | "error"
+  retry: () => void
+}) {
+  if (status === "ready") return null
+  if (status === "loading") {
+    return <p role="status" className="text-sm text-muted-foreground">正在加载{label}…</p>
+  }
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2">
+      <p role="alert" className="text-sm text-destructive">{label}加载超时或失败。</p>
+      <Button type="button" variant="outline" size="sm" onClick={retry}>重试{label}</Button>
+    </div>
+  )
+}
+
+function DashboardDetailPager<Row>({ label, loadPage, children }: {
+  label: string
+  loadPage: (after: DashboardCursor | null, signal: AbortSignal) => Promise<DashboardPage<Row>>
+  children: (rows: Row[]) => ReactNode
+}) {
+  const [cursors, setCursors] = useState<(DashboardCursor | null)[]>([null])
+  const cursor = cursors[cursors.length - 1]
+  const load = useCallback((signal: AbortSignal) => loadPage(cursor, signal), [cursor, loadPage])
+  const { result, retry } = useDashboardSection(load)
+  const page = result.status === "ready" ? result.data : null
+  const nextCursor = page?.nextCursor
+
+  return (
+    <div className="space-y-3">
+      <DashboardLoadNotice label={label} status={result.status} retry={retry} />
+      {page && children(page.rows)}
+      {(cursors.length > 1 || nextCursor) && (
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <span className="text-sm tabular-nums text-muted-foreground">第 {cursors.length} 页</span>
+          <Button type="button" size="sm" variant="outline" disabled={cursors.length === 1}
+            onClick={() => setCursors((pages) => pages.slice(0, -1))}>上一页</Button>
+          <Button type="button" size="sm" variant="outline" disabled={!nextCursor}
+            onClick={() => nextCursor && setCursors((pages) => [...pages, nextCursor])}>下一页</Button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function DashboardCustomerDetails({ loadCustomers, todoOnly = false }: {
+  loadCustomers: DashboardActivitySnapshot["loadCustomers"]
+  todoOnly?: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  const label = todoOnly ? "待跟进与逾期" : "客户明细"
+  const loadPage = useCallback((after: DashboardCursor | null, signal: AbortSignal) =>
+    loadCustomers(todoOnly, after, signal), [loadCustomers, todoOnly])
+
+  return (
+    <section className="space-y-3">
+      <Button type="button" variant="outline" aria-expanded={open} onClick={() => setOpen((shown) => !shown)}>
+        {open ? "收起" : "查看"}{label}
+      </Button>
+      {open && (
+        <DashboardDetailPager label={label} loadPage={loadPage}>
+          {(rows) => (
+            <CustomerDetailsTable rows={rows} title={label}
+              description={todoOnly ? "下次跟进时间已到或已逾期的线索，优先处理。" : undefined} />
+          )}
+        </DashboardDetailPager>
+      )}
+    </section>
+  )
+}
+
+function DashboardMemberDetails({ snapshot, byDepartment = false }: {
+  snapshot: DashboardActivitySnapshot
+  byDepartment?: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  const { activity, loadMembers } = snapshot
+  const [department, setDepartment] = useState(() =>
+    String((activity.teams.find((team) => team.memberCount > 0) ?? activity.teams[0])?.teamId ?? "unassigned"),
+  )
+  const selectedTeam = activity.teams.find((team) => String(team.teamId) === department)
+  const label = byDepartment ? "部门成员明细" : "团队成员明细"
+  const loadPage = useCallback((after: DashboardCursor | null, signal: AbortSignal) => {
+    const filter: DashboardMemberFilter = {}
+    if (byDepartment) {
+      if (department === "unassigned") filter.unassigned = true
+      else filter.departmentId = Number(department)
+    }
+    return loadMembers(filter, after, signal)
+  }, [byDepartment, department, loadMembers])
+
+  return (
+    <section className="space-y-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <Button type="button" variant="outline" aria-expanded={open} onClick={() => setOpen((shown) => !shown)}>
+          {open ? "收起" : "查看"}{label}
+        </Button>
+        {open && byDepartment && (
+          <select aria-label="筛选成员部门" className="h-9 rounded-md border bg-background px-3 text-sm"
+            value={department} onChange={(event) => setDepartment(event.target.value)}>
+            {activity.teams.map((team) => <option key={team.teamId} value={String(team.teamId)}>{team.teamName}</option>)}
+            <option value="unassigned">未分配团队</option>
+          </select>
+        )}
+      </div>
+      {open && (
+        <DashboardDetailPager key={department} label={label} loadPage={loadPage}>
+          {(users) => byDepartment ? (
+            <DepartmentMemberTable
+              users={users}
+              teams={activity.teams}
+              department={selectedTeam}
+              quotaLimit={activity.quotaLimit}
+            />
+          ) : (
+            <ActivityTable users={users} quotaLimit={activity.quotaLimit} />
+          )}
+        </DashboardDetailPager>
+      )}
+    </section>
+  )
+}
+
 export function Dashboard() {
-  const [isLoading, setIsLoading] = useState(true)
-  const [summary, setSummary] = useState<DashboardSummary | null>(null)
-  const [activity, setActivity] = useState<RoleDashboardActivity | null>(null)
-  const [loadError, setLoadError] = useState<string | null>(null)
   const [welcomeText, setWelcomeText] = useState<string | null>(null)
   const [timePreset, setTimePreset] = useState<TimeRangePreset>("today")
   const [dateRange, setDateRange] = useState<DashboardDateRange>(() => getPresetRange("today"))
+  const [permissionWaitExpired, setPermissionWaitExpired] = useState(false)
   const mePermissions = useContext(MePermissionsContext)
+  const scopeType = mePermissions?.leadScopeType ?? "self"
+  const permissionsReady = mePermissions !== null
+
+  useEffect(() => {
+    if (permissionsReady) return
+    // Avoid a speculative self-scope request while the application loads permissions.
+    const timeout = setTimeout(() => setPermissionWaitExpired(true), DASHBOARD_REQUEST_TIMEOUT_MS)
+    return () => clearTimeout(timeout)
+  }, [permissionsReady])
 
   const mode: RoleDashboardMode = useMemo(() => {
     const scopeType = mePermissions?.leadScopeType ?? "self"
@@ -861,53 +983,20 @@ export function Dashboard() {
     return "sales"
   }, [mePermissions])
 
-  useEffect(() => {
-    let isMounted = true
-
-    async function loadDashboard() {
-      setIsLoading(true)
-      setLoadError(null)
-
-      try {
-        const supabase = getBrowserSupabaseClient()
-        const profile = await fetchCurrentUserProfile(supabase)
-        const scopeType = mePermissions?.leadScopeType ?? "self"
-        const params: { teamId?: number; ownerId?: string } = {}
-
-        if (scopeType === "self" && profile?.id) {
-          params.ownerId = profile.id
-        } else if (scopeType === "team" && profile?.teamId != null) {
-          params.teamId = profile.teamId
-        }
-
-        const [nextSummary, nextActivity] = await Promise.all([
-          fetchDashboardSummary(params),
-          fetchRoleDashboardActivity({
-            ...params,
-            allTime: timePreset === "all",
-            startDate: dateRange.start.toISOString(),
-            endDate: dateRange.end.toISOString(),
-          }),
-        ])
-
-        if (!isMounted) return
-        setSummary(nextSummary)
-        setActivity(nextActivity)
-      } catch (error) {
-        console.error("Failed to load role dashboard", error)
-        if (!isMounted) return
-        setLoadError("仪表盘数据加载失败，请稍后重试。")
-      } finally {
-        if (isMounted) setIsLoading(false)
-      }
+  const loadActivity = useCallback(async (signal: AbortSignal) => {
+    const params: DashboardActivityFilterParams = {
+      scope: scopeType,
+      allTime: timePreset === "all",
+      startDate: dateRange.start.toISOString(),
+      endDate: dateRange.end.toISOString(),
     }
-
-    void loadDashboard()
-
-    return () => {
-      isMounted = false
-    }
-  }, [mePermissions, dateRange, timePreset])
+    return fetchDashboardActivitySnapshot(params, signal)
+  }, [scopeType, mePermissions, dateRange, timePreset])
+  const activitySection = useDashboardSection(permissionsReady || permissionWaitExpired ? loadActivity : null)
+  const revenueSection = useDashboardSection(fetchDashboardMonthlyRevenue)
+  const overview = activitySection.result.status === "ready" ? activitySection.result.data : null
+  const activity = overview?.activity ?? null
+  const monthlyRevenue = revenueSection.result.status === "ready" ? revenueSection.result.data : null
 
   useEffect(() => {
     let isMounted = true
@@ -933,38 +1022,7 @@ export function Dashboard() {
     }
   }, [mode])
 
-  // 个人工作台：下次跟进时间已到或已逾期的线索优先展示
-  const todoRows = useMemo(() => {
-    const rows = activity?.customerDetails ?? []
-    const endMs = dateRange.end.getTime()
-    return rows
-      .filter((row) => {
-        if (row.isOverdue) return true
-        if (!row.nextContactAt) return false
-        return new Date(row.nextContactAt).getTime() < endMs
-      })
-      .sort((a, b) => (a.isOverdue === b.isOverdue ? 0 : a.isOverdue ? -1 : 1))
-  }, [activity, dateRange])
-
-  if (isLoading) {
-    return (
-      <div className="space-y-6">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">仪表盘</h1>
-          <p className="mt-1 text-sm font-medium text-muted-foreground">正在同步今日过程数据...</p>
-        </div>
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <KPICardSkeleton key={i} />
-          ))}
-        </div>
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.4fr_0.6fr]">
-          <TableSkeleton rows={5} />
-          <ChartSkeleton />
-        </div>
-      </div>
-    )
-  }
+  const funnel = <FunnelCard activity={activity} monthlyRevenue={monthlyRevenue} allTime={timePreset === "all"} />
 
   return (
     <div className="space-y-6">
@@ -972,10 +1030,12 @@ export function Dashboard() {
         <div>
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-3xl font-bold tracking-tight">仪表盘</h1>
-            <Badge variant="outline" className="gap-1">
-              <Clock className="h-3 w-3" />
-              {activity?.dateLabel ?? "今日"}
-            </Badge>
+            {activity && (
+              <Badge variant="outline" className="gap-1">
+                <Clock className="h-3 w-3" />
+                {activity.dateLabel}
+              </Badge>
+            )}
             <Badge>{getModeLabel(mode)}</Badge>
           </div>
           <p className="mt-1 text-base font-medium text-foreground/70">
@@ -987,12 +1047,6 @@ export function Dashboard() {
           <Badge variant="outline">建联：电话/微信</Badge>
         </div>
       </div>
-
-      {loadError ? (
-        <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-          {loadError}
-        </div>
-      ) : null}
 
       <TimeRangeControls
         preset={timePreset}
@@ -1009,37 +1063,37 @@ export function Dashboard() {
         }}
       />
 
-      {mode === "director" ? (
+      <DashboardLoadNotice label="销售过程数据" status={activitySection.result.status} retry={activitySection.retry} />
+      <DashboardLoadNotice label="本月回款" status={revenueSection.result.status} retry={revenueSection.retry} />
+
+      {!overview || !activity ? (
+        <>
+          {monthlyRevenue !== null && funnel}
+          {activitySection.result.status === "loading" && <ChartSkeleton />}
+        </>
+      ) : mode === "director" ? (
         <>
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-            <FunnelCard activity={activity} summary={summary} allTime={timePreset === "all"} />
+            {funnel}
             <TeamTable teams={activity?.teams ?? []} />
           </div>
           <TrendChart activity={activity} />
-          <DepartmentMemberTable
-            users={activity?.users ?? []}
-            teams={activity?.teams ?? []}
-            quotaLimit={activity?.quotaLimit ?? 60}
-          />
+          <DashboardMemberDetails snapshot={overview} byDepartment />
         </>
       ) : mode === "manager" ? (
         <>
-          <FunnelCard activity={activity} summary={summary} allTime={timePreset === "all"} />
+          {funnel}
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.45fr_0.55fr]">
-            <ActivityTable users={activity?.users ?? []} quotaLimit={activity?.quotaLimit ?? 60} />
+            <DashboardMemberDetails snapshot={overview} />
             <AlertsPanel alerts={activity?.alerts ?? []} />
           </div>
-          <CustomerDetailsTable rows={activity?.customerDetails ?? []} />
+          <DashboardCustomerDetails loadCustomers={overview.loadCustomers} />
         </>
       ) : (
         <>
-          <FunnelCard activity={activity} summary={summary} allTime={timePreset === "all"} />
+          {funnel}
           <KpiGrid activity={activity} />
-          <CustomerDetailsTable
-            rows={todoRows}
-            title="待跟进与逾期"
-            description="下次跟进时间已到或已逾期的线索，优先处理。"
-          />
+          <DashboardCustomerDetails loadCustomers={overview.loadCustomers} todoOnly />
         </>
       )}
     </div>

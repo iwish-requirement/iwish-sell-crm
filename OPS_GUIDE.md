@@ -21,6 +21,8 @@
 
 本次需求对应 `20260914000113_lead_pool_return_and_batch.sql` 与 `20260914000114_profile_team_memberships.sql`，必须先在 Supabase 生产库执行这两份迁移，再发布 Worker 前端代码。
 
+仪表盘的数据库聚合由 `20261118072942_sales_dashboard_aggregation.sql` 启用。迁移生效前，如果 PostgREST 返回 `PGRST202`，仪表盘会继续使用兼容查询。部署数据库迁移后，重新打开仪表盘并确认汇总、成员页和客户页都由 `rpc_sales_dashboard` 返回。
+
 ---
 
 ### 2. 关键数据表与安全边界
