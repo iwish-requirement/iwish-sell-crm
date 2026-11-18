@@ -10,7 +10,7 @@
 - Node.js：20 或更高版本
 - 包管理器：pnpm（按仓库 `pnpm-lock.yaml` 安装）
 
-当前 Cloudflare 账号里仍保留同名 Pages 项目并连接 GitHub，供历史预览/回滚使用；生产域名 `sell.iwishweb.com` 由上面的 Worker Custom Domain 接管。不要把 `iwish-sell-crm.pages.dev` 当作生产地址，也不要在 Worker 验证完成前直接断开 Pages 的 GitHub 连接，否则会失去现有预览和回滚入口。
+当前 Cloudflare 账号仍保留同名 Pages 项目供历史预览和回滚使用。正式入口为 `https://sell.iwishweb.com`，由 Cloudflare for SaaS 和 Worker 路由提供服务。
 
 发布后请用 `https://sell.iwishweb.com/api/version` 验证版本接口返回 JSON。该接口已在中间件中加入公开路径，避免未登录请求被重定向到登录页，旧 Tab 才能正确提示刷新。
 
@@ -22,9 +22,9 @@
 
 - `NEXT_PUBLIC_ALLOCATION_CENTER_NAV_ENABLED=false`：需要临时隐藏入口时在构建环境设置（不设置或设为其他值均为显示）。
 
-## 将生产域名切到 Worker
+## 生产域名和 Worker 路由
 
-`wrangler.jsonc` 已声明 `sell.iwishweb.com` 为 Worker Custom Domain。正式切换前需要先在 Pages 项目中移除同名自定义域名、清理冲突的 DNS 记录，并确保 `iwishweb.com` Zone 对当前 Cloudflare 账号可见；完成后通过 Workers Git 集成部署。Windows 本机的 OpenNext 符号链接构建可能失败。
+生产 DNS 的 CNAME 指向 `customers.iwishapp.cn`。在 Cloudflare 控制台维护 `sell.iwishweb.com/*` 路由，Wrangler 只负责部署 Worker 代码和资源。
 
 Worker 直接使用 OpenNext 生成的 fetch handler。自动回公海和续费企微通知由 Supabase `pg_cron` 调度并调用对应 RPC/HTTP 路由，Cloudflare Worker 不配置重复 Cron，也不需要为定时任务配置 `SUPABASE_SERVICE_ROLE_KEY`。
 
