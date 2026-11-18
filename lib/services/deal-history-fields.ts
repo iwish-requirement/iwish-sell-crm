@@ -1,4 +1,4 @@
-// Column positions and field names from the original 44-column sales workbook.
+// Workbook column positions and the labels shown in CRM.
 export const HISTORY_COLUMNS = ["A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X","Y","Z","AA","AB","AC","AD","AE","AF","AG","AH","AI","AJ","AK","AL","AM","AN","AO","AP","AQ","AR"] as const
 export const HISTORY_HEADERS = [
   [
@@ -41,7 +41,7 @@ export const HISTORY_HEADERS = [
     null,
     null,
     null,
-    "如果需要在到款前一周提前对接服务需市场总监批准",
+    "如果需要在到款前一周提前对接服务需业务总经理批准",
     null,
     "财务确认",
     null,
@@ -87,7 +87,7 @@ export const HISTORY_HEADERS = [
     "EDM营销优化经理/优化师",
     "红人/联盟营销/社媒营销项目经理",
     "客户售前信息和售后目标（如：方案，目标，客户相关信息）",
-    "商务总监批准",
+    "业务总经理批准",
     "批准日期",
     "合同签署主体全称（唯一值）",
     "确认到账日期",
