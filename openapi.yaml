@@ -1,0 +1,282 @@
+openapi: 3.1.0
+info:
+  title: 销售 CRM 与运营系统交接 API
+  version: 1.0.0
+  description: 双向接口契约。正式地址由各环境配置，回环地址用于本地模拟。
+externalDocs:
+  description: 接入步骤、权限、版本和验收场景
+  url: https://github.com/iwish-requirement/iwish-sell-crm/tree/codex/operations-handoff-api
+paths:
+  /api/v1/operations/handoffs:
+    post:
+      operationId: receiveCrmHandoff
+      summary: 运营系统接收 CRM 部门交接
+      description: 同一交接 ID 对应同一个运营工单。按内容版本更新资料，按范围版本更新待办和人员确认范围。
+      servers:
+        - url: https://operations.example.invalid
+          description: 替换为运营系统环境地址
+        - url: http://127.0.0.1:4183
+          description: 本地模拟器
+      security:
+        - OperationsIntakeBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Handoff'
+      responses:
+        '200':
+          description: 已接收，返回原任务 ID 和运营工单号。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntakeReceipt'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+
+  /api/v1/crm/handoff-staffing:
+    post:
+      operationId: receiveOperationsStaffing
+      summary: CRM 接收运营确认的人员名单
+      description: 对有效工单回传完整名单。较早的同范围版本返回当前已接受版本，保留最新名单。
+      servers:
+        - url: https://crm.example.invalid
+          description: 替换为销售 CRM 环境地址
+        - url: http://127.0.0.1:4183
+          description: 本地模拟器
+      security:
+        - CrmCallbackBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StaffingCallback'
+      responses:
+        '200':
+          description: 已接受，返回 CRM 当前已接受的人员版本。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StaffingReceipt'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+
+components:
+  securitySchemes:
+    OperationsIntakeBearer:
+      type: http
+      scheme: bearer
+      description: CRM 调用运营收单接口的独立服务凭据。
+    CrmCallbackBearer:
+      type: http
+      scheme: bearer
+      description: 运营系统回传 CRM 的独立服务凭据。
+
+  responses:
+    BadRequest:
+      description: 报文数据无效或映射缺失。
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: 服务凭据缺失或无效。
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: 任务、部门、范围或已记录的同版本内容冲突。
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    TooLarge:
+      description: 请求超过接收方的大小限制。本地模拟器的 JSON 请求上限为 64 KiB。
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    Identifier:
+      type: string
+      minLength: 1
+    Version:
+      type: integer
+      minimum: 1
+      maximum: 9007199254740991
+    NamedId:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          $ref: '#/components/schemas/Identifier'
+        name:
+          type: string
+          minLength: 1
+    Service:
+      type: object
+      required: [id, label, group]
+      properties:
+        id:
+          $ref: '#/components/schemas/Identifier'
+        label:
+          type: string
+          minLength: 1
+        group:
+          type: string
+          minLength: 1
+    Attachment:
+      type: object
+      required: [path, name]
+      properties:
+        path:
+          type: string
+          minLength: 1
+          description: CRM 附件引用，正式读取方式由双方配置。
+        name:
+          type: string
+          minLength: 1
+    Finance:
+      type: object
+      description: 待确认时为空对象。主体可单独确认，到账日期、金额与币种一起更新。
+      properties:
+        legalName:
+          type: string
+          minLength: 1
+        receivedOn:
+          type: string
+          format: date
+        receivedAmount:
+          type: string
+          pattern: '^(?=.*[1-9])[0-9]{1,14}(\.[0-9]{1,2})?$'
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+        actualPayment:
+          type: string
+          format: date
+      dependentRequired:
+        receivedOn: [receivedAmount, currency]
+        receivedAmount: [receivedOn, currency]
+        currency: [receivedOn, receivedAmount]
+    Handoff:
+      type: object
+      required: [id, dealId, version, scopeVersion, active, department, services, company, contractNumber, handoffOn, needs, attachments, payment, finance]
+      properties:
+        id:
+          $ref: '#/components/schemas/Identifier'
+        dealId:
+          $ref: '#/components/schemas/Identifier'
+        version:
+          $ref: '#/components/schemas/Version'
+        scopeVersion:
+          $ref: '#/components/schemas/Version'
+        active:
+          type: boolean
+        department:
+          $ref: '#/components/schemas/NamedId'
+        services:
+          type: array
+          minItems: 1
+          description: 本任务实际承接的服务。服务 ID 在工单内唯一。
+          items:
+            $ref: '#/components/schemas/Service'
+        company:
+          type: string
+          minLength: 1
+        contractNumber:
+          type: string
+          minLength: 1
+        handoffOn:
+          oneOf:
+            - type: string
+              format: date
+            - const: ''
+        needs:
+          type: string
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/Attachment'
+        payment:
+          type: string
+          minLength: 1
+        finance:
+          $ref: '#/components/schemas/Finance'
+    IntakeReceipt:
+      type: object
+      required: [id, workOrderId]
+      properties:
+        id:
+          $ref: '#/components/schemas/Identifier'
+        workOrderId:
+          $ref: '#/components/schemas/Identifier'
+    StaffingRow:
+      type: object
+      required: [serviceId, members]
+      properties:
+        serviceId:
+          $ref: '#/components/schemas/Identifier'
+        members:
+          type: array
+          minItems: 1
+          description: 一项服务至少一人，成员 ID 在这项服务内唯一。
+          items:
+            $ref: '#/components/schemas/NamedId'
+    StaffingCallback:
+      type: object
+      required: [handoffId, departmentId, workOrderId, scopeVersion, version, confirmedAt, projectLead, staffing]
+      properties:
+        handoffId:
+          $ref: '#/components/schemas/Identifier'
+        departmentId:
+          $ref: '#/components/schemas/Identifier'
+        workOrderId:
+          $ref: '#/components/schemas/Identifier'
+        scopeVersion:
+          $ref: '#/components/schemas/Version'
+        version:
+          $ref: '#/components/schemas/Version'
+        confirmedAt:
+          type: string
+          format: date-time
+        projectLead:
+          $ref: '#/components/schemas/NamedId'
+        staffing:
+          type: array
+          minItems: 1
+          description: 每个承接的服务 ID 恰好出现一次，包含该范围的完整人员名单。
+          items:
+            $ref: '#/components/schemas/StaffingRow'
+    StaffingReceipt:
+      type: object
+      required: [accepted, version]
+      properties:
+        accepted:
+          const: true
+        version:
+          $ref: '#/components/schemas/Version'
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+        code:
+          type: [string, 'null']
