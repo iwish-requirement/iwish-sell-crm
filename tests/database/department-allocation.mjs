@@ -1,0 +1,181 @@
+// Run against a fresh local PGlite database initialized from the CRM migrations.
+import assert from "node:assert/strict"
+import { readFile } from "node:fs/promises"
+import { createRequire } from "node:module"
+import { loadAllocationFixture } from "./load-allocation-fixture.mjs"
+
+const require = createRequire(import.meta.url)
+const { PGlite } = require(process.env.CRM_PGLITE_MODULE ?? "@electric-sql/pglite")
+const dataDir = process.env.CRM_ALLOCATION_PGDATA
+assert.ok(!dataDir || !dataDir.includes("://"), "A disposable local PGlite data directory is required")
+const db = new PGlite(dataDir)
+const id = suffix => "00000000-0000-4000-8000-" + String(suffix).padStart(12, "0")
+const [admin, seller, otherSeller, manager, existing, other, history] = [1, 2, 3, 4, 11, 12, 21].map(id)
+const leadFile = existing + "/" + id(90)
+const historyFile = history + "/" + id(91)
+const form = {
+  signedOn: "2026-11-19", expectedPaymentOn: "2026-11-22", actualPayment: "未到账",
+  handoffOn: "2026-11-23", serviceStartsOn: "2026-11-25", salesperson: "演示销售",
+  companyName: "演示客户", contractNumber: "DEMO-1", website: "https://example.com",
+  category: "家居", contactName: "演示客户联系人", contactTitle: "采购",
+  phone: "12345678", email: "contact@example.com", cooperation: "fixed_quarter",
+  baseFee: "12000", serviceFees: "Google 与 Meta 12000 元", needs: "建立每周复盘",
+  address: "演示地址", currency: "CNY", services: { performance: ["google", "meta"] },
+}
+const legacyCells = [
+  2026, form.signedOn, form.expectedPaymentOn, form.actualPayment, form.handoffOn, form.serviceStartsOn,
+  form.salesperson, "历史演示客户", "HISTORY-1", form.website, form.category, form.contactName,
+  form.contactTitle, form.phone, form.email, "固定季度服务费", form.baseFee, form.serviceFees,
+  null, null, "Google", "Meta", null, null, null, null, null, null, form.needs, form.address,
+  "效果营销二部", "历史演示负责人", null, null, null, null, null, null, null, null, null, null, null, null,
+]
+const migrations = new URL("../../supabase/", import.meta.url)
+const runFile = async name => db.exec(await readFile(new URL(name, migrations), "utf8"))
+const json = value => JSON.stringify(value)
+const query = async (sql, args) => (await db.query(sql, args)).rows
+const value = async (sql, args) => (await query(sql, args))[0].value
+const knownError = (callback, code) => assert.rejects(callback, error =>
+  error.code === code || String(error.message).includes(code))
+
+async function actor(user) {
+  await db.exec("reset role")
+  await query("select set_config('request.jwt.claim.sub', $1, false)", [user ?? ""])
+  if (user) await db.exec("set role authenticated")
+}
+
+const workspace = pending => value("select public.rpc_department_allocation_workspace($1) as value", [pending])
+const leadStates = () => value("select public.rpc_department_allocation_lead_states($1::uuid[]) as value", [[existing, other]])
+const details = (source, row) => value("select public.rpc_department_allocation_details($1,$2) as value", [source, row])
+const assignment = (source, row, submittedAt, revision, selections) =>
+  value("select public.rpc_department_allocation_save($1,$2,$3,$4,$5) as value", [source, row, submittedAt, revision, json(selections)])
+const leadSubmit = (version, confirm) => value(
+  "select to_jsonb(public.rpc_deal_contract_submission_save($1,$2,$3,$4,$5)) as value",
+  [existing, json(form), json([{ path: leadFile, name: "交接说明.txt" }]), version, confirm],
+)
+const historySubmit = (version, files, services) => value(
+  "select to_jsonb(public.rpc_department_allocation_history_confirm($1,'{}'::jsonb,$2,$3,$4)) as value",
+  [history, json(files), version, json(services)],
+)
+
+try {
+  await loadAllocationFixture(db)
+  await db.exec("insert into public.teams(id,name) values (8101,'演示一组'),(8102,'演示二组')")
+  for (const [user, role, team] of [[admin, "Admin", 8101], [seller, "Sales", 8101], [otherSeller, "Sales", 8102], [manager, "Manager", 8101]]) {
+    await query("insert into auth.users(id,email,raw_user_meta_data) values ($1,$2,$3)", [
+      user, user + "@example.com", json({ full_name: role, phone: user.slice(-8) }),
+    ])
+    await query("update public.profiles set status='active',team_id=$2,role_id=(select id from public.roles where name=$3) where id=$1",
+      [user, team, role])
+  }
+  for (const [row, owner, team] of [[existing, seller, 8101], [other, otherSeller, 8102]]) {
+    await query("insert into public.leads(id,team_id,owner_id,created_by,name,stage,status,close_result,follow_up_stage) " +
+      "values ($1,$2,$3,$3,'演示成交','Won','closed','won','won')", [row, team, owner])
+  }
+  const dep = Object.fromEntries((await query("select feishu_department_id,id from public.ops_departments"))
+    .map(row => [row.feishu_department_id, row.id]))
+  await query("insert into public.ops_members(id,feishu_user_id,full_name) values ($1,'test-pm','原项目负责人')", [id(99)])
+  await query("insert into public.lead_project_assignments(lead_id,department_id,project_manager_id,assigned_at) values ($1,$2,$3,now())", [
+    existing, dep["test-ad2"], id(99),
+  ])
+  await query("update public.leads set allocation_status='assigned' where id=$1", [existing])
+  await query("insert into storage.objects(bucket_id,name,owner_id) values ('deal-contract-materials',$1,$2),('deal-history-materials',$3,$2)", [
+    leadFile, seller, historyFile,
+  ])
+  await db.exec("insert into public.deal_history_batches(id,source_sha,expected_count,published_at) values ('test',repeat('b',64),1,now())")
+  await query("insert into public.deal_history_records(id,batch_id,source_row,owner_id,raw_values,source_types) " +
+    "values ($1,'test',3,$2,$3,$4)", [history, seller, json(legacyCells), json(legacyCells.map(() => null))])
+
+  await actor(seller)
+  assert.equal(await value("select public.rpc_department_allocation_release() as value"), null)
+  await leadSubmit(0, true)
+  await actor(null)
+  const originalAssignment = await value("select to_jsonb(a) as value from public.lead_project_assignments a where a.lead_id=$1", [existing])
+  await runFile("releases/crm_department_allocation_phase_one.sql")
+  await actor(admin)
+  const releaseTime = await value("select public.rpc_department_allocation_release() as value")
+  assert.ok(releaseTime)
+  await knownError(() => workspace(null), "42501")
+  assert.equal((await workspace(false)).rows.length, 0)
+  assert.deepEqual((await workspace(true)).rows.map(row => row.id).sort(), [existing, other].sort())
+
+  await actor(seller)
+  await knownError(() => details("lead", other), "42501")
+  assert.deepEqual(await leadStates(), { [existing]: "needs_contract" })
+  assert.deepEqual((await workspace(true)).rows.map(row => row.id), [existing])
+  await leadSubmit(1, false)
+  assert.equal((await workspace(false)).rows.length, 0)
+  await leadSubmit(2, true)
+  assert.deepEqual(await leadStates(), { [existing]: "ready" })
+  assert.equal((await workspace(true)).rows.length, 0)
+  const own = (await workspace(false)).rows[0]
+  const selections = { "performance/google": [dep["test-ad2"], dep["test-ad3"]], "performance/meta": [dep["test-ad3"]] }
+  await knownError(() => assignment("lead", existing, own.submitted_at, 0, selections), "42501")
+  await knownError(() => historySubmit(0, [], form.services), "department_allocation_history_required")
+  await historySubmit(0, [{ path: historyFile, name: "历史交接说明.txt" }], form.services)
+
+  await actor(manager)
+  assert.equal((await workspace(true)).rows.length, 0)
+  assert.equal((await workspace(false)).rows.length, 2)
+  await knownError(() => details("lead", other), "42501")
+  await actor(admin)
+  assert.equal((await workspace(true)).rows.length, 1)
+  const queue = await workspace(false)
+  assert.deepEqual(queue.departments.filter(item => item.category === "performance").map(item => item.name).sort(),
+    ["效果营销二部", "效果营销三部", "效果营销四部"].sort())
+  await knownError(() => assignment("lead", existing, own.submitted_at, 0, { "performance/google": selections["performance/google"] }),
+    "department_allocation_services")
+  await knownError(() => assignment("lead", existing, own.submitted_at, 0, { ...selections, "performance/meta": [dep["test-brand"]] }),
+    "department_allocation_department")
+  const first = await assignment("lead", existing, own.submitted_at, 0, selections)
+  assert.equal(first.handoffs.length, 2)
+  const shared = first.handoffs.find(item => item.departmentId === dep["test-ad3"])
+  assert.deepEqual(shared.services, ["performance/google", "performance/meta"])
+  await knownError(() => assignment("lead", existing, own.submitted_at, 0, selections), "40001")
+  const next = await assignment("lead", existing, own.submitted_at, 1, { ...selections, "performance/meta": [dep["test-ad4"]] })
+  assert.equal(next.handoffs.find(item => item.departmentId === dep["test-ad3"]).id, shared.id)
+  const historyRow = queue.rows.find(row => row.source === "history")
+  assert.equal((await assignment("history", history, historyRow.submitted_at, 0, selections)).handoffs.length, 2)
+  await knownError(() => assignment("lead", other, own.submitted_at, 0, selections), "40001")
+
+  await actor(seller)
+  assert.equal((await details("lead", existing)).handoffs.length, 3)
+  assert.deepEqual(await leadStates(), { [existing]: "assigned" })
+  assert.equal((await details("history", history)).handoffs.length, 2)
+  await knownError(() => query("select public.rpc_deal_contract_submission_confirm_finance($1,$2)", [existing, json({ legalName: "演示签署主体" })]), "42501")
+  await knownError(() => query("select * from crm_allocation.handoffs"), "42501")
+  await actor(otherSeller)
+  assert.equal((await workspace(false)).rows.length, 0)
+  await knownError(() => details("history", history), "42501")
+  await db.exec("reset role; set role anon")
+  await knownError(() => workspace(false), "42501")
+
+  await actor(null)
+  await db.exec("insert into public.role_permissions(role_id,permission_key,effect,scope_type) " +
+    "select id,'contracts.finance.confirm','allow','org' from public.roles where name='Admin' on conflict do nothing")
+  await actor(admin)
+  await query("select public.rpc_deal_contract_submission_confirm_finance($1,$2)", [existing, json({
+    legalName: "演示签署主体", receivedOn: "2026-11-22", receivedAmount: "12000", currency: "CNY",
+  })])
+  assert.deepEqual(await leadStates(), { [existing]: "assigned", [other]: "needs_contract" })
+  assert.equal((await details("lead", existing)).finance.receivedAmount, "12000")
+  await actor(null)
+  assert.deepEqual(await value("select raw_values as value from public.deal_history_records where id=$1", [history]), legacyCells)
+  assert.deepEqual(await value("select to_jsonb(a) as value from public.lead_project_assignments a where a.lead_id=$1", [existing]), originalAssignment)
+  await knownError(() => query("update public.lead_project_assignments set assigned_at=clock_timestamp() where lead_id=$1", [existing]),
+    "legacy_allocation_closed")
+  await runFile("rollbacks/crm_department_allocation_phase_one.sql")
+  await actor(admin)
+  assert.equal(await value("select public.rpc_department_allocation_release() as value"), null)
+  assert.equal(await details("lead", existing), null)
+  assert.equal((await query("select lead_id from public.rpc_project_allocations_list()")).length, 2)
+  await knownError(() => workspace(false), "42501")
+  await actor(null)
+  assert.equal(await value("select count(*)::int as value from crm_allocation.assignments"), 2)
+  await runFile("releases/crm_department_allocation_phase_one.sql")
+  await actor(admin)
+  assert.deepEqual(await value("select public.rpc_department_allocation_release() as value"), releaseTime)
+  assert.equal((await details("lead", existing)).handoffs.length, 3)
+  console.log("Passed CRM allocation permissions, all-current-customer reconfirmation, historical records, grouped handoffs and database rollback.")
+} finally {
+  await db.close()
+}

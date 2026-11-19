@@ -53,7 +53,7 @@ function DealHistoryDetail({ row, close, edit, loading, failed }: {
   )
 }
 
-export function DealHistory() {
+export function DealHistory({ allocationCutoff = null }: { allocationCutoff?: string | null }) {
   const [rows, setRows] = useState<HistorySummary[]>([])
   const [listStatus, setListStatus] = useState<"loading" | "ready" | "error">("loading")
   const [attempt, setAttempt] = useState(0)
@@ -183,7 +183,7 @@ export function DealHistory() {
         setIsOpening(true)
         setDetailsError(false)
       }} />}
-      {details && <HistoryContractForm row={details} key={details.id} save={update} close={() => setDetails(null)} />}
+      {details && <HistoryContractForm row={details} key={details.id} allocationCutoff={allocationCutoff} save={update} close={() => setDetails(null)} />}
     </div>
   )
 }

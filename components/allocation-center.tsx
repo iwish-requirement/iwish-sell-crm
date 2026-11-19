@@ -13,6 +13,8 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { MePermissionsContext } from "@/components/app-root"
+import { ServiceDepartmentAllocation } from "@/components/service-department-allocation"
+import { useDepartmentAllocationRelease } from "@/hooks/use-department-allocation-release"
 import { getBrowserSupabaseClient } from "@/lib/supabase/client"
 import { mapRpcError } from "@/lib/rpc-error-mapper"
 
@@ -66,6 +68,13 @@ const syncStatusLabels: Record<NonNullable<Allocation["sync_status"]>, string> =
 }
 
 export function AllocationCenter() {
+  const { loading, cutoff, failed } = useDepartmentAllocationRelease()
+  if (loading) return <p role="status" className="p-4 text-sm">正在读取分配流程…</p>
+  if (failed) return <p role="alert" className="p-4 text-sm text-destructive">分配流程加载失败，请刷新页面。</p>
+  return cutoff ? <ServiceDepartmentAllocation cutoff={cutoff} /> : <LegacyAllocationCenter />
+}
+
+function LegacyAllocationCenter() {
   const permissions = useContext(MePermissionsContext)
   const canRead = permissions?.canReadAllocations ?? false
   const canManage = permissions?.canManageAllocations ?? false

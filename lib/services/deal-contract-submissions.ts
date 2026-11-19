@@ -2,6 +2,7 @@ import { getBrowserSupabaseClient } from "@/lib/supabase/client"
 import { fetchContractByLeadId, fetchContractPayments } from "@/lib/services/contracts"
 import { DEAL_CONTRACT_FIELDS, normalizeDealWebsite, type DealContractAllocation, type DealContractData, type DealContractFinance } from "@/lib/services/deal-contract-fields"
 import { dealDateInputValue } from "@/lib/services/deal-date"
+import { loadDepartmentAllocationDetails } from "@/lib/services/department-allocation"
 
 const BUCKET = "deal-contract-materials"
 
@@ -24,7 +25,7 @@ interface Submission {
 
 export async function loadDealContractSubmission(leadId: string, salesperson: string | null) {
   const client = getBrowserSupabaseClient()
-  const [submission, lead, access, contract, allocation] = await Promise.all([
+  const [submission, lead, access, contract, allocation, departmentAllocation] = await Promise.all([
     client.from("deal_contract_submissions")
       .select("lead_id,draft,draft_attachments,submitted,submitted_attachments,submitted_at,finance,finance_confirmed_at,version")
       .eq("lead_id", leadId).maybeSingle(),
@@ -34,6 +35,7 @@ export async function loadDealContractSubmission(leadId: string, salesperson: st
     client.rpc("rpc_deal_contract_submission_can_edit", { p_lead_id: leadId }),
     fetchContractByLeadId(leadId),
     client.rpc("rpc_deal_contract_allocation_result", { p_lead_id: leadId }),
+    loadDepartmentAllocationDetails("lead", leadId).catch(() => null),
   ])
   if (submission.error) throw submission.error
   if (lead.error) throw lead.error
@@ -70,6 +72,7 @@ export async function loadDealContractSubmission(leadId: string, salesperson: st
     canEdit: access.data === true,
     allocation: allocation.data as DealContractAllocation | null,
     allocationUnavailable: Boolean(allocation.error),
+    departmentAllocation,
     confirmedReceipt: firstReceipt && latestReceipt ? {
       actualPayment: dealDateInputValue(firstReceipt.paidAt),
       receivedOn: dealDateInputValue(latestReceipt.paidAt),

@@ -17,7 +17,7 @@ function isPublicPath(pathname: string): boolean {
 
   // 允许 Next.js 静态资源与基础文件不经鉴权
   if (
-    pathname === '/api/version' ||
+    pathname === '/api/version' || pathname === '/api/v1/crm/handoff-staffing' ||
     pathname === '/api/jobs/renewal-wecom-notify' ||
     pathname === '/api/jobs/feishu-sync' ||
     pathname === '/api/feishu/callback' ||

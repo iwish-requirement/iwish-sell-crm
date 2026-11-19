@@ -62,6 +62,11 @@ export async function POST(req: NextRequest) {
     global: { headers: { Authorization: `Bearer ${bearer}` } },
     auth: { persistSession: false, autoRefreshToken: false },
   })
+  const { data: departmentRelease, error: releaseError } = await userClient.rpc("rpc_department_allocation_release")
+  if (departmentRelease) return NextResponse.json({ ok: false, error: "legacy_allocation_closed" }, { status: 409 })
+  if (releaseError && releaseError.code !== "PGRST202") {
+    return NextResponse.json({ ok: false, error: "allocation_release_unavailable" }, { status: 503 })
+  }
   const { data: payloadData, error: payloadError } = await userClient.rpc("rpc_allocation_notify_payload", {
     p_lead_id: leadId,
   })

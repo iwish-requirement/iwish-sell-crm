@@ -18,6 +18,7 @@ import {
   type DealContractData, type DealContractField,
 } from "@/lib/services/deal-contract-fields"
 import { formatDealDate } from "@/lib/services/deal-date"
+import { DepartmentHandoffResults } from "@/components/department-handoff-results"
 import {
   downloadDealContractAttachment, loadDealContractSubmission, saveDealContractSubmission,
 } from "@/lib/services/deal-contract-submissions"
@@ -30,9 +31,10 @@ type Props = {
   open: boolean
   onOpenChange: (open: boolean) => void
   children?: ReactNode
+  requiredAfter?: string
 }
 
-export function DealContractSubmissionDialog({ leadId, companyName, salesperson, open, onOpenChange, children }: Props) {
+export function DealContractSubmissionDialog({ leadId, companyName, salesperson, open, onOpenChange, children, requiredAfter }: Props) {
   const [loaded, setLoaded] = useState<Loaded | null>(null)
   const [error, setError] = useState(false)
   const [attempt, setAttempt] = useState(0)
@@ -61,6 +63,9 @@ export function DealContractSubmissionDialog({ leadId, companyName, salesperson,
   const visibleData = data ? { ...data, ...returned } : null
   const errors = visibleData ? dealContractSubmissionErrors(visibleData, attachments.length + files.length) : []
   const editable = canEdit && !saving
+  const cutoff = requiredAfter ?? loaded?.departmentAllocation?.requiredAfter
+  const submittedAt = loaded?.record?.submitted_at
+  const needsConfirmation = cutoff && (!submittedAt || Date.parse(submittedAt) < Date.parse(cutoff))
 
   function update(field: DealContractField, value: string) {
     setLoaded((current) => current ? { ...current, data: { ...current.data, [field]: value } } : current)
@@ -176,7 +181,7 @@ export function DealContractSubmissionDialog({ leadId, companyName, salesperson,
           <>
             <div className="min-h-0 space-y-6 overflow-y-auto px-1 pb-2">
               <div className="flex flex-wrap gap-2">
-                {loaded.record?.submitted_at && <Badge>已确认提交</Badge>}
+                {needsConfirmation ? <Badge variant="outline">待补合同资料</Badge> : submittedAt && <Badge>已确认提交</Badge>}
                 {loaded.record?.finance_confirmed_at && <Badge variant="outline">财务已确认</Badge>}
               </div>
               <section className="space-y-3">
@@ -244,6 +249,7 @@ export function DealContractSubmissionDialog({ leadId, companyName, salesperson,
               <DealContractReturnedFields title="分配结果"
                 status={loaded.allocationUnavailable ? "暂时无法读取分配结果" : !loaded.allocation ? "分配完成后回传" : undefined}
                 fields={DEAL_ALLOCATION_FIELDS.map(([key, label]) => [label, loaded.allocation?.[key]])} />
+              <DepartmentHandoffResults handoffs={loaded.departmentAllocation?.handoffs ?? []} />
               <DealContractReturnedFields title="财务确认"
                 status={DEAL_FINANCE_FIELDS.some(([key]) => returned[key]) ? undefined : "财务确认后回传"}
                 fields={DEAL_FINANCE_FIELDS.map(([key, label]) => [label, key === "receivedOn" ? formatDealDate(returned[key]) : returned[key]])} />

@@ -3,6 +3,9 @@
 import { useContext, useEffect, useMemo, useState } from "react"
 import { DealContractSubmissionDialog } from "@/components/deal-contract-submission"
 import { DealHistory } from "@/components/deal-history"
+import { ServiceDepartmentAllocation } from "@/components/service-department-allocation"
+import { useDepartmentAllocationRelease } from "@/hooks/use-department-allocation-release"
+import { loadDepartmentAllocationLeadStates, type LeadDepartmentState } from "@/lib/services/department-allocation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -70,7 +73,8 @@ function normalizeCurrency(value: string | null | undefined): string {
 
 export function DealCenter() {
   const permissions = useContext(MePermissionsContext)
-  const [view, setView] = useState<"current" | "history">("current")
+  const { cutoff } = useDepartmentAllocationRelease()
+  const [view, setView] = useState<"current" | "history" | "pending">("current")
 
   return (
     <div className="space-y-4">
@@ -80,20 +84,35 @@ export function DealCenter() {
             onClick={() => setView("current")}>成交明细</Button>
           <Button variant={view === "history" ? "default" : "outline"} size="sm" aria-pressed={view === "history"}
             onClick={() => setView("history")}>历史成交</Button>
+          {cutoff && <Button variant={view === "pending" ? "default" : "outline"} size="sm" aria-pressed={view === "pending"}
+            onClick={() => setView("pending")}>待补合同资料</Button>}
         </nav>
       )}
-      {view === "history" && permissions?.canReadContracts ? <DealHistory /> : <CurrentDealCenter />}
+      {view === "history" && permissions?.canReadContracts ? <DealHistory allocationCutoff={cutoff} />
+        : view === "pending" && cutoff && permissions?.canReadContracts ? <ServiceDepartmentAllocation pending cutoff={cutoff} />
+          : <CurrentDealCenter allocationCutoff={cutoff} />}
     </div>
   )
 }
 
-function CurrentDealCenter() {
+function CurrentDealCenter({ allocationCutoff }: { allocationCutoff: string | null }) {
   const mePermissions = useContext(MePermissionsContext)
   const [currentProfile, setCurrentProfile] = useState<UserProfile | null>(null)
   const [timeFilter, setTimeFilter] = useState<string>("90d")
+  const [departmentStates, setDepartmentStates] = useState<Record<string, LeadDepartmentState>>({})
+  const [departmentRefresh, setDepartmentRefresh] = useState(0)
   const [isLoading, setIsLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [deals, setDeals] = useState<DealRow[]>([])
+  useEffect(() => {
+    if (!allocationCutoff || !deals.length) return
+    let active = true
+    loadDepartmentAllocationLeadStates(deals.map(deal => deal.id)).then(
+      states => { if (active) setDepartmentStates(states) },
+      () => { if (active) setDepartmentStates({}) },
+    )
+    return () => { active = false }
+  }, [allocationCutoff, deals, departmentRefresh])
   const [selectedDeal, setSelectedDeal] = useState<DealRow | null>(null)
   const [isDetailOpen, setIsDetailOpen] = useState(false)
   const [isSubmissionOpen, setIsSubmissionOpen] = useState(false)
@@ -814,7 +833,7 @@ function CurrentDealCenter() {
                     <TableHead className="whitespace-nowrap text-xs font-semibold">来源</TableHead>
                     <TableHead className="whitespace-nowrap text-xs font-semibold">销售人员</TableHead>
                     <TableHead className="whitespace-nowrap text-right text-xs font-semibold">成交金额</TableHead>
-                    <TableHead className="whitespace-nowrap text-xs font-semibold">项目组状态</TableHead>
+                    <TableHead className="whitespace-nowrap text-xs font-semibold">{allocationCutoff ? "分配进度" : "项目组状态"}</TableHead>
                   </TableRow>
 
                 </TableHeader>
@@ -855,8 +874,11 @@ function CurrentDealCenter() {
                         {deal.budgetLabel}
                       </TableCell>
                       <TableCell className="whitespace-nowrap">
-                        <Badge variant={deal.allocationStatus === "assigned" ? "default" : "secondary"}>
-                          {deal.allocationStatus === "assigned" ? "已分配项目组" : "待分配项目组"}
+                        <Badge variant={(allocationCutoff ? departmentStates[deal.id] : deal.allocationStatus) === "assigned" ? "default" : "secondary"}>
+                          {allocationCutoff
+                            ? departmentStates[deal.id] === "assigned" ? "已分配部门" : departmentStates[deal.id] === "ready"
+                              ? "待分配部门" : departmentStates[deal.id] === "needs_contract" ? "待补合同资料" : "—"
+                            : deal.allocationStatus === "assigned" ? "已分配项目组" : "待分配项目组"}
                         </Badge>
                       </TableCell>
 
@@ -958,7 +980,10 @@ function CurrentDealCenter() {
       {selectedDeal && (
         <DealContractSubmissionDialog key={selectedDeal.id}
           leadId={selectedDeal.id} companyName={selectedDeal.companyName} salesperson={selectedDeal.ownerName}
-          open={isSubmissionOpen} onOpenChange={setIsSubmissionOpen}>
+          open={isSubmissionOpen} onOpenChange={open => {
+            setIsSubmissionOpen(open)
+            if (!open && allocationCutoff) setDepartmentRefresh(value => value + 1)
+          }}>
           <details className="border-t pt-4">
             <summary className="cursor-pointer text-sm font-semibold">已有合同与回款记录</summary>
           <div className="space-y-3 pt-4 border-t border-border/60 mt-2">

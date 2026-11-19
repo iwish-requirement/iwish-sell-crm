@@ -1,5 +1,6 @@
 import { getBrowserSupabaseClient } from "@/lib/supabase/client"
 import type { DealContractAttachment } from "@/lib/services/deal-contract-submissions"
+import { loadDepartmentAllocationDetails, type AllocationDetails } from "@/lib/services/department-allocation"
 
 const BUCKET = "deal-history-materials"
 
@@ -24,6 +25,7 @@ export type HistoryRecord = {
   attachments: DealContractAttachment[]
   version: number
   canEdit: boolean
+  departmentAllocation?: AllocationDetails | null
 }
 
 export async function listDealHistory() {
@@ -34,16 +36,17 @@ export async function listDealHistory() {
 
 export async function loadDealHistory(id: string): Promise<HistoryRecord> {
   const client = getBrowserSupabaseClient()
-  const [record, access] = await Promise.all([
+  const [record, access, departmentAllocation] = await Promise.all([
     client.from("deal_history_records").select("id,source_row,raw_values,fields,attachments,version").eq("id", id).single(),
     client.rpc("rpc_deal_history_can_edit", { p_id: id }),
+    loadDepartmentAllocationDetails("history", id).catch(() => null),
   ])
   if (record.error) throw record.error
   if (access.error) throw access.error
-  return { ...record.data, canEdit: access.data === true } as HistoryRecord
+  return { ...record.data, canEdit: access.data === true, departmentAllocation } as HistoryRecord
 }
 
-export async function saveDealHistory(row: HistoryRecord, fields: Record<string, string>, files: File[]): Promise<HistoryRecord> {
+export async function saveDealHistory(row: HistoryRecord, fields: Record<string, string>, files: File[], services?: Record<string, string[]>): Promise<HistoryRecord> {
   const client = getBrowserSupabaseClient()
   const storage = client.storage.from(BUCKET)
   const uploaded: DealContractAttachment[] = []
@@ -54,12 +57,19 @@ export async function saveDealHistory(row: HistoryRecord, fields: Record<string,
       if (error) throw error
       uploaded.push({ path, name: file.name })
     }
-    const { data, error } = await client.rpc("rpc_deal_history_save", {
+    const args = {
       p_id: row.id, p_changes: fields, p_new_attachments: uploaded, p_version: row.version,
-    })
+    }
+    const { data, error } = await (services
+      ? client.rpc("rpc_department_allocation_history_confirm", { ...args, p_services: services })
+      : client.rpc("rpc_deal_history_save", args))
     if (error?.code === "40001") throw new Error("资料已更新，请重新打开后再补填。")
+    if (error?.message?.includes("department_allocation_history_required")) {
+      throw new Error("请补齐销售必填字段并上传交接附件，再确认提交。")
+    }
     if (error) throw error
-    return { ...data, canEdit: row.canEdit } as HistoryRecord
+    const departmentAllocation = services ? await loadDepartmentAllocationDetails("history", row.id).catch(() => null) : row.departmentAllocation
+    return { ...data, canEdit: row.canEdit, departmentAllocation } as HistoryRecord
   } catch (error) {
     if (uploaded.length) await storage.remove(uploaded.map(file => file.path)).catch(() => {})
     throw error
