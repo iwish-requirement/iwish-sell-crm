@@ -1,0 +1,24 @@
+# 成交资料与部门分配第一批发布
+
+销售在成交中心补齐合同资料并确认后，当前成交进入分配中心。切换时间以前已在旧分配队列中的成交统一进入「待补合同资料」，包括已有分配、曾经提交合同资料的客户。原分配、项目人员、成交记录、草稿和附件继续保留。历史成交按原归属查看，销售在历史合同资料中确认当前服务和必填资料后，可独立入队。
+
+分配人员按已签服务多选启用部门。同一成交的同一承接部门落一条交接单，附该部门实际承接的服务。派单和人员回传在第二批启用。回传地址预留为 `/api/v1/crm/handoff-staffing`，第一批返回 HTTP 503 `OPS_INTEGRATION_DISABLED`。正式契约单独维护。 [运营对接契约](https://github.com/iwish-requirement/iwish-sell-crm/tree/codex/operations-handoff-api)
+
+## 发布顺序
+
+1. 核对生产 Supabase 项目与 `.env.production` 的地址一致。记录当前成交队列总数、已有分配数、既有合同确认数和已发布历史记录数。核对五类服务的启用部门，以及销售、团队管理、分配管理和财务权限。记录当前 Cloudflare Worker 版本和 `/api/version` 返回值。
+2. 应用本批迁移 `20261119113416_crm_department_allocation_phase_one.sql`。迁移以关闭状态创建独立数据结构。启用前核对 `crm_allocation.service_departments` 的映射。效果营销按有效的「效果营销×部」识别部门，效果营销中心作为上级组织。品牌、SEO、网站建站、素材分别初始匹配品牌营销部、SEO营销部、技术部、创意部。部门映射以目录 UUID 保存。
+3. 部署前端，检查 `/api/version` 返回 `2026-11-19-01`。继续检查原分配页和现有成交资料可读取。随后执行 [启用脚本](../supabase/releases/crm_department_allocation_phase_one.sql)。第一次启用时写入统一重新确认的起算时间。
+4. 验证原队列客户在新分配队列消失，同一范围的销售能在成交中心找到「待补合同资料」。对比原分配、历史条数和已保存附件是否可查。用有权限的测试记录确认草稿、提交、分配、财务只读和未到账行为。运营回传入口在第一批保持禁用。
+
+## 回退
+
+1. 先执行 [数据库回退脚本](../supabase/rollbacks/crm_department_allocation_phase_one.sql)。脚本关闭新队列和分配写入，恢复原分配页面与原保存路径，保留切换时间、新分配和历史资料。刷新前端即可回到旧分配页。
+2. 如果需要回退应用版本，将已记录的上一 Cloudflare Worker 版本恢复至 100% 流量，复查 `/api/version`、成交中心和原分配中心。旧标签页刷新后使用对应版本的前端资源。 [Cloudflare Worker 回退说明](https://developers.cloudflare.com/workers/versions-and-deployments/rollbacks/)
+3. 再次启用时沿用首次切换时间，并继续读取已保留的新交接单。切换期间已完成人工交接的单据在第二批启用自动发送前先核对。
+
+## 本地验证
+
+- TypeScript 类型检查、现有单元测试及 Next.js 生产构建。
+- [数据库验收](../tests/database/department-allocation.mjs)使用 PGlite 和演示角色重放项目迁移。覆盖草稿与提交、所有原队列客户重新确认、历史原值、隔离权限、按部门合并交接单、财务更新、禁用和重新启用。设置 `CRM_PGLITE_MODULE` 指向本地 `@electric-sql/pglite` 0.3.15 的 `dist/index.cjs`，运行 `node tests/database/department-allocation.mjs`。
+- Chromium 本地验证正式项目的成交中心、分配组件和分配保存调用。关闭数据库开关后刷新显示旧分配页，再次启用后恢复新分配和已有交接单。

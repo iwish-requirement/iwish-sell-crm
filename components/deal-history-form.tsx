@@ -4,6 +4,8 @@ import { useState } from "react"
 import { HISTORY_COLUMNS, HISTORY_HEADERS, type HistoryColumn } from "@/lib/services/deal-history-fields"
 import { downloadDealHistoryAttachment, saveDealHistory, type HistoryRecord } from "@/lib/services/deal-history"
 import { DealContractReturnedFields } from "@/components/deal-contract-returned-fields"
+import { DepartmentHandoffResults } from "@/components/department-handoff-results"
+import { Badge } from "@/components/ui/badge"
 import { dealDateInputValue, formatDealDate } from "@/lib/services/deal-date"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -54,26 +56,37 @@ function ServiceOptions({ label, saved, change }: { label: string; saved: string
   </div>
 }
 
-export function HistoryContractForm({ row, close, save }: {
-  row: HistoryRecord; close: () => void; save: (updated: HistoryRecord) => void
+export function HistoryContractForm({ row, close, save, allocationCutoff }: {
+  row: HistoryRecord; close: () => void; save: (updated: HistoryRecord) => void; allocationCutoff?: string | null
 }) {
   const [changes, setChanges] = useState<Record<string, string>>({})
   const [files, setFiles] = useState<File[]>([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
   const [saved, setSaved] = useState(false)
+  const [confirmed, setConfirmed] = useState(false)
+  const [services, setServices] = useState<Record<string, string[]>>(row.departmentAllocation?.data?.services ?? {})
   const labelFor = (key: string) => key === "spendRatio" ? "消耗比例" : HISTORY_HEADERS[1][HISTORY_COLUMNS.indexOf(key as HistoryColumn)] ?? ""
   const entered = (key: string) => changes[key] ?? row.fields[key] ?? ""
   const update = (key: string, value: string) => {
     setChanges(current => ({ ...current, [key]: value }))
     setSaved(false)
+    setConfirmed(false)
     setError("")
   }
   const cooperation = original(row, "P") || entered("P")
   const isRatio = cooperation === "消耗比例服务费"
   const isBonus = cooperation === "基础服务费+激励奖金"
 
-  async function saveDraft() {
+  const missing = ["B","C","D","E","F","I","J","K","L","M","N","O","P","Q","R","AC","AD",
+    ...(isRatio ? ["spendRatio"] : []), ...(isBonus ? ["S","T"] : []),
+  ].filter(key => !(original(row, key) || entered(key) || (key === "D" ? original(row, "AQ") : "")).trim())
+  const incompleteServices = !Object.keys(services).length || DEAL_CONTRACT_SERVICES.some(group =>
+    Object.hasOwn(services, group.key) && group.options.length > 0 && !services[group.key].length)
+  const canConfirm = !missing.length && !incompleteServices && row.attachments.length + files.length > 0
+
+  async function saveDraft(confirm = false) {
+    if (!row.canEdit || (confirm && !canConfirm)) return
     const fields = { ...changes }
     if (fields.D?.trim()) fields.D = dealDateInputValue(fields.D) || fields.D
     if (fields.J?.trim()) {
@@ -90,10 +103,11 @@ export function HistoryContractForm({ row, close, save }: {
     setSaving(true)
     setError("")
     try {
-      save(await saveDealHistory(row, fields, files))
+      save(await saveDealHistory(row, fields, files, confirm ? services : undefined))
       setChanges({})
       setFiles([])
       setSaved(true)
+      setConfirmed(confirm)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "保存失败，请重试。")
     } finally {
@@ -135,7 +149,7 @@ export function HistoryContractForm({ row, close, save }: {
         </ul>
       </div>
     }
-    if (!old && !locked && DEAL_CONTRACT_SERVICES.some(group => group.label === label)) {
+    if (!allocationCutoff && !old && !locked && DEAL_CONTRACT_SERVICES.some(group => group.label === label)) {
       return <ServiceOptions key={key} label={label} saved={entered(key)} change={value => update(key, value)} />
     }
     const value = entered(key)
@@ -177,15 +191,48 @@ export function HistoryContractForm({ row, close, save }: {
       <DialogHeader>
         <DialogTitle>合同资料补充</DialogTitle>
         <DialogDescription>{original(row, "H")}</DialogDescription>
+        {allocationCutoff && row.departmentAllocation?.submitted_at &&
+          Date.parse(row.departmentAllocation.submitted_at) >= Date.parse(allocationCutoff) &&
+          <Badge className="w-fit">已确认提交</Badge>}
       </DialogHeader>
       <div className="min-h-0 overflow-y-auto px-1 pb-2">
         <fieldset className="space-y-6" disabled={saving}>
           {sections.map(({ title, keys }) => <section key={title} className="space-y-3 border-t pt-4 first:border-t-0 first:pt-0">
             <h3 className="font-semibold">{title}</h3>
-            <div className="grid gap-4 sm:grid-cols-2">{keys.map(key => renderField(key, !row.canEdit || ["A", "G", "H"].includes(key)))}</div>
+            <div className="grid gap-4 sm:grid-cols-2">{keys.map(key => renderField(key,
+              !row.canEdit || ["A", "G", "H"].includes(key) || Boolean(allocationCutoff && ["U","Y","Z","AA","AB"].includes(key))))}</div>
           </section>)}
+          {allocationCutoff && row.canEdit && <section className="space-y-3 border-t pt-4">
+            <h3 className="font-semibold">确认合作服务</h3>
+            <p className="text-sm text-muted-foreground">按当前合同勾选要交接的服务，原表服务内容可在上方查看。</p>
+            {DEAL_CONTRACT_SERVICES.map(group => <fieldset key={group.key} className="space-y-2 rounded-md border p-3">
+              <label className="flex items-center gap-2 text-sm font-medium">
+                <input type="checkbox" checked={Object.hasOwn(services, group.key)} onChange={event => {
+                  const checked = event.currentTarget.checked
+                  setServices(old => {
+                    const next = { ...old }
+                    if (checked) next[group.key] = []
+                    else delete next[group.key]
+                    return next
+                  })
+                }} />
+                {group.label}
+              </label>
+              {Object.hasOwn(services, group.key) && group.options.length > 0 && <div className="flex flex-wrap gap-3">
+                {group.options.map(([id, name]) => <label key={id} className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={services[group.key].includes(id)} onChange={event => {
+                    const checked = event.currentTarget.checked
+                    setServices(old => ({
+                      ...old, [group.key]: checked ? [...old[group.key], id] : old[group.key].filter(value => value !== id),
+                    }))
+                  }} />{name}
+                </label>)}
+              </div>}
+            </fieldset>)}
+          </section>}
           <DealContractReturnedFields title="分配结果"
             fields={allocations} status={allocations.some(([,value]) => value) ? undefined : "分配完成后回传"} />
+          <DepartmentHandoffResults handoffs={row.departmentAllocation?.handoffs ?? []} />
           <DealContractReturnedFields title={HISTORY_HEADERS[0][HISTORY_COLUMNS.indexOf("AN")] ?? "审批记录"}
             fields={returnedFields(["AN","AO"])} />
           <DealContractReturnedFields title="财务确认"
@@ -195,11 +242,17 @@ export function HistoryContractForm({ row, close, save }: {
       <DialogFooter className="shrink-0 border-t pt-3 sm:items-center">
         <div className="mr-auto text-sm">
           {error && <p role="alert" className="text-destructive">{error}</p>}
-          {saved && <p role="status">补充资料已保存。</p>}
+          {saved && <p role="status">{confirmed ? "已确认提交至分配中心。" : "补充资料已保存。"}</p>}
+          {allocationCutoff && row.canEdit && missing.length > 0 && <p className="text-muted-foreground">
+            待补 {missing.slice(0, 3).map(labelFor).join("、")}{missing.length > 3 ? "等" : ""}。
+          </p>}
         </div>
         <Button type="button" variant="outline" disabled={saving} onClick={close}>关闭</Button>
         {row.canEdit && <Button type="button" disabled={saving || (!Object.keys(changes).length && !files.length)} onClick={() => void saveDraft()}>
           {saving ? "正在保存…" : "保存补充"}
+        </Button>}
+        {allocationCutoff && row.canEdit && <Button type="button" disabled={saving || !canConfirm} onClick={() => void saveDraft(true)}>
+          确认提交
         </Button>}
       </DialogFooter>
     </DialogContent>
