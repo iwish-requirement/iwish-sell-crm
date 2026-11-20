@@ -14,7 +14,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { downloadDealContractAttachment } from "@/lib/services/deal-contract-submissions"
 import { downloadDealHistoryAttachment } from "@/lib/services/deal-history"
 import { formatDealDate } from "@/lib/services/deal-date"
-import { DEAL_CONTRACT_FIELDS, DEAL_COOPERATION_MODES, DEAL_FINANCE_FIELDS, isDealContractFieldVisible } from "@/lib/services/deal-contract-fields"
+import { DEAL_CONTRACT_FIELDS, DEAL_COOPERATION_MODES, DEAL_FINANCE_FIELDS, NO_CONTRACT_ATTACHMENTS, isDealContractFieldVisible } from "@/lib/services/deal-contract-fields"
 import {
   loadDepartmentAllocationDetails, loadDepartmentAllocationWorkspace, saveServiceDepartments, selectedAllocationServices,
   type AllocationDepartment, type AllocationDetails, type AllocationRow, type AllocationWorkspace,
@@ -159,6 +159,8 @@ function DepartmentAllocationDialog({ row, departments, canManage, close, saved 
                   </div>)}
               </dl>
               <div className="mt-3 flex flex-wrap gap-2">
+                {!details?.attachments?.length && data.attachmentStatus === NO_CONTRACT_ATTACHMENTS &&
+                  <p className="text-sm text-muted-foreground">客户售前信息和售后目标：暂无附件</p>}
                 {details?.attachments?.map(file => <Button type="button" key={file.path} variant="outline" size="sm"
                   onClick={() => void (row.source === "history" ? downloadDealHistoryAttachment : downloadDealContractAttachment)(file)
                     .catch(() => setError("交接附件下载失败。"))}>{file.name}</Button>)}

@@ -48,6 +48,7 @@ export async function loadDealContractSubmission(leadId: string, salesperson: st
   const record = submission.data as Submission | null
   const data: DealContractData = {
     services: record?.draft.services ?? {},
+    attachmentStatus: record?.draft.attachmentStatus,
     signedOn: dealDateInputValue(contract?.signedAt),
     serviceStartsOn: dealDateInputValue(contract?.startDate),
     salesperson: salesperson ?? "",

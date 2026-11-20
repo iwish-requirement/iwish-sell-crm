@@ -14,7 +14,7 @@ import { Textarea } from "@/components/ui/textarea"
 import {
   CONTRACT_FILE_SIZE_LIMIT, DEAL_CONTRACT_FIELDS, DEAL_CONTRACT_IDENTITY_FIELDS, DEAL_CONTRACT_SERVICES, DEAL_COOPERATION_MODES, DEAL_CURRENCIES,
   DEAL_ALLOCATION_FIELDS, DEAL_FINANCE_FIELDS,
-  NOT_PAID, NO_WEBSITE, dealContractSubmissionErrors, isDealContractFieldVisible, isDealCurrency, normalizeDealWebsite,
+  NOT_PAID, NO_CONTRACT_ATTACHMENTS, NO_WEBSITE, dealContractSubmissionErrors, isDealContractFieldVisible, isDealCurrency, normalizeDealWebsite,
   type DealContractData, type DealContractField,
 } from "@/lib/services/deal-contract-fields"
 import { formatDealDate } from "@/lib/services/deal-date"
@@ -64,7 +64,9 @@ export function DealContractSubmissionDialog({ leadId, companyName, salesperson,
     ...data, ...returned,
     currency: !canEdit || isDealCurrency(returned.currency) ? returned.currency ?? data.currency : data.currency,
   } : null
-  const errors = visibleData ? dealContractSubmissionErrors(visibleData, attachments.length + files.length) : []
+  const attachmentCount = attachments.length + files.length
+  const noAttachments = !attachmentCount && data?.attachmentStatus === NO_CONTRACT_ATTACHMENTS
+  const errors = visibleData ? dealContractSubmissionErrors(visibleData, attachmentCount) : []
   const editable = canEdit && !saving
   const cutoff = requiredAfter ?? loaded?.departmentAllocation?.requiredAfter
   const submittedAt = loaded?.record?.submitted_at
@@ -72,6 +74,10 @@ export function DealContractSubmissionDialog({ leadId, companyName, salesperson,
 
   function update(field: DealContractField, value: string) {
     setLoaded((current) => current ? { ...current, data: { ...current.data, [field]: value } } : current)
+  }
+
+  function setAttachmentStatus(attachmentStatus: DealContractData["attachmentStatus"]) {
+    setLoaded(current => current ? { ...current, data: { ...current.data, attachmentStatus } } : current)
   }
 
   function updateService(group: string, child?: string) {
@@ -93,6 +99,7 @@ export function DealContractSubmissionDialog({ leadId, companyName, salesperson,
     const selected = Array.from(event.currentTarget.files ?? [])
     const valid = selected.filter((file) => file.size > 0 && file.size <= CONTRACT_FILE_SIZE_LIMIT)
     if (valid.length !== selected.length) toast.error("附件须有内容，单个文件不超过 20 MB")
+    if (valid.length) setAttachmentStatus("")
     setFiles((current) => [...current, ...valid])
     event.currentTarget.value = ""
   }
@@ -246,9 +253,15 @@ export function DealContractSubmissionDialog({ leadId, companyName, salesperson,
                   <Label htmlFor="deal-contract-files">
                     客户售前信息和售后目标（如：方案，目标，客户相关信息）<span className="text-destructive">*</span>
                   </Label>
-                  <Input id="deal-contract-files" type="file" multiple onChange={pickFiles} />
+                  <div className="flex items-center gap-2">
+                    <Input id="deal-contract-files" className="min-w-0 flex-1" type="file" multiple onChange={pickFiles} />
+                    <Button type="button" variant={noAttachments ? "secondary" : "outline"} size="sm"
+                      aria-label="暂无附件" aria-pressed={noAttachments} disabled={attachmentCount > 0}
+                      onClick={() => setAttachmentStatus(noAttachments ? "" : NO_CONTRACT_ATTACHMENTS)}>暂无</Button>
+                  </div>
                   <p className="text-xs text-muted-foreground">可上传多个文件，每个最多 20 MB。</p>
                 </> : <p className="text-xs text-muted-foreground">客户售前信息和售后目标（如：方案，目标，客户相关信息）</p>}
+                {noAttachments && <p className="text-sm text-muted-foreground">已标记暂无附件</p>}
                 <ul className="space-y-1">
                   {attachments.map((attachment) => <li className="flex items-center justify-between gap-2 text-sm" key={attachment.path}>
                     <Button type="button" variant="link" className="max-w-[85%] truncate px-0" onClick={() =>
