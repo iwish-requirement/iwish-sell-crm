@@ -13,6 +13,8 @@ const id = suffix => "00000000-0000-4000-8000-" + String(suffix).padStart(12, "0
 const [admin, seller, otherSeller, manager, existing, other, history, currentHistory] = [1, 2, 3, 4, 11, 12, 21, 22].map(id)
 const leadFile = existing + "/" + id(90)
 const historyFile = history + "/" + id(91)
+const bonusTerms = "季度消耗\t奖金\n达到目标\t¥500"
+const bonusTermsHtml = "<table><tbody><tr><th colspan=\"2\"><strong>季度消耗</strong></th></tr><tr><td>达到目标</td><td>¥500</td></tr></tbody></table>"
 const form = {
   signedOn: "2026-11-19", expectedPaymentOn: "2026-11-22", actualPayment: "未到账",
   handoffOn: "2026-11-23", serviceStartsOn: "2026-11-25", salesperson: "演示销售",
@@ -26,7 +28,7 @@ const form = {
 const legacyCells = [
   "2025年", "2025-11-19", form.expectedPaymentOn, form.actualPayment, form.handoffOn, form.serviceStartsOn,
   form.salesperson, "历史演示客户", null, form.website, form.category, form.contactName,
-  form.contactTitle, form.phone, form.email, "固定季度服务费", form.baseFee, form.serviceFees,
+  form.contactTitle, form.phone, form.email, "基础服务费+激励奖金", form.baseFee, form.serviceFees,
   null, null, "Google", "Meta", null, null, null, null, null, null, form.needs, form.address,
   "效果营销二部", "历史演示负责人", null, null, null, null, null, null, null, null, null, null, null, null,
 ]
@@ -49,7 +51,10 @@ const leadStates = () => value("select public.rpc_department_allocation_lead_sta
 const details = (source, row) => value("select public.rpc_department_allocation_details($1,$2) as value", [source, row])
 const assignment = (source, row, submittedAt, revision, selections) =>
   value("select public.rpc_department_allocation_save($1,$2,$3,$4,$5) as value", [source, row, submittedAt, revision, json(selections)])
-const companyFields = { mainlandCompanyName: form.mainlandCompanyName, hongKongCompanyName: form.hongKongCompanyName, currency: "USD" }
+const companyFields = {
+  mainlandCompanyName: form.mainlandCompanyName, hongKongCompanyName: form.hongKongCompanyName,
+  currency: "USD", S: "500", T: bonusTerms,
+}
 const leadSubmit = (version, confirm, data = form, files = [{ path: leadFile, name: "交接说明.txt" }]) => value(
   "select to_jsonb(public.rpc_deal_contract_submission_save($1,$2,$3,$4,$5)) as value",
   [existing, json(data), json(files), version, confirm],
@@ -126,10 +131,17 @@ try {
   await knownError(() => leadSubmit(0,true,{ ...form, currency:"" }), "deal_contract_required")
   await knownError(() => leadSubmit(0, true, form, []), "deal_contract_required")
   await knownError(() => leadSubmit(0, true, { ...form, attachmentStatus:"skip" }, []), "deal_contract_attachment_status")
-  assert.equal((await leadSubmit(0, false, { ...form, attachmentStatus:"none" }, [])).draft.attachmentStatus, "none")
-  await knownError(() => leadSubmit(1, true, { ...form, attachmentStatus:"" }, []), "deal_contract_required")
-  const noFileLead = await leadSubmit(1, true, form, [])
+  const bonusForm = { ...form, cooperation: "base_bonus", bonusAmount: "500", bonusTerms }
+  await knownError(() => leadSubmit(0, true, { ...bonusForm, bonusTerms: "", bonusTermsHtml }, []), "deal_contract_required")
+  await knownError(() => leadSubmit(0, false, { ...bonusForm, bonusTermsHtml: "x".repeat(20001) }, []), "deal_bonus_terms_html")
+  const bonusDraft = await leadSubmit(0, false, { ...bonusForm, bonusTermsHtml, attachmentStatus:"none" }, [])
+  assert.equal(bonusDraft.draft.attachmentStatus, "none")
+  assert.equal(bonusDraft.draft.bonusTermsHtml, bonusTermsHtml)
+  await knownError(() => leadSubmit(1, true, { ...bonusForm, attachmentStatus:"" }, []), "deal_contract_required")
+  const noFileLead = await leadSubmit(1, true, bonusForm, [])
   assert.equal(noFileLead.submitted.attachmentStatus, "none")
+  assert.equal(noFileLead.submitted.bonusTerms, bonusTerms)
+  assert.equal(noFileLead.submitted.bonusTermsHtml, bonusTermsHtml)
   assert.deepEqual(noFileLead.submitted_attachments, [])
   await actor(null)
   const originalAssignment = await value("select to_jsonb(a) as value from public.lead_project_assignments a where a.lead_id=$1", [existing])
@@ -147,7 +159,9 @@ try {
   assert.deepEqual((await workspace(true)).rows.map(row => row.id), [existing])
   await leadSubmit(2, false)
   assert.equal((await workspace(false)).rows.length, 0)
-  assert.equal((await leadSubmit(3, true)).submitted.attachmentStatus, undefined)
+  const submittedWithoutBonus = await leadSubmit(3, true)
+  assert.equal(submittedWithoutBonus.submitted.attachmentStatus, undefined)
+  assert.equal(submittedWithoutBonus.submitted.bonusTermsHtml, undefined)
   assert.deepEqual(await leadStates(), { [existing]: "ready" })
   assert.equal((await workspace(true)).rows.length, 0)
   const own = (await workspace(false)).rows[0]
@@ -165,8 +179,9 @@ try {
     "department_allocation_history_required")
   await knownError(() => historySubmit(0, files, form.services, { ...companyFields, currency:"HKD" }),
     "deal_history_currency")
-  const noFileHistory = await historySubmit(0, [], form.services, { ...companyFields, attachmentStatus:"none" })
+  const noFileHistory = await historySubmit(0, [], form.services, { ...companyFields, bonusTermsHtml, attachmentStatus:"none" })
   assert.equal(noFileHistory.fields.attachmentStatus, "none")
+  assert.equal(noFileHistory.fields.bonusTermsHtml, bonusTermsHtml)
   const noFileDetails = await details("history", history)
   assert.equal(noFileDetails.data.attachmentStatus, "none")
   assert.deepEqual(noFileDetails.attachments, [])
@@ -178,6 +193,8 @@ try {
   assert.equal(submittedHistory.hongKongCompanyName, companyFields.hongKongCompanyName)
   assert.equal(submittedHistory.currency, "USD")
   assert.equal(submittedHistory.attachmentStatus, undefined)
+  assert.equal(submittedHistory.bonusTerms, bonusTerms)
+  assert.equal(submittedHistory.bonusTermsHtml, bonusTermsHtml)
   assert.equal(await value("select generated_contract_number as value from public.deal_history_records where id=$1", [history]), generatedNumber)
 
   await actor(manager)

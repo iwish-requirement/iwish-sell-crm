@@ -141,3 +141,28 @@
     cursor: not-allowed;
   }
 }
+
+.deal-bonus-terms table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-block: 0.25rem;
+}
+
+.deal-bonus-terms :is(th, td) {
+  min-width: 3rem;
+  border: 1px solid var(--border);
+  padding: 0.35rem 0.5rem;
+  vertical-align: top;
+}
+
+.deal-bonus-terms th {
+  background: var(--muted);
+  text-align: start;
+}
+
+.deal-bonus-terms :is(ul, ol) {
+  padding-inline-start: 1.5rem;
+}
+
+.deal-bonus-terms ul { list-style: disc; }
+.deal-bonus-terms ol { list-style: decimal; }

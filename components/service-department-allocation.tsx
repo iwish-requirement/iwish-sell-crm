@@ -3,6 +3,7 @@
 import { useContext, useEffect, useState } from "react"
 import { MePermissionsContext } from "@/components/app-root"
 import { DealContractSubmissionDialog } from "@/components/deal-contract-submission"
+import { DealBonusTermsValue } from "@/components/deal-bonus-terms"
 import { DepartmentHandoffResults } from "@/components/department-handoff-results"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -150,10 +151,11 @@ function DepartmentAllocationDialog({ row, departments, canManage, close, saved 
                   <dd className="break-words">{data.companyName}</dd>
                 </div>}
                 {DEAL_CONTRACT_FIELDS.filter(([key]) => row.source === "history" || isDealContractFieldVisible(key, data.cooperation))
-                  .map(([key, label, kind]) => data[key] && <div key={key}>
+                  .map(([key, label, kind]) => data[key] && <div key={key} className={key === "bonusTerms" ? "min-w-0 sm:col-span-2" : undefined}>
                     <dt className="text-xs text-muted-foreground">{label}</dt>
                     <dd className="whitespace-pre-wrap break-all">
-                      {kind === "date" || key === "actualPayment" ? formatDealDate(data[key]) : kind === "cooperation"
+                      {key === "bonusTerms" ? <DealBonusTermsValue text={data[key]} html={data.bonusTermsHtml} />
+                        : kind === "date" || key === "actualPayment" ? formatDealDate(data[key]) : kind === "cooperation"
                         ? DEAL_COOPERATION_MODES.find(([id]) => id === data[key])?.[1] ?? data[key] : data[key]}
                     </dd>
                   </div>)}

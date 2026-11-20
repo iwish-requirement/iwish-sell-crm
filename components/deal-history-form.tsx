@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { HISTORY_COLUMNS, HISTORY_HEADERS, type HistoryColumn } from "@/lib/services/deal-history-fields"
 import { downloadDealHistoryAttachment, saveDealHistory, type HistoryRecord } from "@/lib/services/deal-history"
+import { DealBonusTermsEditor, DealBonusTermsValue } from "@/components/deal-bonus-terms"
 import { DealContractReadOnlyField, DealContractReturnedFields } from "@/components/deal-contract-returned-fields"
 import { DepartmentHandoffResults } from "@/components/department-handoff-results"
 import { Badge } from "@/components/ui/badge"
@@ -14,7 +15,7 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import {
   CONTRACT_FILE_SIZE_LIMIT, DEAL_CONTRACT_FIELDS, DEAL_COOPERATION_MODES, DEAL_CONTRACT_SERVICES, DEAL_CURRENCIES,
-  NO_WEBSITE, NOT_PAID, NO_CONTRACT_ATTACHMENTS, isDealCurrency, normalizeDealWebsite,
+  MAX_BONUS_TERMS_HTML_LENGTH, NO_WEBSITE, NOT_PAID, NO_CONTRACT_ATTACHMENTS, isDealCurrency, normalizeDealWebsite,
 } from "@/lib/services/deal-contract-fields"
 
 const dateColumns = new Set(["B", "C", "D", "E", "F", "AO", "AQ"])
@@ -72,8 +73,8 @@ export function HistoryContractForm({ row, close, save, allocationCutoff }: {
   const entered = (key: string) => changes[key] ?? row.fields[key] ?? ""
   const fixedValue = (key: string) => key === "I" && row.generated_contract_number
     ? row.generated_contract_number : original(row, key)
-  const update = (key: string, value: string) => {
-    setChanges(current => ({ ...current, [key]: value }))
+  const update = (key: string, value: string, bonusTermsHtml?: string) => {
+    setChanges(current => ({ ...current, [key]: value, ...(bonusTermsHtml === undefined ? {} : { bonusTermsHtml }) }))
     setSaved(false)
     setConfirmed(false)
     setError("")
@@ -81,6 +82,7 @@ export function HistoryContractForm({ row, close, save, allocationCutoff }: {
   const cooperation = original(row, "P") || entered("P")
   const isRatio = cooperation === "消耗比例服务费"
   const isBonus = cooperation === "基础服务费+激励奖金"
+  const bonusTermsTooLong = isBonus && entered("bonusTermsHtml").length > MAX_BONUS_TERMS_HTML_LENGTH
 
   const missing = [...newRequiredFields, "B","C","D","E","F","I","J","K","L","M","N","O","P","Q","R","AC","AD",
     ...(isRatio ? ["spendRatio"] : []), ...(isBonus ? ["S","T"] : []),
@@ -93,7 +95,7 @@ export function HistoryContractForm({ row, close, save, allocationCutoff }: {
   const canConfirm = !missing.length && !incompleteServices && (attachmentCount > 0 || noAttachments)
 
   async function saveDraft(confirm = false) {
-    if (!row.canEdit || (confirm && !canConfirm)) return
+    if (!row.canEdit || bonusTermsTooLong || (confirm && !canConfirm)) return
     const fields = { ...changes }
     if (fields.D?.trim()) fields.D = dealDateInputValue(fields.D) || fields.D
     if (fields.J?.trim()) {
@@ -106,7 +108,7 @@ export function HistoryContractForm({ row, close, save, allocationCutoff }: {
       return
     }
     if (!isRatio) delete fields.spendRatio
-    if (!isBonus) { delete fields.S; delete fields.T }
+    if (!isBonus) { delete fields.S; delete fields.T; delete fields.bonusTermsHtml }
     setSaving(true)
     setError("")
     try {
@@ -167,6 +169,15 @@ export function HistoryContractForm({ row, close, save, allocationCutoff }: {
       return <ServiceOptions key={key} label={label} saved={entered(key)} change={value => update(key, value)} />
     }
     const value = entered(key)
+    if (key === "T") {
+      const html = old ? undefined : entered("bonusTermsHtml")
+      if (old || locked) return <DealContractReadOnlyField key={key} label={label} wide
+        value={<DealBonusTermsValue text={old || value} html={html} />} />
+      return <div key={key} className="space-y-2 sm:col-span-2">
+        <Label id={id + "-label"}>{label}</Label>
+        <DealBonusTermsEditor id={id} text={value} html={html} onChange={(text, formatted) => update(key, text, formatted)} />
+      </div>
+    }
     const long = kind === "multiline" || old.includes("\n") || old.length > 65
     if (old || locked) {
       const display = old || (dateColumns.has(key) && value ? formatDealDate(value) : value)
@@ -267,10 +278,10 @@ export function HistoryContractForm({ row, close, save, allocationCutoff }: {
           </p>}
         </div>
         <Button type="button" variant="outline" disabled={saving} onClick={close}>关闭</Button>
-        {row.canEdit && <Button type="button" disabled={saving || (!Object.keys(changes).length && !files.length)} onClick={() => void saveDraft()}>
+        {row.canEdit && <Button type="button" disabled={saving || bonusTermsTooLong || (!Object.keys(changes).length && !files.length)} onClick={() => void saveDraft()}>
           {saving ? "正在保存…" : "保存补充"}
         </Button>}
-        {allocationCutoff && row.canEdit && <Button type="button" disabled={saving || !canConfirm} onClick={() => void saveDraft(true)}>
+        {allocationCutoff && row.canEdit && <Button type="button" disabled={saving || bonusTermsTooLong || !canConfirm} onClick={() => void saveDraft(true)}>
           确认提交
         </Button>}
       </DialogFooter>

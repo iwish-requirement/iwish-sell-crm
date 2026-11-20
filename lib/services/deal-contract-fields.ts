@@ -75,11 +75,13 @@ export const DEAL_ALLOCATION_FIELDS = [
 export const NO_WEBSITE = "暂无网站"
 export const NOT_PAID = "未到账"
 export const NO_CONTRACT_ATTACHMENTS = "none"
+export const MAX_BONUS_TERMS_HTML_LENGTH = 20_000
 export const CONTRACT_FILE_SIZE_LIMIT = 20 * 1024 * 1024
 export type DealContractField = (typeof DEAL_CONTRACT_FIELDS)[number][0]
 export type DealContractData = Partial<Record<DealContractField | "companyName", string>> & {
   services: Record<string, string[]>
   attachmentStatus?: typeof NO_CONTRACT_ATTACHMENTS | ""
+  bonusTermsHtml?: string
 }
 export type DealContractFinance = Partial<Record<DealContractField | (typeof DEAL_FINANCE_FIELDS)[number][0], string>>
 export type DealContractAllocation = Partial<Record<(typeof DEAL_ALLOCATION_FIELDS)[number][0], string>>
