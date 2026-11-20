@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import {
   CONTRACT_FILE_SIZE_LIMIT, DEAL_CONTRACT_FIELDS, DEAL_COOPERATION_MODES, DEAL_CONTRACT_SERVICES, DEAL_CURRENCIES,
-  NO_WEBSITE, NOT_PAID, isDealCurrency, normalizeDealWebsite,
+  NO_WEBSITE, NOT_PAID, NO_CONTRACT_ATTACHMENTS, isDealCurrency, normalizeDealWebsite,
 } from "@/lib/services/deal-contract-fields"
 
 const dateColumns = new Set(["B", "C", "D", "E", "F", "AO", "AQ"])
@@ -88,7 +88,9 @@ export function HistoryContractForm({ row, close, save, allocationCutoff }: {
     : !(fixedValue(key) || entered(key) || (key === "D" ? original(row, "AQ") : "")).trim())
   const incompleteServices = !Object.keys(services).length || DEAL_CONTRACT_SERVICES.some(group =>
     Object.hasOwn(services, group.key) && group.options.length > 0 && !services[group.key].length)
-  const canConfirm = !missing.length && !incompleteServices && row.attachments.length + files.length > 0
+  const attachmentCount = row.attachments.length + files.length
+  const noAttachments = !attachmentCount && entered("attachmentStatus") === NO_CONTRACT_ATTACHMENTS
+  const canConfirm = !missing.length && !incompleteServices && (attachmentCount > 0 || noAttachments)
 
   async function saveDraft(confirm = false) {
     if (!row.canEdit || (confirm && !canConfirm)) return
@@ -131,16 +133,23 @@ export function HistoryContractForm({ row, close, save, allocationCutoff }: {
         {row.canEdit ? <Label htmlFor={id}>{label}</Label> : <p className="text-xs text-muted-foreground">{label}</p>}
         {old && <p className="whitespace-pre-wrap break-all text-sm">{old}</p>}
         {row.canEdit && <>
-        <Input id={id} type="file" multiple disabled={saving} onChange={event => {
-          const added = Array.from(event.currentTarget.files ?? [])
-          const valid = added.filter(file => file.size > 0 && file.size <= CONTRACT_FILE_SIZE_LIMIT)
-          if (valid.length !== added.length) setError("附件须有内容，单个文件不超过 20 MB。")
-          setFiles(previous => [...previous, ...valid])
-          setSaved(false)
-          event.currentTarget.value = ""
-        }} />
+        <div className="flex items-center gap-2">
+          <Input id={id} className="min-w-0 flex-1" type="file" multiple disabled={saving} onChange={event => {
+            const added = Array.from(event.currentTarget.files ?? [])
+            const valid = added.filter(file => file.size > 0 && file.size <= CONTRACT_FILE_SIZE_LIMIT)
+            if (valid.length && noAttachments) update("attachmentStatus", "")
+            if (valid.length !== added.length) setError("附件须有内容，单个文件不超过 20 MB。")
+            setFiles(previous => [...previous, ...valid])
+            setSaved(false)
+            event.currentTarget.value = ""
+          }} />
+          <Button type="button" variant={noAttachments ? "secondary" : "outline"} size="sm"
+            aria-label="暂无附件" aria-pressed={noAttachments} disabled={saving || attachmentCount > 0}
+            onClick={() => update("attachmentStatus", noAttachments ? "" : NO_CONTRACT_ATTACHMENTS)}>暂无</Button>
+        </div>
         <p className="text-xs text-muted-foreground">可上传多个文件，每个最多 20 MB。</p>
         </>}
+        {noAttachments && <p className="text-sm text-muted-foreground">已标记暂无附件</p>}
         <ul className="space-y-1 text-sm">
           {row.attachments.map(file => <li key={file.path}>
             <Button type="button" variant="link" className="max-w-full justify-start truncate px-0"

@@ -50,9 +50,9 @@ const details = (source, row) => value("select public.rpc_department_allocation_
 const assignment = (source, row, submittedAt, revision, selections) =>
   value("select public.rpc_department_allocation_save($1,$2,$3,$4,$5) as value", [source, row, submittedAt, revision, json(selections)])
 const companyFields = { mainlandCompanyName: form.mainlandCompanyName, hongKongCompanyName: form.hongKongCompanyName, currency: "USD" }
-const leadSubmit = (version, confirm, data = form) => value(
+const leadSubmit = (version, confirm, data = form, files = [{ path: leadFile, name: "交接说明.txt" }]) => value(
   "select to_jsonb(public.rpc_deal_contract_submission_save($1,$2,$3,$4,$5)) as value",
-  [existing, json(data), json([{ path: leadFile, name: "交接说明.txt" }]), version, confirm],
+  [existing, json(data), json(files), version, confirm],
 )
 const historySubmit = (version, files, services, changes = companyFields) => value(
   "select to_jsonb(public.rpc_department_allocation_history_confirm($1,$2,$3,$4,$5)) as value",
@@ -124,7 +124,13 @@ try {
   await knownError(() => leadSubmit(0,true,{ ...form, hongKongCompanyName:"" }), "deal_contract_required")
   await knownError(() => leadSubmit(0,false,{ ...form, currency:"HKD" }), "deal_contract_currency")
   await knownError(() => leadSubmit(0,true,{ ...form, currency:"" }), "deal_contract_required")
-  await leadSubmit(0, true)
+  await knownError(() => leadSubmit(0, true, form, []), "deal_contract_required")
+  await knownError(() => leadSubmit(0, true, { ...form, attachmentStatus:"skip" }, []), "deal_contract_attachment_status")
+  assert.equal((await leadSubmit(0, false, { ...form, attachmentStatus:"none" }, [])).draft.attachmentStatus, "none")
+  await knownError(() => leadSubmit(1, true, { ...form, attachmentStatus:"" }, []), "deal_contract_required")
+  const noFileLead = await leadSubmit(1, true, form, [])
+  assert.equal(noFileLead.submitted.attachmentStatus, "none")
+  assert.deepEqual(noFileLead.submitted_attachments, [])
   await actor(null)
   const originalAssignment = await value("select to_jsonb(a) as value from public.lead_project_assignments a where a.lead_id=$1", [existing])
   await runFile("releases/crm_department_allocation_phase_one.sql")
@@ -139,9 +145,9 @@ try {
   await knownError(() => details("lead", other), "42501")
   assert.deepEqual(await leadStates(), { [existing]: "needs_contract" })
   assert.deepEqual((await workspace(true)).rows.map(row => row.id), [existing])
-  await leadSubmit(1, false)
+  await leadSubmit(2, false)
   assert.equal((await workspace(false)).rows.length, 0)
-  await leadSubmit(2, true)
+  assert.equal((await leadSubmit(3, true)).submitted.attachmentStatus, undefined)
   assert.deepEqual(await leadStates(), { [existing]: "ready" })
   assert.equal((await workspace(true)).rows.length, 0)
   const own = (await workspace(false)).rows[0]
@@ -153,17 +159,25 @@ try {
   await knownError(() => query("select public.rpc_deal_history_save($1,'{\"I\":\"手动编号\"}'::jsonb,'[]'::jsonb,0)", [history]),
     "deal_history_generated_number")
   await knownError(() => historySubmit(0, [], form.services), "department_allocation_history_required")
+  await knownError(() => historySubmit(0, [], form.services, { ...companyFields, attachmentStatus:"skip" }), "deal_history_attachment_status")
   const files = [{ path: historyFile, name: "历史交接说明.txt" }]
   await knownError(() => historySubmit(0, files, form.services, { ...companyFields, hongKongCompanyName:"" }),
     "department_allocation_history_required")
   await knownError(() => historySubmit(0, files, form.services, { ...companyFields, currency:"HKD" }),
     "deal_history_currency")
-  await historySubmit(0, [{ path: historyFile, name: "历史交接说明.txt" }], form.services)
+  const noFileHistory = await historySubmit(0, [], form.services, { ...companyFields, attachmentStatus:"none" })
+  assert.equal(noFileHistory.fields.attachmentStatus, "none")
+  const noFileDetails = await details("history", history)
+  assert.equal(noFileDetails.data.attachmentStatus, "none")
+  assert.deepEqual(noFileDetails.attachments, [])
+  const historyWithFile = await historySubmit(1, files, form.services)
+  assert.equal(historyWithFile.fields.attachmentStatus, undefined)
   const submittedHistory = (await details("history", history)).data
   assert.equal(submittedHistory.contractNumber, generatedNumber)
   assert.equal(submittedHistory.companyName, companyFields.mainlandCompanyName)
   assert.equal(submittedHistory.hongKongCompanyName, companyFields.hongKongCompanyName)
   assert.equal(submittedHistory.currency, "USD")
+  assert.equal(submittedHistory.attachmentStatus, undefined)
   assert.equal(await value("select generated_contract_number as value from public.deal_history_records where id=$1", [history]), generatedNumber)
 
   await actor(manager)
