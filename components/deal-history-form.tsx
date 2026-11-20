@@ -3,7 +3,7 @@
 import { useState } from "react"
 import { HISTORY_COLUMNS, HISTORY_HEADERS, type HistoryColumn } from "@/lib/services/deal-history-fields"
 import { downloadDealHistoryAttachment, saveDealHistory, type HistoryRecord } from "@/lib/services/deal-history"
-import { DealContractReturnedFields } from "@/components/deal-contract-returned-fields"
+import { DealContractReadOnlyField, DealContractReturnedFields } from "@/components/deal-contract-returned-fields"
 import { DepartmentHandoffResults } from "@/components/department-handoff-results"
 import { Badge } from "@/components/ui/badge"
 import { dealDateInputValue, formatDealDate } from "@/lib/services/deal-date"
@@ -68,6 +68,8 @@ export function HistoryContractForm({ row, close, save, allocationCutoff }: {
   const [services, setServices] = useState<Record<string, string[]>>(row.departmentAllocation?.data?.services ?? {})
   const labelFor = (key: string) => key === "spendRatio" ? "消耗比例" : HISTORY_HEADERS[1][HISTORY_COLUMNS.indexOf(key as HistoryColumn)] ?? ""
   const entered = (key: string) => changes[key] ?? row.fields[key] ?? ""
+  const fixedValue = (key: string) => key === "I" && row.generated_contract_number
+    ? row.generated_contract_number : original(row, key)
   const update = (key: string, value: string) => {
     setChanges(current => ({ ...current, [key]: value }))
     setSaved(false)
@@ -80,7 +82,7 @@ export function HistoryContractForm({ row, close, save, allocationCutoff }: {
 
   const missing = ["B","C","D","E","F","I","J","K","L","M","N","O","P","Q","R","AC","AD",
     ...(isRatio ? ["spendRatio"] : []), ...(isBonus ? ["S","T"] : []),
-  ].filter(key => !(original(row, key) || entered(key) || (key === "D" ? original(row, "AQ") : "")).trim())
+  ].filter(key => !(fixedValue(key) || entered(key) || (key === "D" ? original(row, "AQ") : "")).trim())
   const incompleteServices = !Object.keys(services).length || DEAL_CONTRACT_SERVICES.some(group =>
     Object.hasOwn(services, group.key) && group.options.length > 0 && !services[group.key].length)
   const canConfirm = !missing.length && !incompleteServices && row.attachments.length + files.length > 0
@@ -118,12 +120,12 @@ export function HistoryContractForm({ row, close, save, allocationCutoff }: {
   function renderField(key: string, locked = false) {
     const label = labelFor(key)
     if (!label || (key === "spendRatio" && !isRatio) || (["S", "T"].includes(key) && !isBonus && !original(row, key))) return null
-    const old = key === "U" ? ["U","V","W","X"].map(column => original(row, column)).filter(Boolean).join("\n") : original(row, key)
+    const old = key === "U" ? ["U","V","W","X"].map(column => original(row, column)).filter(Boolean).join("\n") : fixedValue(key)
     const kind = DEAL_CONTRACT_FIELDS.find(([, name]) => name === label)?.[2]
     const id = `history-${row.source_row}-${key}`
     if (key === "AM") {
       return <div key={key} className="space-y-2 sm:col-span-2">
-        <Label htmlFor={id}>{label}</Label>
+        {row.canEdit ? <Label htmlFor={id}>{label}</Label> : <p className="text-xs text-muted-foreground">{label}</p>}
         {old && <p className="whitespace-pre-wrap break-all text-sm">{old}</p>}
         {row.canEdit && <>
         <Input id={id} type="file" multiple disabled={saving} onChange={event => {
@@ -154,11 +156,12 @@ export function HistoryContractForm({ row, close, save, allocationCutoff }: {
     }
     const value = entered(key)
     const long = kind === "multiline" || old.includes("\n") || old.length > 65
+    if (old || locked) {
+      const display = old || (dateColumns.has(key) && value ? formatDealDate(value) : value)
+      return <DealContractReadOnlyField key={key} label={label} value={display} wide={long} />
+    }
     let control
-    if (old || locked) control = long
-      ? <Textarea id={id} readOnly value={old || value} />
-      : <Input id={id} readOnly value={old || value} />
-    else if (kind === "cooperation") control = (
+    if (kind === "cooperation") control = (
       <select id={id} className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={value} onChange={e => update(key, e.currentTarget.value)}>
         <option value="">请选择</option>
         {DEAL_COOPERATION_MODES.map(([option, name]) => <option key={option} value={name}>{name}</option>)}

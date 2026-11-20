@@ -3,7 +3,7 @@
 import { useEffect, useState, type ChangeEvent, type ReactNode } from "react"
 import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
-import { DealContractReturnedFields } from "@/components/deal-contract-returned-fields"
+import { DealContractReadOnlyField, DealContractReturnedFields } from "@/components/deal-contract-returned-fields"
 import { Button } from "@/components/ui/button"
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
@@ -125,27 +125,35 @@ export function DealContractSubmissionDialog({ leadId, companyName, salesperson,
     const value = visibleData?.[key] ?? ""
     const locked = !editable || returned[key] !== undefined
     const id = `deal-contract-${key}`
+    if (locked) {
+      let display = value
+      if (value) {
+        if (kind === "date" || key === "actualPayment") display = formatDealDate(value)
+        if (kind === "cooperation") display = DEAL_COOPERATION_MODES.find(([option]) => option === value)?.[1] ?? value
+        if (kind === "percentage") display = value + "%"
+      }
+      return <DealContractReadOnlyField key={key} label={label} value={display} wide={kind === "multiline"} />
+    }
     let control: ReactNode
     if (kind === "website") {
       control = <div className="flex flex-wrap items-center gap-2">
         {value !== NO_WEBSITE && <span className="text-sm text-muted-foreground">https://</span>}
         <Input id={id} className="min-w-40 flex-1" placeholder="example.com" value={value.replace(/^https:\/\//i, "")}
           onChange={(event) => update(key, event.target.value)}
-          onBlur={() => { const normalized = normalizeDealWebsite(value); if (normalized) update(key, normalized) }}
-          readOnly={locked} />
-        {editable && <Button type="button" variant="outline" size="sm" onClick={() => update(key, NO_WEBSITE)}>暂无网站</Button>}
+          onBlur={() => { const normalized = normalizeDealWebsite(value); if (normalized) update(key, normalized) }} />
+        <Button type="button" variant="outline" size="sm" onClick={() => update(key, NO_WEBSITE)}>暂无网站</Button>
       </div>
     } else if (kind === "cooperation") {
       control = <select id={id} className="h-9 w-full rounded-md border bg-background px-3 text-sm"
-        value={value} onChange={(event) => update(key, event.target.value)} disabled={locked}>
+        value={value} onChange={(event) => update(key, event.target.value)}>
         <option value="">请选择</option>
         {DEAL_COOPERATION_MODES.map(([option, name]) => <option value={option} key={option}>{name}</option>)}
       </select>
     } else if (kind === "multiline") {
-      control = <Textarea id={id} value={value} onChange={(event) => update(key, event.target.value)} readOnly={locked} />
+      control = <Textarea id={id} value={value} onChange={(event) => update(key, event.target.value)} />
     } else if (kind === "percentage") {
       control = <div className="flex items-center gap-2">
-        <Input id={id} type="text" inputMode="decimal" placeholder="例如 15" value={value} readOnly={locked}
+        <Input id={id} type="text" inputMode="decimal" placeholder="例如 15" value={value}
           onChange={(event) => update(key, event.target.value)} />
         <span className="shrink-0 text-sm text-muted-foreground">%</span>
       </div>
@@ -153,9 +161,9 @@ export function DealContractSubmissionDialog({ leadId, companyName, salesperson,
       control = <div className="flex items-center gap-2">
         <Input id={id} type={kind === "amount" ? "text" : kind} inputMode={kind === "amount" ? "decimal" : undefined}
           placeholder={key === "actualPayment" ? "填写到账时间，尚未到账请写明「未到账」" : undefined}
-          value={value} readOnly={locked}
+          value={value}
           onChange={(event) => update(key, key === "currency" ? event.target.value.toUpperCase() : event.target.value)} />
-        {key === "actualPayment" && !locked &&
+        {key === "actualPayment" &&
           <Button type="button" variant="outline" size="sm" onClick={() => update(key, NOT_PAID)}>未到账</Button>}
       </div>
     }
@@ -187,10 +195,7 @@ export function DealContractSubmissionDialog({ leadId, companyName, salesperson,
               <section className="space-y-3">
                 <h3 className="font-semibold">客户与签约信息</h3>
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="deal-contract-year">年份</Label>
-                    <Input id="deal-contract-year" readOnly value={visibleData.signedOn?.slice(0, 4) ?? ""} />
-                  </div>
+                  <DealContractReadOnlyField label="年份" value={visibleData.signedOn?.slice(0, 4)} />
                   {DEAL_CONTRACT_FIELDS.slice(0, 14).map(renderField)}
                   {DEAL_CONTRACT_FIELDS.filter(([key]) => key === "address").map(renderField)}
                 </div>
@@ -203,7 +208,7 @@ export function DealContractSubmissionDialog({ leadId, companyName, salesperson,
                   ).map(renderField)}
                 </div>
               </section>
-              <fieldset className="space-y-3 border-t pt-4" disabled={!editable}>
+              {editable ? <fieldset className="space-y-3 border-t pt-4">
                 <legend className="font-semibold">服务内容 <span className="text-destructive">*</span></legend>
                 {DEAL_CONTRACT_SERVICES.map((group) => {
                   const selected = visibleData.services[group.key]
@@ -222,14 +227,23 @@ export function DealContractSubmissionDialog({ leadId, companyName, salesperson,
                     </div>
                   )
                 })}
-              </fieldset>
+              </fieldset> : <section className="border-t pt-4">
+                <DealContractReadOnlyField label="服务内容" value={DEAL_CONTRACT_SERVICES.flatMap(group => {
+                  const selected = visibleData.services[group.key]
+                  if (!selected) return []
+                  const names = group.options.filter(([id]) => selected.includes(id)).map(([, name]) => name)
+                  return [names.length ? group.label + " · " + names.join("、") : group.label]
+                }).join("\n")} />
+              </section>}
               <section className="space-y-3 border-t pt-4">
                 {DEAL_CONTRACT_FIELDS.filter(([key]) => key === "needs").map(renderField)}
-                <Label htmlFor="deal-contract-files">
-                  客户售前信息和售后目标（如：方案，目标，客户相关信息）<span className="text-destructive">*</span>
-                </Label>
-                {editable && <Input id="deal-contract-files" type="file" multiple onChange={pickFiles} />}
-                {editable && <p className="text-xs text-muted-foreground">可上传多个文件，每个最多 20 MB。</p>}
+                {editable ? <>
+                  <Label htmlFor="deal-contract-files">
+                    客户售前信息和售后目标（如：方案，目标，客户相关信息）<span className="text-destructive">*</span>
+                  </Label>
+                  <Input id="deal-contract-files" type="file" multiple onChange={pickFiles} />
+                  <p className="text-xs text-muted-foreground">可上传多个文件，每个最多 20 MB。</p>
+                </> : <p className="text-xs text-muted-foreground">客户售前信息和售后目标（如：方案，目标，客户相关信息）</p>}
                 <ul className="space-y-1">
                   {attachments.map((attachment) => <li className="flex items-center justify-between gap-2 text-sm" key={attachment.path}>
                     <Button type="button" variant="link" className="max-w-[85%] truncate px-0" onClick={() =>

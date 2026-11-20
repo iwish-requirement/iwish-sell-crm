@@ -21,6 +21,7 @@ export type HistoryRecord = {
   id: string
   source_row: number
   raw_values: HistoryCell[]
+  generated_contract_number: string | null
   fields: Record<string, string>
   attachments: DealContractAttachment[]
   version: number
@@ -37,7 +38,7 @@ export async function listDealHistory() {
 export async function loadDealHistory(id: string): Promise<HistoryRecord> {
   const client = getBrowserSupabaseClient()
   const [record, access, departmentAllocation] = await Promise.all([
-    client.from("deal_history_records").select("id,source_row,raw_values,fields,attachments,version").eq("id", id).single(),
+    client.from("deal_history_records").select("id,source_row,raw_values,generated_contract_number,fields,attachments,version").eq("id", id).single(),
     client.rpc("rpc_deal_history_can_edit", { p_id: id }),
     loadDepartmentAllocationDetails("history", id).catch(() => null),
   ])

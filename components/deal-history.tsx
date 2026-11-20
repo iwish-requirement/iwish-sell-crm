@@ -105,7 +105,7 @@ export function DealHistory({ allocationCutoff = null }: { allocationCutoff?: st
     setDetails(updated)
     const value = (index: number, key: string) => String(updated.raw_values[index] ?? "") || updated.fields[key] || null
     const changed = {
-      signed_on: value(1, "B"), contract_number: value(8, "I"), website: value(9, "J"),
+      signed_on: value(1, "B"), contract_number: updated.generated_contract_number ?? value(8, "I"), website: value(9, "J"),
       contact_name: value(11, "L"), base_fee: value(16, "Q"),
     }
     setRows(current => current.map(row => row.id === updated.id ? { ...row, ...changed } : row))

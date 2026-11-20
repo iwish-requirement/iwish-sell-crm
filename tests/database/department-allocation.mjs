@@ -23,8 +23,8 @@ const form = {
   address: "演示地址", currency: "CNY", services: { performance: ["google", "meta"] },
 }
 const legacyCells = [
-  2026, form.signedOn, form.expectedPaymentOn, form.actualPayment, form.handoffOn, form.serviceStartsOn,
-  form.salesperson, "历史演示客户", "HISTORY-1", form.website, form.category, form.contactName,
+  "2025年", "2025-11-19", form.expectedPaymentOn, form.actualPayment, form.handoffOn, form.serviceStartsOn,
+  form.salesperson, "历史演示客户", null, form.website, form.category, form.contactName,
   form.contactTitle, form.phone, form.email, "固定季度服务费", form.baseFee, form.serviceFees,
   null, null, "Google", "Meta", null, null, null, null, null, null, form.needs, form.address,
   "效果营销二部", "历史演示负责人", null, null, null, null, null, null, null, null, null, null, null, null,
@@ -58,7 +58,36 @@ const historySubmit = (version, files, services) => value(
 )
 
 try {
-  await loadAllocationFixture(db)
+  await loadAllocationFixture(db, async name => {
+    if (!name.endsWith("_historical_deal_contract_numbers.sql")) return
+    await db.exec("insert into public.deal_history_batches(id,source_sha,expected_count) values ('older',repeat('c',64),3)")
+    const samples = [
+      ["2024年", null, "原表合同编号"],
+      ["2026年", "2025/12/31", "2026 年的原编号"],
+      [null, "2023/6/1", null],
+    ]
+    for (const [offset, [year, signedOn, number]] of samples.entries()) {
+      const raw = Array(44).fill(null)
+      raw[0] = year
+      raw[1] = signedOn
+      raw[8] = number
+      await query("insert into public.deal_history_records(batch_id,source_row,raw_values,source_types) values ('older',$1,$2,$3)",
+        [offset + 3, json(raw), json(Array(44).fill(null))])
+    }
+    await query("insert into crm_allocation.history_submissions(history_id,data,attachments,finance,submitted_at,submitted_by) " +
+      "select id,'{\"contractNumber\":\"原表合同编号\",\"companyName\":\"已确认演示客户\"}','[]','{}','2026-11-19T00:00:00Z',$1 " +
+      "from public.deal_history_records where batch_id='older' and source_row=3", [seller])
+  })
+  const backfill = await query("select generated_contract_number, raw_values->>8 as original_number from public.deal_history_records where batch_id='older' order by source_row")
+  assert.match(backfill[0].generated_contract_number, /^HIS-2024-[A-F0-9]{12}$/)
+  assert.equal(backfill[0].original_number, "原表合同编号")
+  assert.deepEqual(backfill[1], { generated_contract_number: null, original_number: "2026 年的原编号" })
+  assert.match(backfill[2].generated_contract_number, /^HIS-2023-[A-F0-9]{12}$/)
+  const existingHistory = await value("select jsonb_build_object('data',data,'submitted_at',submitted_at) as value from crm_allocation.history_submissions")
+  assert.deepEqual(existingHistory, {
+    data: { contractNumber: backfill[0].generated_contract_number, companyName: "已确认演示客户" },
+    submitted_at: "2026-11-19T00:00:00+00:00",
+  })
   await db.exec("insert into public.teams(id,name) values (8101,'演示一组'),(8102,'演示二组')")
   for (const [user, role, team] of [[admin, "Admin", 8101], [seller, "Sales", 8101], [otherSeller, "Sales", 8102], [manager, "Manager", 8101]]) {
     await query("insert into auth.users(id,email,raw_user_meta_data) values ($1,$2,$3)", [
@@ -110,8 +139,15 @@ try {
   const own = (await workspace(false)).rows[0]
   const selections = { "performance/google": [dep["test-ad2"], dep["test-ad3"]], "performance/meta": [dep["test-ad3"]] }
   await knownError(() => assignment("lead", existing, own.submitted_at, 0, selections), "42501")
+  const generatedNumber = await value("select contract_number as value from public.rpc_deal_history_list() where id=$1", [history])
+  assert.match(generatedNumber, /^HIS-2025-[A-F0-9]{12}$/)
+  assert.equal((await query("select id from public.rpc_deal_history_list()")).length, 1)
+  await knownError(() => query("select public.rpc_deal_history_save($1,'{\"I\":\"手动编号\"}'::jsonb,'[]'::jsonb,0)", [history]),
+    "deal_history_generated_number")
   await knownError(() => historySubmit(0, [], form.services), "department_allocation_history_required")
   await historySubmit(0, [{ path: historyFile, name: "历史交接说明.txt" }], form.services)
+  assert.equal((await details("history", history)).data.contractNumber, generatedNumber)
+  assert.equal(await value("select contract_number as value from public.rpc_deal_history_list() where id=$1", [history]), generatedNumber)
 
   await actor(manager)
   assert.equal((await workspace(true)).rows.length, 0)
