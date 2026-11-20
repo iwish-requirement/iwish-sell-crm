@@ -148,7 +148,7 @@ export function DealHistory({ allocationCutoff = null }: { allocationCutoff?: st
             : <>
               <Table>
                 <TableHeader><TableRow>
-                  <TableHead>签订合同时间</TableHead><TableHead>客户全称</TableHead><TableHead>销售人员</TableHead>
+                  <TableHead>签订合同时间</TableHead><TableHead>客户</TableHead><TableHead>销售人员</TableHead>
                   <TableHead>合同编号</TableHead><TableHead className="text-right">合同基础服务费总金额</TableHead>
                 </TableRow></TableHeader>
                 <TableBody>
