@@ -16,7 +16,7 @@ import { downloadDealHistoryAttachment } from "@/lib/services/deal-history"
 import { formatDealDate } from "@/lib/services/deal-date"
 import { DEAL_CONTRACT_FIELDS, DEAL_COOPERATION_MODES, DEAL_FINANCE_FIELDS, isDealContractFieldVisible } from "@/lib/services/deal-contract-fields"
 import {
-  loadDepartmentAllocationDetails, loadDepartmentAllocationWorkspace, saveServiceDepartments, selectedAllocationServices,
+  departmentOperationsStatus, loadDepartmentAllocationDetails, loadDepartmentAllocationWorkspace, saveServiceDepartments, selectedAllocationServices,
   type AllocationDepartment, type AllocationDetails, type AllocationRow, type AllocationWorkspace,
 } from "@/lib/services/department-allocation"
 
@@ -46,8 +46,12 @@ export function ServiceDepartmentAllocation({ pending = false, cutoff }: { pendi
           ? "补齐并确认合同资料后进入分配中心。"
           : "按已确认的合作服务选择承接部门，每项可多选。"}</p>
       </div>
-      <Input className="sm:w-56" placeholder="搜索客户或销售人员" aria-label="搜索客户或销售人员"
-        value={search} onChange={event => setSearch(event.target.value)} />
+      <div className="flex gap-2">
+        <Input className="sm:w-56" placeholder="搜索客户或销售人员" aria-label="搜索客户或销售人员"
+          value={search} onChange={event => setSearch(event.target.value)} />
+        {!pending && workspace?.rows.some(row => row.handoffs.some(handoff => handoff.delivery)) &&
+          <Button type="button" variant="outline" onClick={refresh}>刷新状态</Button>}
+      </div>
     </div>
     <Card>
       <CardContent className="p-0">
@@ -69,7 +73,7 @@ export function ServiceDepartmentAllocation({ pending = false, cutoff }: { pendi
                   <TableCell>{row.salesperson}</TableCell>
                   <TableCell>
                     <Badge variant={assigned ? "default" : "secondary"}>
-                      {pending ? "待补合同资料" : assigned ? "已分配部门 · 待运营交接" : "待分配部门"}
+                      {pending ? "待补合同资料" : assigned ? `已分配部门 · ${departmentOperationsStatus(row.handoffs)}` : "待分配部门"}
                     </Badge>
                     {row.legacy_department && <p className="mt-1 text-xs text-muted-foreground">原分配 {row.legacy_department}</p>}
                   </TableCell>
@@ -167,7 +171,7 @@ function DepartmentAllocationDialog({ row, departments, canManage, close, saved 
                   {key === "receivedAmount" && details?.finance?.receivedAmount && details.finance.currency ? " " + details.finance.currency : ""}</dd>
               </div>)}
             </dl>
-            <DepartmentHandoffResults handoffs={details?.handoffs ?? []} />
+            <DepartmentHandoffResults handoffs={details?.handoffs ?? []} source={row.source} recordId={row.id} />
             {canManage && <div className="grid gap-3 sm:grid-cols-2">
               {services.map(service => {
                 const candidates = departments.filter(dept => dept.category === service.category)
