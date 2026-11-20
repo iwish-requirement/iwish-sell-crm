@@ -145,6 +145,10 @@ function DepartmentAllocationDialog({ row, departments, canManage, close, saved 
             <details className="rounded-md border p-3">
               <summary className="cursor-pointer text-sm font-medium">已确认合同资料</summary>
               <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+                {!data.mainlandCompanyName && !data.hongKongCompanyName && data.companyName && <div>
+                  <dt className="text-xs text-muted-foreground">原客户名称</dt>
+                  <dd className="break-words">{data.companyName}</dd>
+                </div>}
                 {DEAL_CONTRACT_FIELDS.filter(([key]) => row.source === "history" || isDealContractFieldVisible(key, data.cooperation))
                   .map(([key, label, kind]) => data[key] && <div key={key}>
                     <dt className="text-xs text-muted-foreground">{label}</dt>

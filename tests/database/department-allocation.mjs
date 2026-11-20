@@ -10,13 +10,14 @@ const dataDir = process.env.CRM_ALLOCATION_PGDATA
 assert.ok(!dataDir || !dataDir.includes("://"), "A disposable local PGlite data directory is required")
 const db = new PGlite(dataDir)
 const id = suffix => "00000000-0000-4000-8000-" + String(suffix).padStart(12, "0")
-const [admin, seller, otherSeller, manager, existing, other, history] = [1, 2, 3, 4, 11, 12, 21].map(id)
+const [admin, seller, otherSeller, manager, existing, other, history, currentHistory] = [1, 2, 3, 4, 11, 12, 21, 22].map(id)
 const leadFile = existing + "/" + id(90)
 const historyFile = history + "/" + id(91)
 const form = {
   signedOn: "2026-11-19", expectedPaymentOn: "2026-11-22", actualPayment: "未到账",
   handoffOn: "2026-11-23", serviceStartsOn: "2026-11-25", salesperson: "演示销售",
   companyName: "演示客户", contractNumber: "DEMO-1", website: "https://example.com",
+  mainlandCompanyName: "内地 1#（演示）", hongKongCompanyName: "HK & Demo / 2",
   category: "家居", contactName: "演示客户联系人", contactTitle: "采购",
   phone: "12345678", email: "contact@example.com", cooperation: "fixed_quarter",
   baseFee: "12000", serviceFees: "Google 与 Meta 12000 元", needs: "建立每周复盘",
@@ -48,13 +49,14 @@ const leadStates = () => value("select public.rpc_department_allocation_lead_sta
 const details = (source, row) => value("select public.rpc_department_allocation_details($1,$2) as value", [source, row])
 const assignment = (source, row, submittedAt, revision, selections) =>
   value("select public.rpc_department_allocation_save($1,$2,$3,$4,$5) as value", [source, row, submittedAt, revision, json(selections)])
-const leadSubmit = (version, confirm) => value(
+const companyFields = { mainlandCompanyName: form.mainlandCompanyName, hongKongCompanyName: form.hongKongCompanyName, currency: "USD" }
+const leadSubmit = (version, confirm, data = form) => value(
   "select to_jsonb(public.rpc_deal_contract_submission_save($1,$2,$3,$4,$5)) as value",
-  [existing, json(form), json([{ path: leadFile, name: "交接说明.txt" }]), version, confirm],
+  [existing, json(data), json([{ path: leadFile, name: "交接说明.txt" }]), version, confirm],
 )
-const historySubmit = (version, files, services) => value(
-  "select to_jsonb(public.rpc_department_allocation_history_confirm($1,'{}'::jsonb,$2,$3,$4)) as value",
-  [history, json(files), version, json(services)],
+const historySubmit = (version, files, services, changes = companyFields) => value(
+  "select to_jsonb(public.rpc_department_allocation_history_confirm($1,$2,$3,$4,$5)) as value",
+  [history, json(changes), json(files), version, json(services)],
 )
 
 try {
@@ -110,12 +112,18 @@ try {
   await query("insert into storage.objects(bucket_id,name,owner_id) values ('deal-contract-materials',$1,$2),('deal-history-materials',$3,$2)", [
     leadFile, seller, historyFile,
   ])
-  await db.exec("insert into public.deal_history_batches(id,source_sha,expected_count,published_at) values ('test',repeat('b',64),1,now())")
-  await query("insert into public.deal_history_records(id,batch_id,source_row,owner_id,raw_values,source_types) " +
-    "values ($1,'test',3,$2,$3,$4)", [history, seller, json(legacyCells), json(legacyCells.map(() => null))])
+  await db.exec("insert into public.deal_history_batches(id,source_sha,expected_count,published_at) values ('test',repeat('b',64),2,now())")
+  for (const [record, sourceRow, raw] of [[history, 3, legacyCells], [currentHistory, 4, [null, "2026-01-01", ...legacyCells.slice(2)]]]) {
+    await query("insert into public.deal_history_records(id,batch_id,source_row,owner_id,raw_values,source_types) " +
+      "values ($1,'test',$2,$3,$4,$5)", [record, sourceRow, seller, json(raw), json(raw.map(() => null))])
+  }
 
   await actor(seller)
   assert.equal(await value("select public.rpc_department_allocation_release() as value"), null)
+  await knownError(() => leadSubmit(0,true,{ ...form, mainlandCompanyName:" " }), "deal_contract_required")
+  await knownError(() => leadSubmit(0,true,{ ...form, hongKongCompanyName:"" }), "deal_contract_required")
+  await knownError(() => leadSubmit(0,false,{ ...form, currency:"HKD" }), "deal_contract_currency")
+  await knownError(() => leadSubmit(0,true,{ ...form, currency:"" }), "deal_contract_required")
   await leadSubmit(0, true)
   await actor(null)
   const originalAssignment = await value("select to_jsonb(a) as value from public.lead_project_assignments a where a.lead_id=$1", [existing])
@@ -139,15 +147,24 @@ try {
   const own = (await workspace(false)).rows[0]
   const selections = { "performance/google": [dep["test-ad2"], dep["test-ad3"]], "performance/meta": [dep["test-ad3"]] }
   await knownError(() => assignment("lead", existing, own.submitted_at, 0, selections), "42501")
-  const generatedNumber = await value("select contract_number as value from public.rpc_deal_history_list() where id=$1", [history])
+  const generatedNumber = await value("select generated_contract_number as value from public.deal_history_records where id=$1", [history])
   assert.match(generatedNumber, /^HIS-2025-[A-F0-9]{12}$/)
-  assert.equal((await query("select id from public.rpc_deal_history_list()")).length, 1)
+  assert.deepEqual((await query("select id from public.rpc_deal_history_list()")).map(row => row.id), [currentHistory])
   await knownError(() => query("select public.rpc_deal_history_save($1,'{\"I\":\"手动编号\"}'::jsonb,'[]'::jsonb,0)", [history]),
     "deal_history_generated_number")
   await knownError(() => historySubmit(0, [], form.services), "department_allocation_history_required")
+  const files = [{ path: historyFile, name: "历史交接说明.txt" }]
+  await knownError(() => historySubmit(0, files, form.services, { ...companyFields, hongKongCompanyName:"" }),
+    "department_allocation_history_required")
+  await knownError(() => historySubmit(0, files, form.services, { ...companyFields, currency:"HKD" }),
+    "deal_history_currency")
   await historySubmit(0, [{ path: historyFile, name: "历史交接说明.txt" }], form.services)
-  assert.equal((await details("history", history)).data.contractNumber, generatedNumber)
-  assert.equal(await value("select contract_number as value from public.rpc_deal_history_list() where id=$1", [history]), generatedNumber)
+  const submittedHistory = (await details("history", history)).data
+  assert.equal(submittedHistory.contractNumber, generatedNumber)
+  assert.equal(submittedHistory.companyName, companyFields.mainlandCompanyName)
+  assert.equal(submittedHistory.hongKongCompanyName, companyFields.hongKongCompanyName)
+  assert.equal(submittedHistory.currency, "USD")
+  assert.equal(await value("select generated_contract_number as value from public.deal_history_records where id=$1", [history]), generatedNumber)
 
   await actor(manager)
   assert.equal((await workspace(true)).rows.length, 0)
@@ -156,6 +173,11 @@ try {
   await actor(admin)
   assert.equal((await workspace(true)).rows.length, 1)
   const queue = await workspace(false)
+  const submittedLead = (await details("lead", existing)).data
+  assert.equal(submittedLead.mainlandCompanyName, form.mainlandCompanyName)
+  assert.equal(submittedLead.hongKongCompanyName, form.hongKongCompanyName)
+  assert.equal(submittedLead.companyName, form.mainlandCompanyName)
+  assert.equal(submittedLead.currency, "CNY")
   assert.deepEqual(queue.departments.filter(item => item.category === "performance").map(item => item.name).sort(),
     ["效果营销二部", "效果营销三部", "效果营销四部"].sort())
   await knownError(() => assignment("lead", existing, own.submitted_at, 0, { "performance/google": selections["performance/google"] }),

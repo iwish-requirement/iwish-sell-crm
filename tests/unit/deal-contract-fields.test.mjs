@@ -35,6 +35,15 @@ test("a complete submission can state it has not been paid and has no bonus", ()
   assert.deepEqual(dealContractSubmissionErrors(completed, 1), [])
 })
 
+test("requires both company names and limits selectable contract currencies", () => {
+  assert.deepEqual(dealContractSubmissionErrors({
+    ...completed, mainlandCompanyName: " ", hongKongCompanyName: "", currency: "HKD",
+  }, 1), ["大陆公司", "香港公司", "币种"])
+  assert.deepEqual(dealContractSubmissionErrors({
+    ...completed, mainlandCompanyName: "大陆 1#（演示）", hongKongCompanyName: "HK & Demo / 2", currency: "USD",
+  }, 1), [])
+})
+
 test("only the applicable fee fields are visible and required", () => {
   const fixed = { ...completed, cooperation: "fixed_quarter", spendRatio: "", bonusAmount: "", bonusTerms: "" }
   assert.deepEqual(dealContractSubmissionErrors(fixed, 1), [])
