@@ -511,13 +511,7 @@ export function BusinessTypesSettingsCard() {
                   {categories.map((row) => (
                     <TableRow
                       key={row.id}
-                      className={
-                        selectedCategoryId === row.id
-                          ? "bg-primary/5"
-                          : row.is_active
-                            ? ""
-                            : "opacity-70"
-                      }
+                      className={`cursor-pointer ${selectedCategoryId === row.id ? "bg-primary/5" : row.is_active ? "" : "opacity-70"}`}
                       onClick={() => setSelectedCategoryId(row.id)}
                     >
                       <TableCell className="font-medium">
@@ -533,17 +527,17 @@ export function BusinessTypesSettingsCard() {
                           <div className="mt-1 text-xs text-muted-foreground line-clamp-2">{row.description}</div>
                         ) : null}
                       </TableCell>
-                      <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
+                      <TableCell className="cursor-default text-center" onClick={(e) => e.stopPropagation()}>
                         <Switch
                           checked={row.is_active}
                           onCheckedChange={(next) => void toggleCategoryActive(row, next)}
                           disabled={isLoading || isSaving}
                         />
                       </TableCell>
-                      <TableCell className="text-center text-sm" onClick={(e) => e.stopPropagation()}>
+                      <TableCell className="cursor-default text-center text-sm" onClick={(e) => e.stopPropagation()}>
                         {row.sort_order}
                       </TableCell>
-                      <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                      <TableCell className="cursor-default text-right" onClick={(e) => e.stopPropagation()}>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button variant="ghost" size="icon-sm" aria-label="操作">
