@@ -3,6 +3,7 @@
 import { useEffect, useState, type ChangeEvent, type ReactNode } from "react"
 import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
+import { DealBonusTermsEditor, DealBonusTermsValue } from "@/components/deal-bonus-terms"
 import { DealContractReadOnlyField, DealContractReturnedFields } from "@/components/deal-contract-returned-fields"
 import { Button } from "@/components/ui/button"
 import {
@@ -13,7 +14,7 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import {
   CONTRACT_FILE_SIZE_LIMIT, DEAL_CONTRACT_FIELDS, DEAL_CONTRACT_IDENTITY_FIELDS, DEAL_CONTRACT_SERVICES, DEAL_COOPERATION_MODES, DEAL_CURRENCIES,
-  DEAL_ALLOCATION_FIELDS, DEAL_FINANCE_FIELDS,
+  DEAL_ALLOCATION_FIELDS, DEAL_FINANCE_FIELDS, MAX_BONUS_TERMS_HTML_LENGTH,
   NOT_PAID, NO_CONTRACT_ATTACHMENTS, NO_WEBSITE, dealContractSubmissionErrors, isDealContractFieldVisible, isDealCurrency, normalizeDealWebsite,
   type DealContractData, type DealContractField,
 } from "@/lib/services/deal-contract-fields"
@@ -65,6 +66,7 @@ export function DealContractSubmissionDialog({ leadId, companyName, salesperson,
     currency: !canEdit || isDealCurrency(returned.currency) ? returned.currency ?? data.currency : data.currency,
   } : null
   const attachmentCount = attachments.length + files.length
+  const bonusTermsTooLong = data?.cooperation === "base_bonus" && (data.bonusTermsHtml?.length ?? 0) > MAX_BONUS_TERMS_HTML_LENGTH
   const noAttachments = !attachmentCount && data?.attachmentStatus === NO_CONTRACT_ATTACHMENTS
   const errors = visibleData ? dealContractSubmissionErrors(visibleData, attachmentCount) : []
   const editable = canEdit && !saving
@@ -105,9 +107,10 @@ export function DealContractSubmissionDialog({ leadId, companyName, salesperson,
   }
 
   async function save(confirm: boolean) {
-    if (!editable || !loaded || !data || (confirm && errors.length)) return
+    if (!editable || !loaded || !data || bonusTermsTooLong || (confirm && errors.length)) return
     setSaving(true)
     const payload = { ...data }
+    if (payload.cooperation !== "base_bonus") delete payload.bonusTermsHtml
     for (const [key] of DEAL_CONTRACT_FIELDS) {
       if (payload[key] !== undefined) payload[key] = payload[key].trim()
     }
@@ -136,6 +139,17 @@ export function DealContractSubmissionDialog({ leadId, companyName, salesperson,
     const value = visibleData?.[key] ?? ""
     const locked = !editable || (key === "currency" ? isDealCurrency(returned.currency) : returned[key] !== undefined)
     const id = `deal-contract-${key}`
+    if (key === "bonusTerms") {
+      const html = data?.bonusTermsHtml
+      if (locked) return <DealContractReadOnlyField key={key} label={label} wide
+        value={<DealBonusTermsValue text={value} html={html} />} />
+      return <div key={key} className="space-y-2 sm:col-span-2">
+        <Label id={id + "-label"}>{label}<span className="text-destructive">*</span></Label>
+        <DealBonusTermsEditor id={id} text={value} html={html} onChange={(bonusTerms, bonusTermsHtml) =>
+          setLoaded(current => current ? { ...current, data: { ...current.data, bonusTerms, bonusTermsHtml } } : current)
+        } />
+      </div>
+    }
     if (locked) {
       let display = value
       if (value) {
@@ -291,8 +305,8 @@ export function DealContractSubmissionDialog({ leadId, companyName, salesperson,
               {errors.length > 0 && <p className="mr-auto max-w-sm text-sm text-muted-foreground">
                 待完善 {errors.length} 项，含{errors.slice(0, 3).join("、")}{errors.length > 3 ? "等" : ""}
               </p>}
-              <Button type="button" variant="outline" disabled={saving} onClick={() => void save(false)}>保存草稿</Button>
-              <Button type="button" disabled={saving || errors.length > 0} onClick={() => void save(true)}>确认提交</Button>
+              <Button type="button" variant="outline" disabled={saving || bonusTermsTooLong} onClick={() => void save(false)}>保存草稿</Button>
+              <Button type="button" disabled={saving || bonusTermsTooLong || errors.length > 0} onClick={() => void save(true)}>确认提交</Button>
             </DialogFooter>}
           </>
         )}

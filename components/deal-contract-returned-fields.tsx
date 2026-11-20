@@ -1,6 +1,8 @@
+import type { ReactNode } from "react"
+
 export function DealContractReadOnlyField({ label, value, wide }: {
   label: string
-  value?: string
+  value?: ReactNode
   wide?: boolean
 }) {
   return <dl className={wide ? "min-w-0 space-y-1 sm:col-span-2" : "min-w-0 space-y-1"}>
