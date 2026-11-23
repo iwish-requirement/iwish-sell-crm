@@ -95,6 +95,17 @@ try {
     data: { contractNumber: backfill[0].generated_contract_number, companyName: "已确认演示客户" },
     submitted_at: "2026-11-19T00:00:00+00:00",
   })
+  const displayName = (original, contract) => value(
+    "select crm_allocation.customer_display_names($1,$2::jsonb) as value", [original, json(contract)],
+  )
+  assert.deepEqual(await displayName("原客户", { mainlandCompanyName: "大陆演示", hongKongCompanyName: " 暂无 " }), {
+    company: "大陆演示", mainlandCompanyName: "大陆演示", hongKongCompanyName: null,
+  })
+  assert.deepEqual(await displayName("原客户", { mainlandCompanyName: "暂无", hongKongCompanyName: "香港演示" }), {
+    company: "香港演示", mainlandCompanyName: null, hongKongCompanyName: "香港演示",
+  })
+  assert.equal((await displayName("原客户", { mainlandCompanyName: "暂无", hongKongCompanyName: "暂无", companyName: "暂无" })).company, "原客户")
+  assert.equal((await displayName("原客户", { companyName: "旧合同客户" })).company, "旧合同客户")
   await db.exec("insert into public.teams(id,name) values (8101,'演示一组'),(8102,'演示二组')")
   for (const [user, role, team] of [[admin, "Admin", 8101], [seller, "Sales", 8101], [otherSeller, "Sales", 8102], [manager, "Manager", 8101]]) {
     await query("insert into auth.users(id,email,raw_user_meta_data) values ($1,$2,$3)", [
@@ -165,7 +176,8 @@ try {
   assert.deepEqual(await leadStates(), { [existing]: "ready" })
   assert.equal((await workspace(true)).rows.length, 0)
   const own = (await workspace(false)).rows[0]
-  assert.equal(own.company, "演示成交")
+  assert.equal(own.company, form.hongKongCompanyName)
+  assert.equal(own.mainlandCompanyName, null)
   const selections = { "performance/google": [dep["test-ad2"], dep["test-ad3"]], "performance/meta": [dep["test-ad3"]] }
   await knownError(() => assignment("lead", existing, own.submitted_at, 0, selections), "42501")
   const generatedNumber = await value("select generated_contract_number as value from public.deal_history_records where id=$1", [history])
@@ -178,7 +190,7 @@ try {
     assert.deepEqual((await query("select id from public.rpc_deal_history_list()")).map(row => row.id), [currentHistory])
     await historySubmit(1, [], form.services, {}, currentHistory)
     assert.deepEqual(await query("select id from public.rpc_deal_history_list()"), [])
-    assert.equal((await workspace(false)).rows.find(row => row.id === currentHistory).company, legacyCells[7])
+    assert.equal((await workspace(false)).rows.find(row => row.id === currentHistory).company, companyFields.hongKongCompanyName)
     assert.equal((await details("history", currentHistory)).data.mainlandCompanyName, "暂无")
     assert.equal(await value("select crm_allocation.history_in_allocation($1) as value", [currentHistory]), true)
   } finally {
@@ -222,7 +234,10 @@ try {
   assert.equal(submittedLead.mainlandCompanyName, "暂无")
   assert.equal(submittedLead.hongKongCompanyName, form.hongKongCompanyName)
   assert.equal(submittedLead.companyName, "暂无")
-  assert.equal(queue.rows.find(row => row.id === history).company, legacyCells[7])
+  const historyCompany = queue.rows.find(row => row.id === history)
+  assert.equal(historyCompany.company, `${companyFields.mainlandCompanyName} / ${companyFields.hongKongCompanyName}`)
+  assert.equal(historyCompany.mainlandCompanyName, companyFields.mainlandCompanyName)
+  assert.equal(historyCompany.hongKongCompanyName, companyFields.hongKongCompanyName)
   assert.equal(submittedLead.currency, "CNY")
   assert.deepEqual(queue.departments.filter(item => item.category === "performance").map(item => item.name).sort(),
     ["效果营销二部", "效果营销三部", "效果营销四部"].sort())

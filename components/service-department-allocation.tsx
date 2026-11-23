@@ -64,7 +64,10 @@ export function ServiceDepartmentAllocation({ pending = false, cutoff }: { pendi
                 const assigned = row.handoffs.length > 0 && row.assignedAt === row.submitted_at
                 return <TableRow key={row.source + row.id}>
                   <TableCell>
-                    <p className="font-medium">{row.company}</p>
+                    {row.mainlandCompanyName && row.hongKongCompanyName ? <div className="space-y-1">
+                      <p className="whitespace-normal break-words font-medium"><span className="mr-2 text-xs text-muted-foreground">大陆公司</span>{row.mainlandCompanyName}</p>
+                      <p className="whitespace-normal break-words font-medium"><span className="mr-2 text-xs text-muted-foreground">香港公司</span>{row.hongKongCompanyName}</p>
+                    </div> : <p className="whitespace-normal break-words font-medium">{row.company}</p>}
                     {row.source === "history" && <p className="text-xs text-muted-foreground">历史成交</p>}
                   </TableCell>
                   <TableCell>{row.salesperson}</TableCell>
