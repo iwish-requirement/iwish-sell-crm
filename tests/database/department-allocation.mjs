@@ -59,9 +59,9 @@ const leadSubmit = (version, confirm, data = form, files = [{ path: leadFile, na
   "select to_jsonb(public.rpc_deal_contract_submission_save($1,$2,$3,$4,$5)) as value",
   [existing, json(data), json(files), version, confirm],
 )
-const historySubmit = (version, files, services, changes = companyFields) => value(
+const historySubmit = (version, files, services, changes = companyFields, record = history) => value(
   "select to_jsonb(public.rpc_department_allocation_history_confirm($1,$2,$3,$4,$5)) as value",
-  [history, json(changes), json(files), version, json(services)],
+  [record, json(changes), json(files), version, json(services)],
 )
 
 try {
@@ -159,17 +159,31 @@ try {
   assert.deepEqual((await workspace(true)).rows.map(row => row.id), [existing])
   await leadSubmit(2, false)
   assert.equal((await workspace(false)).rows.length, 0)
-  const submittedWithoutBonus = await leadSubmit(3, true)
+  const submittedWithoutBonus = await leadSubmit(3, true, { ...form, mainlandCompanyName: "暂无" })
   assert.equal(submittedWithoutBonus.submitted.attachmentStatus, undefined)
   assert.equal(submittedWithoutBonus.submitted.bonusTermsHtml, undefined)
   assert.deepEqual(await leadStates(), { [existing]: "ready" })
   assert.equal((await workspace(true)).rows.length, 0)
   const own = (await workspace(false)).rows[0]
+  assert.equal(own.company, "演示成交")
   const selections = { "performance/google": [dep["test-ad2"], dep["test-ad3"]], "performance/meta": [dep["test-ad3"]] }
   await knownError(() => assignment("lead", existing, own.submitted_at, 0, selections), "42501")
   const generatedNumber = await value("select generated_contract_number as value from public.deal_history_records where id=$1", [history])
   assert.match(generatedNumber, /^HIS-2025-[A-F0-9]{12}$/)
   assert.deepEqual((await query("select id from public.rpc_deal_history_list()")).map(row => row.id), [currentHistory])
+  await db.exec("begin")
+  try {
+    const draftFields = { ...companyFields, mainlandCompanyName: "暂无", I: "DEMO-HISTORY-2026", attachmentStatus: "none" }
+    await query("select public.rpc_deal_history_save($1,$2::jsonb,'[]'::jsonb,0)", [currentHistory, json(draftFields)])
+    assert.deepEqual((await query("select id from public.rpc_deal_history_list()")).map(row => row.id), [currentHistory])
+    await historySubmit(1, [], form.services, {}, currentHistory)
+    assert.deepEqual(await query("select id from public.rpc_deal_history_list()"), [])
+    assert.equal((await workspace(false)).rows.find(row => row.id === currentHistory).company, legacyCells[7])
+    assert.equal((await details("history", currentHistory)).data.mainlandCompanyName, "暂无")
+    assert.equal(await value("select crm_allocation.history_in_allocation($1) as value", [currentHistory]), true)
+  } finally {
+    await db.exec("rollback")
+  }
   await knownError(() => query("select public.rpc_deal_history_save($1,'{\"I\":\"手动编号\"}'::jsonb,'[]'::jsonb,0)", [history]),
     "deal_history_generated_number")
   await knownError(() => historySubmit(0, [], form.services), "department_allocation_history_required")
@@ -205,9 +219,10 @@ try {
   assert.equal((await workspace(true)).rows.length, 1)
   const queue = await workspace(false)
   const submittedLead = (await details("lead", existing)).data
-  assert.equal(submittedLead.mainlandCompanyName, form.mainlandCompanyName)
+  assert.equal(submittedLead.mainlandCompanyName, "暂无")
   assert.equal(submittedLead.hongKongCompanyName, form.hongKongCompanyName)
-  assert.equal(submittedLead.companyName, form.mainlandCompanyName)
+  assert.equal(submittedLead.companyName, "暂无")
+  assert.equal(queue.rows.find(row => row.id === history).company, legacyCells[7])
   assert.equal(submittedLead.currency, "CNY")
   assert.deepEqual(queue.departments.filter(item => item.category === "performance").map(item => item.name).sort(),
     ["效果营销二部", "效果营销三部", "效果营销四部"].sort())
@@ -234,6 +249,7 @@ try {
   await knownError(() => query("select * from crm_allocation.handoffs"), "42501")
   await actor(otherSeller)
   assert.equal((await workspace(false)).rows.length, 0)
+  assert.equal(await value("select crm_allocation.history_in_allocation($1) as value", [history]), false)
   await knownError(() => details("history", history), "42501")
   await db.exec("reset role; set role anon")
   await knownError(() => workspace(false), "42501")

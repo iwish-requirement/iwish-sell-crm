@@ -57,7 +57,7 @@ export function ServiceDepartmentAllocation({ pending = false, cutoff }: { pendi
         </div> : !rows ? <p role="status" className="p-4 text-sm">正在加载…</p> :
           <Table>
             <TableHeader><TableRow>
-              <TableHead>客户全称</TableHead><TableHead>销售人员</TableHead><TableHead>状态</TableHead><TableHead className="text-right">操作</TableHead>
+              <TableHead>客户名称</TableHead><TableHead>销售人员</TableHead><TableHead>状态</TableHead><TableHead className="text-right">操作</TableHead>
             </TableRow></TableHeader>
             <TableBody>
               {rows.map(row => {

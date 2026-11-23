@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { DollarSign, Search } from "lucide-react"
+import { toast } from "sonner"
 import { HistoryContractForm } from "@/components/deal-history-form"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -101,7 +102,13 @@ export function DealHistory({ allocationCutoff = null }: { allocationCutoff?: st
     setDetailsError(false)
   }
 
-  function update(updated: HistoryRecord) {
+  function update(updated: HistoryRecord, confirmed: boolean) {
+    if (confirmed) {
+      setRows(current => current.filter(row => row.id !== updated.id))
+      close()
+      toast.success("已确认提交至分配中心")
+      return
+    }
     setDetails(updated)
     const value = (index: number, key: string) => String(updated.raw_values[index] ?? "") || updated.fields[key] || null
     const changed = {
@@ -118,7 +125,7 @@ export function DealHistory({ allocationCutoff = null }: { allocationCutoff?: st
       <Card>
         <CardHeader>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <CardTitle className="text-base font-bold">历史成交</CardTitle>
+            <CardTitle className="text-base font-bold">{allocationCutoff ? "待补资料的历史成交" : "历史成交"}</CardTitle>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <div className="relative w-full sm:w-72">
                 <Search aria-hidden className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -165,7 +172,9 @@ export function DealHistory({ allocationCutoff = null }: { allocationCutoff?: st
                       <TableCell className="whitespace-nowrap text-right font-semibold">{row.base_fee}</TableCell>
                     </TableRow>
                   ))}
-                  {!filtered.length && <TableRow><TableCell colSpan={5} className="py-8 text-center text-muted-foreground">当前范围暂无历史成交。</TableCell></TableRow>}
+                  {!filtered.length && <TableRow><TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
+                    {allocationCutoff ? "当前范围暂无待补资料的历史成交。" : "当前范围暂无历史成交。"}
+                  </TableCell></TableRow>}
                 </TableBody>
               </Table>
               <div className="flex flex-wrap items-center justify-between gap-2 pt-3 text-sm text-muted-foreground">
