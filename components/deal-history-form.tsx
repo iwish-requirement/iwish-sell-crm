@@ -59,14 +59,13 @@ function ServiceOptions({ label, saved, change }: { label: string; saved: string
 }
 
 export function HistoryContractForm({ row, close, save, allocationCutoff }: {
-  row: HistoryRecord; close: () => void; save: (updated: HistoryRecord) => void; allocationCutoff?: string | null
+  row: HistoryRecord; close: () => void; save: (updated: HistoryRecord, confirmed: boolean) => void; allocationCutoff?: string | null
 }) {
   const [changes, setChanges] = useState<Record<string, string>>({})
   const [files, setFiles] = useState<File[]>([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
   const [saved, setSaved] = useState(false)
-  const [confirmed, setConfirmed] = useState(false)
   const [services, setServices] = useState<Record<string, string[]>>(row.departmentAllocation?.data?.services ?? {})
   const labelFor = (key: string) => HISTORY_HEADERS[1][HISTORY_COLUMNS.indexOf(key as HistoryColumn)]
     ?? DEAL_CONTRACT_FIELDS.find(([name]) => name === key)?.[1] ?? ""
@@ -76,7 +75,6 @@ export function HistoryContractForm({ row, close, save, allocationCutoff }: {
   const update = (key: string, value: string, bonusTermsHtml?: string) => {
     setChanges(current => ({ ...current, [key]: value, ...(bonusTermsHtml === undefined ? {} : { bonusTermsHtml }) }))
     setSaved(false)
-    setConfirmed(false)
     setError("")
   }
   const cooperation = original(row, "P") || entered("P")
@@ -112,11 +110,10 @@ export function HistoryContractForm({ row, close, save, allocationCutoff }: {
     setSaving(true)
     setError("")
     try {
-      save(await saveDealHistory(row, fields, files, confirm ? services : undefined))
+      save(await saveDealHistory(row, fields, files, confirm ? services : undefined), confirm)
       setChanges({})
       setFiles([])
       setSaved(true)
-      setConfirmed(confirm)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "保存失败，请重试。")
     } finally {
@@ -272,7 +269,7 @@ export function HistoryContractForm({ row, close, save, allocationCutoff }: {
       <DialogFooter className="shrink-0 border-t pt-3 sm:items-center">
         <div className="mr-auto text-sm">
           {error && <p role="alert" className="text-destructive">{error}</p>}
-          {saved && <p role="status">{confirmed ? "已确认提交至分配中心。" : "补充资料已保存。"}</p>}
+          {saved && <p role="status">补充资料已保存。</p>}
           {allocationCutoff && row.canEdit && missing.length > 0 && <p className="text-muted-foreground">
             待补 {missing.slice(0, 3).map(labelFor).join("、")}{missing.length > 3 ? "等" : ""}。
           </p>}

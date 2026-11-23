@@ -10,6 +10,8 @@ export type AllocationRow = DepartmentResult & {
   source: AllocationSource
   id: string
   company: string
+  mainlandCompanyName?: string | null
+  hongKongCompanyName?: string | null
   salesperson: string | null
   submitted_at: string | null
   services: DealContractData["services"] | null
