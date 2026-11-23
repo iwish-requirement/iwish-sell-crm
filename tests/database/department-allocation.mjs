@@ -104,6 +104,8 @@ try {
   assert.deepEqual(await displayName("原客户", { mainlandCompanyName: "暂无", hongKongCompanyName: "香港演示" }), {
     company: "香港演示", mainlandCompanyName: null, hongKongCompanyName: "香港演示",
   })
+  assert.equal((await displayName("原客户", { mainlandCompanyName: "　无大陆公司　", hongKongCompanyName: "香港演示" })).company, "香港演示")
+  assert.equal((await displayName("原客户", { mainlandCompanyName: "大陆演示", hongKongCompanyName: "N/A" })).company, "大陆演示")
   assert.equal((await displayName("原客户", { mainlandCompanyName: "暂无", hongKongCompanyName: "暂无", companyName: "暂无" })).company, "原客户")
   assert.equal((await displayName("原客户", { companyName: "旧合同客户" })).company, "旧合同客户")
   await db.exec("insert into public.teams(id,name) values (8101,'演示一组'),(8102,'演示二组')")

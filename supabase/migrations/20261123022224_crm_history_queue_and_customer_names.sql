@@ -16,17 +16,19 @@ create function crm_allocation.customer_display_names(p_original text, p_contrac
 returns jsonb language sql immutable set search_path = ''
 as $$
   with names as (
-    select max(btrim(v.name)) filter (where v.kind = 'mainland') as mainland,
-      max(btrim(v.name)) filter (where v.kind = 'hong_kong') as hong_kong,
-      max(btrim(v.name)) filter (where v.kind = 'legacy') as legacy,
-      max(btrim(v.name)) filter (where v.kind = 'original') as original
+    select max(clean.name) filter (where v.kind = 'mainland') as mainland,
+      max(clean.name) filter (where v.kind = 'hong_kong') as hong_kong,
+      max(clean.name) filter (where v.kind = 'legacy') as legacy,
+      max(clean.name) filter (where v.kind = 'original') as original
     from (values
       ('mainland', p_contract->>'mainlandCompanyName'),
       ('hong_kong', p_contract->>'hongKongCompanyName'),
       ('legacy', p_contract->>'companyName'),
       ('original', p_original)
     ) as v(kind,name)
-    where btrim(v.name) not in ('','暂无','未命名客户','未命名线索','未填写公司名称')
+    cross join lateral (select btrim(v.name, E' \t\r\n' || chr(12288)) as name) clean
+    where clean.name <> ''
+      and clean.name !~* '^(暂无|无|没有|无(大陆|香港)(公司|主体)|未填写|缺失|待确认|待补充|不适用|未命名客户|未命名线索|未填写公司名称|n/?a|none|null|[-－—/／]+)$'
   )
   select jsonb_build_object(
     'company', coalesce(nullif(concat_ws(' / ', mainland, hong_kong), ''), legacy, original, '未命名客户'),
