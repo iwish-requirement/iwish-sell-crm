@@ -10,22 +10,25 @@ const dataDir = process.env.CRM_ALLOCATION_PGDATA
 assert.ok(!dataDir || !dataDir.includes("://"), "A disposable local PGlite data directory is required")
 const db = new PGlite(dataDir)
 const id = suffix => "00000000-0000-4000-8000-" + String(suffix).padStart(12, "0")
-const [admin, seller, otherSeller, manager, existing, other, history] = [1, 2, 3, 4, 11, 12, 21].map(id)
+const [admin, seller, otherSeller, manager, existing, other, history, currentHistory] = [1, 2, 3, 4, 11, 12, 21, 22].map(id)
 const leadFile = existing + "/" + id(90)
 const historyFile = history + "/" + id(91)
+const bonusTerms = "季度消耗\t奖金\n达到目标\t¥500"
+const bonusTermsHtml = "<table><tbody><tr><th colspan=\"2\"><strong>季度消耗</strong></th></tr><tr><td>达到目标</td><td>¥500</td></tr></tbody></table>"
 const form = {
   signedOn: "2026-11-19", expectedPaymentOn: "2026-11-22", actualPayment: "未到账",
   handoffOn: "2026-11-23", serviceStartsOn: "2026-11-25", salesperson: "演示销售",
   companyName: "演示客户", contractNumber: "DEMO-1", website: "https://example.com",
+  mainlandCompanyName: "内地 1#（演示）", hongKongCompanyName: "HK & Demo / 2",
   category: "家居", contactName: "演示客户联系人", contactTitle: "采购",
   phone: "12345678", email: "contact@example.com", cooperation: "fixed_quarter",
   baseFee: "12000", serviceFees: "Google 与 Meta 12000 元", needs: "建立每周复盘",
   address: "演示地址", currency: "CNY", services: { performance: ["google", "meta"] },
 }
 const legacyCells = [
-  2026, form.signedOn, form.expectedPaymentOn, form.actualPayment, form.handoffOn, form.serviceStartsOn,
-  form.salesperson, "历史演示客户", "HISTORY-1", form.website, form.category, form.contactName,
-  form.contactTitle, form.phone, form.email, "固定季度服务费", form.baseFee, form.serviceFees,
+  "2025年", "2025-11-19", form.expectedPaymentOn, form.actualPayment, form.handoffOn, form.serviceStartsOn,
+  form.salesperson, "历史演示客户", null, form.website, form.category, form.contactName,
+  form.contactTitle, form.phone, form.email, "基础服务费+激励奖金", form.baseFee, form.serviceFees,
   null, null, "Google", "Meta", null, null, null, null, null, null, form.needs, form.address,
   "效果营销二部", "历史演示负责人", null, null, null, null, null, null, null, null, null, null, null, null,
 ]
@@ -48,17 +51,63 @@ const leadStates = () => value("select public.rpc_department_allocation_lead_sta
 const details = (source, row) => value("select public.rpc_department_allocation_details($1,$2) as value", [source, row])
 const assignment = (source, row, submittedAt, revision, selections) =>
   value("select public.rpc_department_allocation_save($1,$2,$3,$4,$5) as value", [source, row, submittedAt, revision, json(selections)])
-const leadSubmit = (version, confirm) => value(
+const companyFields = {
+  mainlandCompanyName: form.mainlandCompanyName, hongKongCompanyName: form.hongKongCompanyName,
+  currency: "USD", S: "500", T: bonusTerms,
+}
+const leadSubmit = (version, confirm, data = form, files = [{ path: leadFile, name: "交接说明.txt" }]) => value(
   "select to_jsonb(public.rpc_deal_contract_submission_save($1,$2,$3,$4,$5)) as value",
-  [existing, json(form), json([{ path: leadFile, name: "交接说明.txt" }]), version, confirm],
+  [existing, json(data), json(files), version, confirm],
 )
-const historySubmit = (version, files, services) => value(
-  "select to_jsonb(public.rpc_department_allocation_history_confirm($1,'{}'::jsonb,$2,$3,$4)) as value",
-  [history, json(files), version, json(services)],
+const historySubmit = (version, files, services, changes = companyFields, record = history) => value(
+  "select to_jsonb(public.rpc_department_allocation_history_confirm($1,$2,$3,$4,$5)) as value",
+  [record, json(changes), json(files), version, json(services)],
 )
 
 try {
-  await loadAllocationFixture(db)
+  await loadAllocationFixture(db, async name => {
+    if (!name.endsWith("_historical_deal_contract_numbers.sql")) return
+    await db.exec("insert into public.deal_history_batches(id,source_sha,expected_count) values ('older',repeat('c',64),3)")
+    const samples = [
+      ["2024年", null, "原表合同编号"],
+      ["2026年", "2025/12/31", "2026 年的原编号"],
+      [null, "2023/6/1", null],
+    ]
+    for (const [offset, [year, signedOn, number]] of samples.entries()) {
+      const raw = Array(44).fill(null)
+      raw[0] = year
+      raw[1] = signedOn
+      raw[8] = number
+      await query("insert into public.deal_history_records(batch_id,source_row,raw_values,source_types) values ('older',$1,$2,$3)",
+        [offset + 3, json(raw), json(Array(44).fill(null))])
+    }
+    await query("insert into crm_allocation.history_submissions(history_id,data,attachments,finance,submitted_at,submitted_by) " +
+      "select id,'{\"contractNumber\":\"原表合同编号\",\"companyName\":\"已确认演示客户\"}','[]','{}','2026-11-19T00:00:00Z',$1 " +
+      "from public.deal_history_records where batch_id='older' and source_row=3", [seller])
+  })
+  const backfill = await query("select generated_contract_number, raw_values->>8 as original_number from public.deal_history_records where batch_id='older' order by source_row")
+  assert.match(backfill[0].generated_contract_number, /^HIS-2024-[A-F0-9]{12}$/)
+  assert.equal(backfill[0].original_number, "原表合同编号")
+  assert.deepEqual(backfill[1], { generated_contract_number: null, original_number: "2026 年的原编号" })
+  assert.match(backfill[2].generated_contract_number, /^HIS-2023-[A-F0-9]{12}$/)
+  const existingHistory = await value("select jsonb_build_object('data',data,'submitted_at',submitted_at) as value from crm_allocation.history_submissions")
+  assert.deepEqual(existingHistory, {
+    data: { contractNumber: backfill[0].generated_contract_number, companyName: "已确认演示客户" },
+    submitted_at: "2026-11-19T00:00:00+00:00",
+  })
+  const displayName = (original, contract) => value(
+    "select crm_allocation.customer_display_names($1,$2::jsonb) as value", [original, json(contract)],
+  )
+  assert.deepEqual(await displayName("原客户", { mainlandCompanyName: "大陆演示", hongKongCompanyName: " 暂无 " }), {
+    company: "大陆演示", mainlandCompanyName: "大陆演示", hongKongCompanyName: null,
+  })
+  assert.deepEqual(await displayName("原客户", { mainlandCompanyName: "暂无", hongKongCompanyName: "香港演示" }), {
+    company: "香港演示", mainlandCompanyName: null, hongKongCompanyName: "香港演示",
+  })
+  assert.equal((await displayName("原客户", { mainlandCompanyName: "　无大陆公司　", hongKongCompanyName: "香港演示" })).company, "香港演示")
+  assert.equal((await displayName("原客户", { mainlandCompanyName: "大陆演示", hongKongCompanyName: "N/A" })).company, "大陆演示")
+  assert.equal((await displayName("原客户", { mainlandCompanyName: "暂无", hongKongCompanyName: "暂无", companyName: "暂无" })).company, "原客户")
+  assert.equal((await displayName("原客户", { companyName: "旧合同客户" })).company, "旧合同客户")
   await db.exec("insert into public.teams(id,name) values (8101,'演示一组'),(8102,'演示二组')")
   for (const [user, role, team] of [[admin, "Admin", 8101], [seller, "Sales", 8101], [otherSeller, "Sales", 8102], [manager, "Manager", 8101]]) {
     await query("insert into auth.users(id,email,raw_user_meta_data) values ($1,$2,$3)", [
@@ -81,13 +130,32 @@ try {
   await query("insert into storage.objects(bucket_id,name,owner_id) values ('deal-contract-materials',$1,$2),('deal-history-materials',$3,$2)", [
     leadFile, seller, historyFile,
   ])
-  await db.exec("insert into public.deal_history_batches(id,source_sha,expected_count,published_at) values ('test',repeat('b',64),1,now())")
-  await query("insert into public.deal_history_records(id,batch_id,source_row,owner_id,raw_values,source_types) " +
-    "values ($1,'test',3,$2,$3,$4)", [history, seller, json(legacyCells), json(legacyCells.map(() => null))])
+  await db.exec("insert into public.deal_history_batches(id,source_sha,expected_count,published_at) values ('test',repeat('b',64),2,now())")
+  for (const [record, sourceRow, raw] of [[history, 3, legacyCells], [currentHistory, 4, [null, "2026-01-01", ...legacyCells.slice(2)]]]) {
+    await query("insert into public.deal_history_records(id,batch_id,source_row,owner_id,raw_values,source_types) " +
+      "values ($1,'test',$2,$3,$4,$5)", [record, sourceRow, seller, json(raw), json(raw.map(() => null))])
+  }
 
   await actor(seller)
   assert.equal(await value("select public.rpc_department_allocation_release() as value"), null)
-  await leadSubmit(0, true)
+  await knownError(() => leadSubmit(0,true,{ ...form, mainlandCompanyName:" " }), "deal_contract_required")
+  await knownError(() => leadSubmit(0,true,{ ...form, hongKongCompanyName:"" }), "deal_contract_required")
+  await knownError(() => leadSubmit(0,false,{ ...form, currency:"HKD" }), "deal_contract_currency")
+  await knownError(() => leadSubmit(0,true,{ ...form, currency:"" }), "deal_contract_required")
+  await knownError(() => leadSubmit(0, true, form, []), "deal_contract_required")
+  await knownError(() => leadSubmit(0, true, { ...form, attachmentStatus:"skip" }, []), "deal_contract_attachment_status")
+  const bonusForm = { ...form, cooperation: "base_bonus", bonusAmount: "500", bonusTerms }
+  await knownError(() => leadSubmit(0, true, { ...bonusForm, bonusTerms: "", bonusTermsHtml }, []), "deal_contract_required")
+  await knownError(() => leadSubmit(0, false, { ...bonusForm, bonusTermsHtml: "x".repeat(20001) }, []), "deal_bonus_terms_html")
+  const bonusDraft = await leadSubmit(0, false, { ...bonusForm, bonusTermsHtml, attachmentStatus:"none" }, [])
+  assert.equal(bonusDraft.draft.attachmentStatus, "none")
+  assert.equal(bonusDraft.draft.bonusTermsHtml, bonusTermsHtml)
+  await knownError(() => leadSubmit(1, true, { ...bonusForm, attachmentStatus:"" }, []), "deal_contract_required")
+  const noFileLead = await leadSubmit(1, true, bonusForm, [])
+  assert.equal(noFileLead.submitted.attachmentStatus, "none")
+  assert.equal(noFileLead.submitted.bonusTerms, bonusTerms)
+  assert.equal(noFileLead.submitted.bonusTermsHtml, bonusTermsHtml)
+  assert.deepEqual(noFileLead.submitted_attachments, [])
   await actor(null)
   const originalAssignment = await value("select to_jsonb(a) as value from public.lead_project_assignments a where a.lead_id=$1", [existing])
   await runFile("releases/crm_department_allocation_phase_one.sql")
@@ -102,16 +170,60 @@ try {
   await knownError(() => details("lead", other), "42501")
   assert.deepEqual(await leadStates(), { [existing]: "needs_contract" })
   assert.deepEqual((await workspace(true)).rows.map(row => row.id), [existing])
-  await leadSubmit(1, false)
+  await leadSubmit(2, false)
   assert.equal((await workspace(false)).rows.length, 0)
-  await leadSubmit(2, true)
+  const submittedWithoutBonus = await leadSubmit(3, true, { ...form, mainlandCompanyName: "暂无" })
+  assert.equal(submittedWithoutBonus.submitted.attachmentStatus, undefined)
+  assert.equal(submittedWithoutBonus.submitted.bonusTermsHtml, undefined)
   assert.deepEqual(await leadStates(), { [existing]: "ready" })
   assert.equal((await workspace(true)).rows.length, 0)
   const own = (await workspace(false)).rows[0]
+  assert.equal(own.company, form.hongKongCompanyName)
+  assert.equal(own.mainlandCompanyName, null)
   const selections = { "performance/google": [dep["test-ad2"], dep["test-ad3"]], "performance/meta": [dep["test-ad3"]] }
   await knownError(() => assignment("lead", existing, own.submitted_at, 0, selections), "42501")
+  const generatedNumber = await value("select generated_contract_number as value from public.deal_history_records where id=$1", [history])
+  assert.match(generatedNumber, /^HIS-2025-[A-F0-9]{12}$/)
+  assert.deepEqual((await query("select id from public.rpc_deal_history_list()")).map(row => row.id), [currentHistory])
+  await db.exec("begin")
+  try {
+    const draftFields = { ...companyFields, mainlandCompanyName: "暂无", I: "DEMO-HISTORY-2026", attachmentStatus: "none" }
+    await query("select public.rpc_deal_history_save($1,$2::jsonb,'[]'::jsonb,0)", [currentHistory, json(draftFields)])
+    assert.deepEqual((await query("select id from public.rpc_deal_history_list()")).map(row => row.id), [currentHistory])
+    await historySubmit(1, [], form.services, {}, currentHistory)
+    assert.deepEqual(await query("select id from public.rpc_deal_history_list()"), [])
+    assert.equal((await workspace(false)).rows.find(row => row.id === currentHistory).company, companyFields.hongKongCompanyName)
+    assert.equal((await details("history", currentHistory)).data.mainlandCompanyName, "暂无")
+    assert.equal(await value("select crm_allocation.history_in_allocation($1) as value", [currentHistory]), true)
+  } finally {
+    await db.exec("rollback")
+  }
+  await knownError(() => query("select public.rpc_deal_history_save($1,'{\"I\":\"手动编号\"}'::jsonb,'[]'::jsonb,0)", [history]),
+    "deal_history_generated_number")
   await knownError(() => historySubmit(0, [], form.services), "department_allocation_history_required")
-  await historySubmit(0, [{ path: historyFile, name: "历史交接说明.txt" }], form.services)
+  await knownError(() => historySubmit(0, [], form.services, { ...companyFields, attachmentStatus:"skip" }), "deal_history_attachment_status")
+  const files = [{ path: historyFile, name: "历史交接说明.txt" }]
+  await knownError(() => historySubmit(0, files, form.services, { ...companyFields, hongKongCompanyName:"" }),
+    "department_allocation_history_required")
+  await knownError(() => historySubmit(0, files, form.services, { ...companyFields, currency:"HKD" }),
+    "deal_history_currency")
+  const noFileHistory = await historySubmit(0, [], form.services, { ...companyFields, bonusTermsHtml, attachmentStatus:"none" })
+  assert.equal(noFileHistory.fields.attachmentStatus, "none")
+  assert.equal(noFileHistory.fields.bonusTermsHtml, bonusTermsHtml)
+  const noFileDetails = await details("history", history)
+  assert.equal(noFileDetails.data.attachmentStatus, "none")
+  assert.deepEqual(noFileDetails.attachments, [])
+  const historyWithFile = await historySubmit(1, files, form.services)
+  assert.equal(historyWithFile.fields.attachmentStatus, undefined)
+  const submittedHistory = (await details("history", history)).data
+  assert.equal(submittedHistory.contractNumber, generatedNumber)
+  assert.equal(submittedHistory.companyName, companyFields.mainlandCompanyName)
+  assert.equal(submittedHistory.hongKongCompanyName, companyFields.hongKongCompanyName)
+  assert.equal(submittedHistory.currency, "USD")
+  assert.equal(submittedHistory.attachmentStatus, undefined)
+  assert.equal(submittedHistory.bonusTerms, bonusTerms)
+  assert.equal(submittedHistory.bonusTermsHtml, bonusTermsHtml)
+  assert.equal(await value("select generated_contract_number as value from public.deal_history_records where id=$1", [history]), generatedNumber)
 
   await actor(manager)
   assert.equal((await workspace(true)).rows.length, 0)
@@ -120,6 +232,15 @@ try {
   await actor(admin)
   assert.equal((await workspace(true)).rows.length, 1)
   const queue = await workspace(false)
+  const submittedLead = (await details("lead", existing)).data
+  assert.equal(submittedLead.mainlandCompanyName, "暂无")
+  assert.equal(submittedLead.hongKongCompanyName, form.hongKongCompanyName)
+  assert.equal(submittedLead.companyName, "暂无")
+  const historyCompany = queue.rows.find(row => row.id === history)
+  assert.equal(historyCompany.company, `${companyFields.mainlandCompanyName} / ${companyFields.hongKongCompanyName}`)
+  assert.equal(historyCompany.mainlandCompanyName, companyFields.mainlandCompanyName)
+  assert.equal(historyCompany.hongKongCompanyName, companyFields.hongKongCompanyName)
+  assert.equal(submittedLead.currency, "CNY")
   assert.deepEqual(queue.departments.filter(item => item.category === "performance").map(item => item.name).sort(),
     ["效果营销二部", "效果营销三部", "效果营销四部"].sort())
   await knownError(() => assignment("lead", existing, own.submitted_at, 0, { "performance/google": selections["performance/google"] }),
@@ -145,6 +266,7 @@ try {
   await knownError(() => query("select * from crm_allocation.handoffs"), "42501")
   await actor(otherSeller)
   assert.equal((await workspace(false)).rows.length, 0)
+  assert.equal(await value("select crm_allocation.history_in_allocation($1) as value", [history]), false)
   await knownError(() => details("history", history), "42501")
   await db.exec("reset role; set role anon")
   await knownError(() => workspace(false), "42501")

@@ -4,6 +4,7 @@ import {
   DEAL_CONTRACT_FIELDS,
   DEAL_FINANCE_FIELDS,
   DEAL_CONTRACT_SERVICES,
+  NO_CONTRACT_ATTACHMENTS,
   dealContractSubmissionErrors,
   isDealContractFieldVisible,
   normalizeDealWebsite,
@@ -35,6 +36,15 @@ test("a complete submission can state it has not been paid and has no bonus", ()
   assert.deepEqual(dealContractSubmissionErrors(completed, 1), [])
 })
 
+test("requires both company names and limits selectable contract currencies", () => {
+  assert.deepEqual(dealContractSubmissionErrors({
+    ...completed, mainlandCompanyName: " ", hongKongCompanyName: "", currency: "HKD",
+  }, 1), ["大陆公司", "香港公司", "币种"])
+  assert.deepEqual(dealContractSubmissionErrors({
+    ...completed, mainlandCompanyName: "大陆 1#（演示）", hongKongCompanyName: "HK & Demo / 2", currency: "USD",
+  }, 1), [])
+})
+
 test("only the applicable fee fields are visible and required", () => {
   const fixed = { ...completed, cooperation: "fixed_quarter", spendRatio: "", bonusAmount: "", bonusTerms: "" }
   assert.deepEqual(dealContractSubmissionErrors(fixed, 1), [])
@@ -56,12 +66,14 @@ test("spend-based cooperation requires a percentage above zero and at most one h
   assert.deepEqual(dealContractSubmissionErrors({ ...completed, spendRatio: "100" }, 1), [])
 })
 
-test("confirmation requires sales fields, applicable service options, and a file", () => {
+test("confirmation requires sales fields, applicable service options, and a file or an explicit no-attachment answer", () => {
   assert.deepEqual(dealContractSubmissionErrors({
     ...completed,
     phone: "",
     services: { performance: [], creative: [] },
   }, 0), ["客户联系人电话", "效果营销服务小类", "客户售前信息和售后目标附件"])
+  assert.deepEqual(dealContractSubmissionErrors({ ...completed, attachmentStatus: NO_CONTRACT_ATTACHMENTS }, 0), [])
+  assert.deepEqual(dealContractSubmissionErrors({ ...completed, attachmentStatus: NO_CONTRACT_ATTACHMENTS, phone: "" }, 0), ["客户联系人电话"])
 })
 
 test("service options keep the agreed categories and omit affiliate marketing", () => {

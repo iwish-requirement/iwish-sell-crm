@@ -3,7 +3,8 @@
 import { useEffect, useState, type ChangeEvent, type ReactNode } from "react"
 import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
-import { DealContractReturnedFields } from "@/components/deal-contract-returned-fields"
+import { DealBonusTermsEditor, DealBonusTermsValue } from "@/components/deal-bonus-terms"
+import { DealContractReadOnlyField, DealContractReturnedFields } from "@/components/deal-contract-returned-fields"
 import { Button } from "@/components/ui/button"
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
@@ -12,9 +13,9 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import {
-  CONTRACT_FILE_SIZE_LIMIT, DEAL_CONTRACT_FIELDS, DEAL_CONTRACT_SERVICES, DEAL_COOPERATION_MODES,
-  DEAL_ALLOCATION_FIELDS, DEAL_FINANCE_FIELDS,
-  NOT_PAID, NO_WEBSITE, dealContractSubmissionErrors, isDealContractFieldVisible, normalizeDealWebsite,
+  CONTRACT_FILE_SIZE_LIMIT, DEAL_CONTRACT_FIELDS, DEAL_CONTRACT_IDENTITY_FIELDS, DEAL_CONTRACT_SERVICES, DEAL_COOPERATION_MODES, DEAL_CURRENCIES,
+  DEAL_ALLOCATION_FIELDS, DEAL_FINANCE_FIELDS, MAX_BONUS_TERMS_HTML_LENGTH,
+  NOT_PAID, NO_CONTRACT_ATTACHMENTS, NO_WEBSITE, dealContractSubmissionErrors, isDealContractFieldVisible, isDealCurrency, normalizeDealWebsite,
   type DealContractData, type DealContractField,
 } from "@/lib/services/deal-contract-fields"
 import { formatDealDate } from "@/lib/services/deal-date"
@@ -60,8 +61,14 @@ export function DealContractSubmissionDialog({ leadId, companyName, salesperson,
   const canEdit = loaded?.canEdit === true
   const attachments = (loaded?.record?.draft_attachments ?? []).filter((file) => !removedPaths.includes(file.path))
   const data = loaded?.data
-  const visibleData = data ? { ...data, ...returned } : null
-  const errors = visibleData ? dealContractSubmissionErrors(visibleData, attachments.length + files.length) : []
+  const visibleData = data ? {
+    ...data, ...returned,
+    currency: !canEdit || isDealCurrency(returned.currency) ? returned.currency ?? data.currency : data.currency,
+  } : null
+  const attachmentCount = attachments.length + files.length
+  const bonusTermsTooLong = data?.cooperation === "base_bonus" && (data.bonusTermsHtml?.length ?? 0) > MAX_BONUS_TERMS_HTML_LENGTH
+  const noAttachments = !attachmentCount && data?.attachmentStatus === NO_CONTRACT_ATTACHMENTS
+  const errors = visibleData ? dealContractSubmissionErrors(visibleData, attachmentCount) : []
   const editable = canEdit && !saving
   const cutoff = requiredAfter ?? loaded?.departmentAllocation?.requiredAfter
   const submittedAt = loaded?.record?.submitted_at
@@ -69,6 +76,10 @@ export function DealContractSubmissionDialog({ leadId, companyName, salesperson,
 
   function update(field: DealContractField, value: string) {
     setLoaded((current) => current ? { ...current, data: { ...current.data, [field]: value } } : current)
+  }
+
+  function setAttachmentStatus(attachmentStatus: DealContractData["attachmentStatus"]) {
+    setLoaded(current => current ? { ...current, data: { ...current.data, attachmentStatus } } : current)
   }
 
   function updateService(group: string, child?: string) {
@@ -90,24 +101,27 @@ export function DealContractSubmissionDialog({ leadId, companyName, salesperson,
     const selected = Array.from(event.currentTarget.files ?? [])
     const valid = selected.filter((file) => file.size > 0 && file.size <= CONTRACT_FILE_SIZE_LIMIT)
     if (valid.length !== selected.length) toast.error("附件须有内容，单个文件不超过 20 MB")
+    if (valid.length) setAttachmentStatus("")
     setFiles((current) => [...current, ...valid])
     event.currentTarget.value = ""
   }
 
   async function save(confirm: boolean) {
-    if (!editable || !loaded || !data || (confirm && errors.length)) return
+    if (!editable || !loaded || !data || bonusTermsTooLong || (confirm && errors.length)) return
     setSaving(true)
     const payload = { ...data }
+    if (payload.cooperation !== "base_bonus") delete payload.bonusTermsHtml
     for (const [key] of DEAL_CONTRACT_FIELDS) {
       if (payload[key] !== undefined) payload[key] = payload[key].trim()
     }
     if (!payload.actualPayment && loaded.confirmedReceipt) payload.actualPayment = loaded.confirmedReceipt.actualPayment
+    if (isDealCurrency(visibleData?.currency)) payload.currency = visibleData.currency
     if (payload.website) payload.website = normalizeDealWebsite(payload.website) ?? payload.website
     try {
       const record = await saveDealContractSubmission(
         leadId, payload, attachments, files, removedPaths, loaded.record?.version ?? 0, confirm,
       )
-      setLoaded({ ...loaded, data: payload, record })
+      setLoaded({ ...loaded, data: record.draft, record })
       setFiles([])
       setRemovedPaths([])
       toast.success(confirm ? "合同资料已确认提交" : "草稿已保存")
@@ -123,29 +137,50 @@ export function DealContractSubmissionDialog({ leadId, companyName, salesperson,
     const [key, label, kind] = field
     if (!isDealContractFieldVisible(key, visibleData?.cooperation)) return null
     const value = visibleData?.[key] ?? ""
-    const locked = !editable || returned[key] !== undefined
+    const locked = !editable || (key === "currency" ? isDealCurrency(returned.currency) : returned[key] !== undefined)
     const id = `deal-contract-${key}`
+    if (key === "bonusTerms") {
+      const html = data?.bonusTermsHtml
+      if (locked) return <DealContractReadOnlyField key={key} label={label} wide
+        value={<DealBonusTermsValue text={value} html={html} />} />
+      return <div key={key} className="space-y-2 sm:col-span-2">
+        <Label id={id + "-label"}>{label}<span className="text-destructive">*</span></Label>
+        <DealBonusTermsEditor id={id} text={value} html={html} onChange={(bonusTerms, bonusTermsHtml) =>
+          setLoaded(current => current ? { ...current, data: { ...current.data, bonusTerms, bonusTermsHtml } } : current)
+        } />
+      </div>
+    }
+    if (locked) {
+      let display = value
+      if (value) {
+        if (kind === "date" || key === "actualPayment") display = formatDealDate(value)
+        if (kind === "cooperation") display = DEAL_COOPERATION_MODES.find(([option]) => option === value)?.[1] ?? value
+        if (kind === "percentage") display = value + "%"
+      }
+      return <DealContractReadOnlyField key={key} label={label} value={display} wide={kind === "multiline"} />
+    }
     let control: ReactNode
     if (kind === "website") {
       control = <div className="flex flex-wrap items-center gap-2">
         {value !== NO_WEBSITE && <span className="text-sm text-muted-foreground">https://</span>}
         <Input id={id} className="min-w-40 flex-1" placeholder="example.com" value={value.replace(/^https:\/\//i, "")}
           onChange={(event) => update(key, event.target.value)}
-          onBlur={() => { const normalized = normalizeDealWebsite(value); if (normalized) update(key, normalized) }}
-          readOnly={locked} />
-        {editable && <Button type="button" variant="outline" size="sm" onClick={() => update(key, NO_WEBSITE)}>暂无网站</Button>}
+          onBlur={() => { const normalized = normalizeDealWebsite(value); if (normalized) update(key, normalized) }} />
+        <Button type="button" variant="outline" size="sm" onClick={() => update(key, NO_WEBSITE)}>暂无网站</Button>
       </div>
-    } else if (kind === "cooperation") {
+    } else if (kind === "cooperation" || kind === "currency") {
       control = <select id={id} className="h-9 w-full rounded-md border bg-background px-3 text-sm"
-        value={value} onChange={(event) => update(key, event.target.value)} disabled={locked}>
+        value={value} aria-required="true" onChange={(event) => update(key, event.target.value)}>
         <option value="">请选择</option>
-        {DEAL_COOPERATION_MODES.map(([option, name]) => <option value={option} key={option}>{name}</option>)}
+        {kind === "currency"
+          ? DEAL_CURRENCIES.map(currency => <option value={currency} key={currency}>{currency}</option>)
+          : DEAL_COOPERATION_MODES.map(([option, name]) => <option value={option} key={option}>{name}</option>)}
       </select>
     } else if (kind === "multiline") {
-      control = <Textarea id={id} value={value} onChange={(event) => update(key, event.target.value)} readOnly={locked} />
+      control = <Textarea id={id} value={value} onChange={(event) => update(key, event.target.value)} />
     } else if (kind === "percentage") {
       control = <div className="flex items-center gap-2">
-        <Input id={id} type="text" inputMode="decimal" placeholder="例如 15" value={value} readOnly={locked}
+        <Input id={id} type="text" inputMode="decimal" placeholder="例如 15" value={value}
           onChange={(event) => update(key, event.target.value)} />
         <span className="shrink-0 text-sm text-muted-foreground">%</span>
       </div>
@@ -153,9 +188,9 @@ export function DealContractSubmissionDialog({ leadId, companyName, salesperson,
       control = <div className="flex items-center gap-2">
         <Input id={id} type={kind === "amount" ? "text" : kind} inputMode={kind === "amount" ? "decimal" : undefined}
           placeholder={key === "actualPayment" ? "填写到账时间，尚未到账请写明「未到账」" : undefined}
-          value={value} readOnly={locked}
-          onChange={(event) => update(key, key === "currency" ? event.target.value.toUpperCase() : event.target.value)} />
-        {key === "actualPayment" && !locked &&
+          value={value} aria-required="true"
+          onChange={(event) => update(key, event.target.value)} />
+        {key === "actualPayment" &&
           <Button type="button" variant="outline" size="sm" onClick={() => update(key, NOT_PAID)}>未到账</Button>}
       </div>
     }
@@ -187,12 +222,8 @@ export function DealContractSubmissionDialog({ leadId, companyName, salesperson,
               <section className="space-y-3">
                 <h3 className="font-semibold">客户与签约信息</h3>
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="deal-contract-year">年份</Label>
-                    <Input id="deal-contract-year" readOnly value={visibleData.signedOn?.slice(0, 4) ?? ""} />
-                  </div>
-                  {DEAL_CONTRACT_FIELDS.slice(0, 14).map(renderField)}
-                  {DEAL_CONTRACT_FIELDS.filter(([key]) => key === "address").map(renderField)}
+                  <DealContractReadOnlyField label="年份" value={visibleData.signedOn?.slice(0, 4)} />
+                  {DEAL_CONTRACT_IDENTITY_FIELDS.map(renderField)}
                 </div>
               </section>
               <section className="space-y-3 border-t pt-4">
@@ -203,7 +234,7 @@ export function DealContractSubmissionDialog({ leadId, companyName, salesperson,
                   ).map(renderField)}
                 </div>
               </section>
-              <fieldset className="space-y-3 border-t pt-4" disabled={!editable}>
+              {editable ? <fieldset className="space-y-3 border-t pt-4">
                 <legend className="font-semibold">服务内容 <span className="text-destructive">*</span></legend>
                 {DEAL_CONTRACT_SERVICES.map((group) => {
                   const selected = visibleData.services[group.key]
@@ -222,14 +253,29 @@ export function DealContractSubmissionDialog({ leadId, companyName, salesperson,
                     </div>
                   )
                 })}
-              </fieldset>
+              </fieldset> : <section className="border-t pt-4">
+                <DealContractReadOnlyField label="服务内容" value={DEAL_CONTRACT_SERVICES.flatMap(group => {
+                  const selected = visibleData.services[group.key]
+                  if (!selected) return []
+                  const names = group.options.filter(([id]) => selected.includes(id)).map(([, name]) => name)
+                  return [names.length ? group.label + " · " + names.join("、") : group.label]
+                }).join("\n")} />
+              </section>}
               <section className="space-y-3 border-t pt-4">
                 {DEAL_CONTRACT_FIELDS.filter(([key]) => key === "needs").map(renderField)}
-                <Label htmlFor="deal-contract-files">
-                  客户售前信息和售后目标（如：方案，目标，客户相关信息）<span className="text-destructive">*</span>
-                </Label>
-                {editable && <Input id="deal-contract-files" type="file" multiple onChange={pickFiles} />}
-                {editable && <p className="text-xs text-muted-foreground">可上传多个文件，每个最多 20 MB。</p>}
+                {editable ? <>
+                  <Label htmlFor="deal-contract-files">
+                    客户售前信息和售后目标（如：方案，目标，客户相关信息）<span className="text-destructive">*</span>
+                  </Label>
+                  <div className="flex items-center gap-2">
+                    <Input id="deal-contract-files" className="min-w-0 flex-1" type="file" multiple onChange={pickFiles} />
+                    <Button type="button" variant={noAttachments ? "secondary" : "outline"} size="sm"
+                      aria-label="暂无附件" aria-pressed={noAttachments} disabled={attachmentCount > 0}
+                      onClick={() => setAttachmentStatus(noAttachments ? "" : NO_CONTRACT_ATTACHMENTS)}>暂无</Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">可上传多个文件，每个最多 20 MB。</p>
+                </> : <p className="text-xs text-muted-foreground">客户售前信息和售后目标（如：方案，目标，客户相关信息）</p>}
+                {noAttachments && <p className="text-sm text-muted-foreground">已标记暂无附件</p>}
                 <ul className="space-y-1">
                   {attachments.map((attachment) => <li className="flex items-center justify-between gap-2 text-sm" key={attachment.path}>
                     <Button type="button" variant="link" className="max-w-[85%] truncate px-0" onClick={() =>
@@ -259,8 +305,8 @@ export function DealContractSubmissionDialog({ leadId, companyName, salesperson,
               {errors.length > 0 && <p className="mr-auto max-w-sm text-sm text-muted-foreground">
                 待完善 {errors.length} 项，含{errors.slice(0, 3).join("、")}{errors.length > 3 ? "等" : ""}
               </p>}
-              <Button type="button" variant="outline" disabled={saving} onClick={() => void save(false)}>保存草稿</Button>
-              <Button type="button" disabled={saving || errors.length > 0} onClick={() => void save(true)}>确认提交</Button>
+              <Button type="button" variant="outline" disabled={saving || bonusTermsTooLong} onClick={() => void save(false)}>保存草稿</Button>
+              <Button type="button" disabled={saving || bonusTermsTooLong || errors.length > 0} onClick={() => void save(true)}>确认提交</Button>
             </DialogFooter>}
           </>
         )}

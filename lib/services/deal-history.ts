@@ -21,6 +21,7 @@ export type HistoryRecord = {
   id: string
   source_row: number
   raw_values: HistoryCell[]
+  generated_contract_number: string | null
   fields: Record<string, string>
   attachments: DealContractAttachment[]
   version: number
@@ -37,7 +38,7 @@ export async function listDealHistory() {
 export async function loadDealHistory(id: string): Promise<HistoryRecord> {
   const client = getBrowserSupabaseClient()
   const [record, access, departmentAllocation] = await Promise.all([
-    client.from("deal_history_records").select("id,source_row,raw_values,fields,attachments,version").eq("id", id).single(),
+    client.from("deal_history_records").select("id,source_row,raw_values,generated_contract_number,fields,attachments,version").eq("id", id).single(),
     client.rpc("rpc_deal_history_can_edit", { p_id: id }),
     loadDepartmentAllocationDetails("history", id).catch(() => null),
   ])
@@ -65,7 +66,7 @@ export async function saveDealHistory(row: HistoryRecord, fields: Record<string,
       : client.rpc("rpc_deal_history_save", args))
     if (error?.code === "40001") throw new Error("资料已更新，请重新打开后再补填。")
     if (error?.message?.includes("department_allocation_history_required")) {
-      throw new Error("请补齐销售必填字段并上传交接附件，再确认提交。")
+      throw new Error("请补齐销售必填字段，并上传交接附件或选择「暂无」。")
     }
     if (error) throw error
     const departmentAllocation = services ? await loadDepartmentAllocationDetails("history", row.id).catch(() => null) : row.departmentAllocation

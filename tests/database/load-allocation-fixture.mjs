@@ -1,6 +1,6 @@
 import { readdir, readFile } from "node:fs/promises"
 
-export async function loadAllocationFixture(db) {
+export async function loadAllocationFixture(db, beforeMigration) {
   await db.exec(
     "create role anon; create role authenticated; create role service_role bypassrls;" +
     "create schema auth; create schema storage;" +
@@ -38,6 +38,7 @@ export async function loadAllocationFixture(db) {
         "('test-ad5','效果营销五部',false),('test-center','效果营销中心',true),('test-brand','品牌营销部',true)," +
         "('test-seo','SEO营销部',true),('test-tech','技术部',true),('test-creative','创意部',true)")
     }
+    await beforeMigration?.(name)
     const sql = (await readFile(new URL(name, root), "utf8")).replace(/^\uFEFF/, "").replace(/create extension if not exists "pgcrypto";/i, "")
     await db.exec(sql)
   }

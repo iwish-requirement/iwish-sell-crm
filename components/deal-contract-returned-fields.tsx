@@ -1,3 +1,16 @@
+import type { ReactNode } from "react"
+
+export function DealContractReadOnlyField({ label, value, wide }: {
+  label: string
+  value?: ReactNode
+  wide?: boolean
+}) {
+  return <dl className={wide ? "min-w-0 space-y-1 sm:col-span-2" : "min-w-0 space-y-1"}>
+    <dt className="text-xs text-muted-foreground">{label}</dt>
+    <dd className="min-h-5 cursor-default whitespace-pre-wrap break-words text-sm">{value}</dd>
+  </dl>
+}
+
 export function DealContractReturnedFields({ title, fields, status }: {
   title: string
   fields: ReadonlyArray<readonly [label: string, value: string | undefined]>

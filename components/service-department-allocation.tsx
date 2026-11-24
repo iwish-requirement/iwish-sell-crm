@@ -3,6 +3,7 @@
 import { useContext, useEffect, useState } from "react"
 import { MePermissionsContext } from "@/components/app-root"
 import { DealContractSubmissionDialog } from "@/components/deal-contract-submission"
+import { DealBonusTermsValue } from "@/components/deal-bonus-terms"
 import { DepartmentHandoffResults } from "@/components/department-handoff-results"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -14,7 +15,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { downloadDealContractAttachment } from "@/lib/services/deal-contract-submissions"
 import { downloadDealHistoryAttachment } from "@/lib/services/deal-history"
 import { formatDealDate } from "@/lib/services/deal-date"
-import { DEAL_CONTRACT_FIELDS, DEAL_COOPERATION_MODES, DEAL_FINANCE_FIELDS, isDealContractFieldVisible } from "@/lib/services/deal-contract-fields"
+import { DEAL_CONTRACT_FIELDS, DEAL_COOPERATION_MODES, DEAL_FINANCE_FIELDS, NO_CONTRACT_ATTACHMENTS, isDealContractFieldVisible } from "@/lib/services/deal-contract-fields"
 import {
   departmentOperationsStatus, loadDepartmentAllocationDetails, loadDepartmentAllocationWorkspace, saveServiceDepartments, selectedAllocationServices,
   type AllocationDepartment, type AllocationDetails, type AllocationRow, type AllocationWorkspace,
@@ -60,14 +61,17 @@ export function ServiceDepartmentAllocation({ pending = false, cutoff }: { pendi
         </div> : !rows ? <p role="status" className="p-4 text-sm">正在加载…</p> :
           <Table>
             <TableHeader><TableRow>
-              <TableHead>客户全称</TableHead><TableHead>销售人员</TableHead><TableHead>状态</TableHead><TableHead className="text-right">操作</TableHead>
+              <TableHead>客户名称</TableHead><TableHead>销售人员</TableHead><TableHead>状态</TableHead><TableHead className="text-right">操作</TableHead>
             </TableRow></TableHeader>
             <TableBody>
               {rows.map(row => {
                 const assigned = row.handoffs.length > 0 && row.assignedAt === row.submitted_at
                 return <TableRow key={row.source + row.id}>
                   <TableCell>
-                    <p className="font-medium">{row.company}</p>
+                    {row.mainlandCompanyName && row.hongKongCompanyName ? <div className="space-y-1">
+                      <p className="whitespace-normal break-words font-medium"><span className="mr-2 text-xs text-muted-foreground">大陆公司</span>{row.mainlandCompanyName}</p>
+                      <p className="whitespace-normal break-words font-medium"><span className="mr-2 text-xs text-muted-foreground">香港公司</span>{row.hongKongCompanyName}</p>
+                    </div> : <p className="whitespace-normal break-words font-medium">{row.company}</p>}
                     {row.source === "history" && <p className="text-xs text-muted-foreground">历史成交</p>}
                   </TableCell>
                   <TableCell>{row.salesperson}</TableCell>
@@ -149,16 +153,23 @@ function DepartmentAllocationDialog({ row, departments, canManage, close, saved 
             <details className="rounded-md border p-3">
               <summary className="cursor-pointer text-sm font-medium">已确认合同资料</summary>
               <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+                {!data.mainlandCompanyName && !data.hongKongCompanyName && data.companyName && <div>
+                  <dt className="text-xs text-muted-foreground">原客户名称</dt>
+                  <dd className="break-words">{data.companyName}</dd>
+                </div>}
                 {DEAL_CONTRACT_FIELDS.filter(([key]) => row.source === "history" || isDealContractFieldVisible(key, data.cooperation))
-                  .map(([key, label, kind]) => data[key] && <div key={key}>
+                  .map(([key, label, kind]) => data[key] && <div key={key} className={key === "bonusTerms" ? "min-w-0 sm:col-span-2" : undefined}>
                     <dt className="text-xs text-muted-foreground">{label}</dt>
                     <dd className="whitespace-pre-wrap break-all">
-                      {kind === "date" || key === "actualPayment" ? formatDealDate(data[key]) : kind === "cooperation"
+                      {key === "bonusTerms" ? <DealBonusTermsValue text={data[key]} html={data.bonusTermsHtml} />
+                        : kind === "date" || key === "actualPayment" ? formatDealDate(data[key]) : kind === "cooperation"
                         ? DEAL_COOPERATION_MODES.find(([id]) => id === data[key])?.[1] ?? data[key] : data[key]}
                     </dd>
                   </div>)}
               </dl>
               <div className="mt-3 flex flex-wrap gap-2">
+                {!details?.attachments?.length && data.attachmentStatus === NO_CONTRACT_ATTACHMENTS &&
+                  <p className="text-sm text-muted-foreground">客户售前信息和售后目标：暂无附件</p>}
                 {details?.attachments?.map(file => <Button type="button" key={file.path} variant="outline" size="sm"
                   onClick={() => void (row.source === "history" ? downloadDealHistoryAttachment : downloadDealContractAttachment)(file)
                     .catch(() => setError("交接附件下载失败。"))}>{file.name}</Button>)}

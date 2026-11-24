@@ -3,7 +3,8 @@
 import { useState } from "react"
 import { HISTORY_COLUMNS, HISTORY_HEADERS, type HistoryColumn } from "@/lib/services/deal-history-fields"
 import { downloadDealHistoryAttachment, saveDealHistory, type HistoryRecord } from "@/lib/services/deal-history"
-import { DealContractReturnedFields } from "@/components/deal-contract-returned-fields"
+import { DealBonusTermsEditor, DealBonusTermsValue } from "@/components/deal-bonus-terms"
+import { DealContractReadOnlyField, DealContractReturnedFields } from "@/components/deal-contract-returned-fields"
 import { DepartmentHandoffResults } from "@/components/department-handoff-results"
 import { Badge } from "@/components/ui/badge"
 import { dealDateInputValue, formatDealDate } from "@/lib/services/deal-date"
@@ -13,11 +14,12 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import {
-  CONTRACT_FILE_SIZE_LIMIT, DEAL_CONTRACT_FIELDS, DEAL_COOPERATION_MODES, DEAL_CONTRACT_SERVICES,
-  NO_WEBSITE, NOT_PAID, normalizeDealWebsite,
+  CONTRACT_FILE_SIZE_LIMIT, DEAL_CONTRACT_FIELDS, DEAL_COOPERATION_MODES, DEAL_CONTRACT_SERVICES, DEAL_CURRENCIES,
+  MAX_BONUS_TERMS_HTML_LENGTH, NO_WEBSITE, NOT_PAID, NO_CONTRACT_ATTACHMENTS, isDealCurrency, normalizeDealWebsite,
 } from "@/lib/services/deal-contract-fields"
 
 const dateColumns = new Set(["B", "C", "D", "E", "F", "AO", "AQ"])
+const newRequiredFields = ["mainlandCompanyName", "hongKongCompanyName", "currency"]
 
 function original(row: HistoryRecord, key: string): string {
   const value = row.raw_values[HISTORY_COLUMNS.indexOf(key as HistoryColumn)]
@@ -26,8 +28,8 @@ function original(row: HistoryRecord, key: string): string {
 }
 
 const sections: { title: string; keys: string[] }[] = [
-  { title: "客户与签约信息", keys: ["A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","AD"] },
-  { title: "合作模式与费用", keys: ["P","spendRatio","Q","R","S","T"] },
+  { title: "客户与签约信息", keys: ["A","B","C","D","E","F","G","mainlandCompanyName","hongKongCompanyName","I","J","K","L","M","N","O","AD"] },
+  { title: "合作模式与费用", keys: ["P","currency","spendRatio","Q","R","S","T"] },
   { title: "服务内容", keys: ["U","Y","Z","AA","AB"] },
   { title: "客户需求与资料", keys: ["AC","AM"] },
 ]
@@ -57,36 +59,41 @@ function ServiceOptions({ label, saved, change }: { label: string; saved: string
 }
 
 export function HistoryContractForm({ row, close, save, allocationCutoff }: {
-  row: HistoryRecord; close: () => void; save: (updated: HistoryRecord) => void; allocationCutoff?: string | null
+  row: HistoryRecord; close: () => void; save: (updated: HistoryRecord, confirmed: boolean) => void; allocationCutoff?: string | null
 }) {
   const [changes, setChanges] = useState<Record<string, string>>({})
   const [files, setFiles] = useState<File[]>([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
   const [saved, setSaved] = useState(false)
-  const [confirmed, setConfirmed] = useState(false)
   const [services, setServices] = useState<Record<string, string[]>>(row.departmentAllocation?.data?.services ?? {})
-  const labelFor = (key: string) => key === "spendRatio" ? "消耗比例" : HISTORY_HEADERS[1][HISTORY_COLUMNS.indexOf(key as HistoryColumn)] ?? ""
+  const labelFor = (key: string) => HISTORY_HEADERS[1][HISTORY_COLUMNS.indexOf(key as HistoryColumn)]
+    ?? DEAL_CONTRACT_FIELDS.find(([name]) => name === key)?.[1] ?? ""
   const entered = (key: string) => changes[key] ?? row.fields[key] ?? ""
-  const update = (key: string, value: string) => {
-    setChanges(current => ({ ...current, [key]: value }))
+  const fixedValue = (key: string) => key === "I" && row.generated_contract_number
+    ? row.generated_contract_number : original(row, key)
+  const update = (key: string, value: string, bonusTermsHtml?: string) => {
+    setChanges(current => ({ ...current, [key]: value, ...(bonusTermsHtml === undefined ? {} : { bonusTermsHtml }) }))
     setSaved(false)
-    setConfirmed(false)
     setError("")
   }
   const cooperation = original(row, "P") || entered("P")
   const isRatio = cooperation === "消耗比例服务费"
   const isBonus = cooperation === "基础服务费+激励奖金"
+  const bonusTermsTooLong = isBonus && entered("bonusTermsHtml").length > MAX_BONUS_TERMS_HTML_LENGTH
 
-  const missing = ["B","C","D","E","F","I","J","K","L","M","N","O","P","Q","R","AC","AD",
+  const missing = [...newRequiredFields, "B","C","D","E","F","I","J","K","L","M","N","O","P","Q","R","AC","AD",
     ...(isRatio ? ["spendRatio"] : []), ...(isBonus ? ["S","T"] : []),
-  ].filter(key => !(original(row, key) || entered(key) || (key === "D" ? original(row, "AQ") : "")).trim())
+  ].filter(key => key === "currency" ? !isDealCurrency(entered(key))
+    : !(fixedValue(key) || entered(key) || (key === "D" ? original(row, "AQ") : "")).trim())
   const incompleteServices = !Object.keys(services).length || DEAL_CONTRACT_SERVICES.some(group =>
     Object.hasOwn(services, group.key) && group.options.length > 0 && !services[group.key].length)
-  const canConfirm = !missing.length && !incompleteServices && row.attachments.length + files.length > 0
+  const attachmentCount = row.attachments.length + files.length
+  const noAttachments = !attachmentCount && entered("attachmentStatus") === NO_CONTRACT_ATTACHMENTS
+  const canConfirm = !missing.length && !incompleteServices && (attachmentCount > 0 || noAttachments)
 
   async function saveDraft(confirm = false) {
-    if (!row.canEdit || (confirm && !canConfirm)) return
+    if (!row.canEdit || bonusTermsTooLong || (confirm && !canConfirm)) return
     const fields = { ...changes }
     if (fields.D?.trim()) fields.D = dealDateInputValue(fields.D) || fields.D
     if (fields.J?.trim()) {
@@ -99,15 +106,14 @@ export function HistoryContractForm({ row, close, save, allocationCutoff }: {
       return
     }
     if (!isRatio) delete fields.spendRatio
-    if (!isBonus) { delete fields.S; delete fields.T }
+    if (!isBonus) { delete fields.S; delete fields.T; delete fields.bonusTermsHtml }
     setSaving(true)
     setError("")
     try {
-      save(await saveDealHistory(row, fields, files, confirm ? services : undefined))
+      save(await saveDealHistory(row, fields, files, confirm ? services : undefined), confirm)
       setChanges({})
       setFiles([])
       setSaved(true)
-      setConfirmed(confirm)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "保存失败，请重试。")
     } finally {
@@ -118,24 +124,31 @@ export function HistoryContractForm({ row, close, save, allocationCutoff }: {
   function renderField(key: string, locked = false) {
     const label = labelFor(key)
     if (!label || (key === "spendRatio" && !isRatio) || (["S", "T"].includes(key) && !isBonus && !original(row, key))) return null
-    const old = key === "U" ? ["U","V","W","X"].map(column => original(row, column)).filter(Boolean).join("\n") : original(row, key)
+    const old = key === "U" ? ["U","V","W","X"].map(column => original(row, column)).filter(Boolean).join("\n") : fixedValue(key)
     const kind = DEAL_CONTRACT_FIELDS.find(([, name]) => name === label)?.[2]
     const id = `history-${row.source_row}-${key}`
     if (key === "AM") {
       return <div key={key} className="space-y-2 sm:col-span-2">
-        <Label htmlFor={id}>{label}</Label>
+        {row.canEdit ? <Label htmlFor={id}>{label}</Label> : <p className="text-xs text-muted-foreground">{label}</p>}
         {old && <p className="whitespace-pre-wrap break-all text-sm">{old}</p>}
         {row.canEdit && <>
-        <Input id={id} type="file" multiple disabled={saving} onChange={event => {
-          const added = Array.from(event.currentTarget.files ?? [])
-          const valid = added.filter(file => file.size > 0 && file.size <= CONTRACT_FILE_SIZE_LIMIT)
-          if (valid.length !== added.length) setError("附件须有内容，单个文件不超过 20 MB。")
-          setFiles(previous => [...previous, ...valid])
-          setSaved(false)
-          event.currentTarget.value = ""
-        }} />
+        <div className="flex items-center gap-2">
+          <Input id={id} className="min-w-0 flex-1" type="file" multiple disabled={saving} onChange={event => {
+            const added = Array.from(event.currentTarget.files ?? [])
+            const valid = added.filter(file => file.size > 0 && file.size <= CONTRACT_FILE_SIZE_LIMIT)
+            if (valid.length && noAttachments) update("attachmentStatus", "")
+            if (valid.length !== added.length) setError("附件须有内容，单个文件不超过 20 MB。")
+            setFiles(previous => [...previous, ...valid])
+            setSaved(false)
+            event.currentTarget.value = ""
+          }} />
+          <Button type="button" variant={noAttachments ? "secondary" : "outline"} size="sm"
+            aria-label="暂无附件" aria-pressed={noAttachments} disabled={saving || attachmentCount > 0}
+            onClick={() => update("attachmentStatus", noAttachments ? "" : NO_CONTRACT_ATTACHMENTS)}>暂无</Button>
+        </div>
         <p className="text-xs text-muted-foreground">可上传多个文件，每个最多 20 MB。</p>
         </>}
+        {noAttachments && <p className="text-sm text-muted-foreground">已标记暂无附件</p>}
         <ul className="space-y-1 text-sm">
           {row.attachments.map(file => <li key={file.path}>
             <Button type="button" variant="link" className="max-w-full justify-start truncate px-0"
@@ -153,15 +166,29 @@ export function HistoryContractForm({ row, close, save, allocationCutoff }: {
       return <ServiceOptions key={key} label={label} saved={entered(key)} change={value => update(key, value)} />
     }
     const value = entered(key)
+    if (key === "T") {
+      const html = old ? undefined : entered("bonusTermsHtml")
+      if (old || locked) return <DealContractReadOnlyField key={key} label={label} wide
+        value={<DealBonusTermsValue text={old || value} html={html} />} />
+      return <div key={key} className="space-y-2 sm:col-span-2">
+        <Label id={id + "-label"}>{label}</Label>
+        <DealBonusTermsEditor id={id} text={value} html={html} onChange={(text, formatted) => update(key, text, formatted)} />
+      </div>
+    }
     const long = kind === "multiline" || old.includes("\n") || old.length > 65
+    if (old || locked) {
+      const display = old || (dateColumns.has(key) && value ? formatDealDate(value) : value)
+      return <DealContractReadOnlyField key={key} label={label} value={display} wide={long} />
+    }
     let control
-    if (old || locked) control = long
-      ? <Textarea id={id} readOnly value={old || value} />
-      : <Input id={id} readOnly value={old || value} />
-    else if (kind === "cooperation") control = (
-      <select id={id} className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={value} onChange={e => update(key, e.currentTarget.value)}>
+    if (kind === "cooperation" || kind === "currency") control = (
+      <select id={id} className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+        value={kind === "currency" && !isDealCurrency(value) ? "" : value}
+        aria-required={kind === "currency" || undefined} onChange={e => update(key, e.currentTarget.value)}>
         <option value="">请选择</option>
-        {DEAL_COOPERATION_MODES.map(([option, name]) => <option key={option} value={name}>{name}</option>)}
+        {kind === "currency"
+          ? DEAL_CURRENCIES.map(currency => <option key={currency} value={currency}>{currency}</option>)
+          : DEAL_COOPERATION_MODES.map(([option, name]) => <option key={option} value={name}>{name}</option>)}
       </select>
     )
     else if (kind === "website") control = <div className="flex flex-wrap items-center gap-2">
@@ -173,12 +200,12 @@ export function HistoryContractForm({ row, close, save, allocationCutoff }: {
     else control = <div className="flex items-center gap-2">
       <Input id={id} type={kind === "date" || kind === "email" || kind === "tel" ? kind : "text"}
         inputMode={kind === "amount" || kind === "percentage" ? "decimal" : undefined}
-        value={value} onChange={e => update(key, e.currentTarget.value)} />
+        value={value} aria-required={newRequiredFields.includes(key) || undefined} onChange={e => update(key, e.currentTarget.value)} />
       {key === "D" && <Button type="button" variant="outline" size="sm" onClick={() => update(key, NOT_PAID)}>未到账</Button>}
       {kind === "percentage" && <span className="text-sm text-muted-foreground">%</span>}
     </div>
     return <div key={key} className={long ? "space-y-2 sm:col-span-2" : "space-y-2"}>
-      <Label htmlFor={id}>{label}</Label>
+      <Label htmlFor={id}>{label}{newRequiredFields.includes(key) && <span className="text-destructive">*</span>}</Label>
       {control}
     </div>
   }
@@ -190,7 +217,7 @@ export function HistoryContractForm({ row, close, save, allocationCutoff }: {
     <DialogContent className="flex max-h-[90dvh] flex-col sm:max-w-3xl">
       <DialogHeader>
         <DialogTitle>合同资料补充</DialogTitle>
-        <DialogDescription>{original(row, "H")}</DialogDescription>
+          <DialogDescription>{original(row, "H")}</DialogDescription>
         {allocationCutoff && row.departmentAllocation?.submitted_at &&
           Date.parse(row.departmentAllocation.submitted_at) >= Date.parse(allocationCutoff) &&
           <Badge className="w-fit">已确认提交</Badge>}
@@ -200,7 +227,7 @@ export function HistoryContractForm({ row, close, save, allocationCutoff }: {
           {sections.map(({ title, keys }) => <section key={title} className="space-y-3 border-t pt-4 first:border-t-0 first:pt-0">
             <h3 className="font-semibold">{title}</h3>
             <div className="grid gap-4 sm:grid-cols-2">{keys.map(key => renderField(key,
-              !row.canEdit || ["A", "G", "H"].includes(key) || Boolean(allocationCutoff && ["U","Y","Z","AA","AB"].includes(key))))}</div>
+              !row.canEdit || ["A", "G"].includes(key) || Boolean(allocationCutoff && ["U","Y","Z","AA","AB"].includes(key))))}</div>
           </section>)}
           {allocationCutoff && row.canEdit && <section className="space-y-3 border-t pt-4">
             <h3 className="font-semibold">确认合作服务</h3>
@@ -242,16 +269,16 @@ export function HistoryContractForm({ row, close, save, allocationCutoff }: {
       <DialogFooter className="shrink-0 border-t pt-3 sm:items-center">
         <div className="mr-auto text-sm">
           {error && <p role="alert" className="text-destructive">{error}</p>}
-          {saved && <p role="status">{confirmed ? "已确认提交至分配中心。" : "补充资料已保存。"}</p>}
+          {saved && <p role="status">补充资料已保存。</p>}
           {allocationCutoff && row.canEdit && missing.length > 0 && <p className="text-muted-foreground">
             待补 {missing.slice(0, 3).map(labelFor).join("、")}{missing.length > 3 ? "等" : ""}。
           </p>}
         </div>
         <Button type="button" variant="outline" disabled={saving} onClick={close}>关闭</Button>
-        {row.canEdit && <Button type="button" disabled={saving || (!Object.keys(changes).length && !files.length)} onClick={() => void saveDraft()}>
+        {row.canEdit && <Button type="button" disabled={saving || bonusTermsTooLong || (!Object.keys(changes).length && !files.length)} onClick={() => void saveDraft()}>
           {saving ? "正在保存…" : "保存补充"}
         </Button>}
-        {allocationCutoff && row.canEdit && <Button type="button" disabled={saving || !canConfirm} onClick={() => void saveDraft(true)}>
+        {allocationCutoff && row.canEdit && <Button type="button" disabled={saving || bonusTermsTooLong || !canConfirm} onClick={() => void saveDraft(true)}>
           确认提交
         </Button>}
       </DialogFooter>

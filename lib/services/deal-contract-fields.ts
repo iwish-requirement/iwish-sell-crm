@@ -18,14 +18,21 @@ export const DEAL_COOPERATION_MODES = [
   ["base_bonus", "基础服务费+激励奖金"],
 ] as const
 
-export const DEAL_CONTRACT_FIELDS = [
+export const DEAL_CURRENCIES = ["CNY", "USD"] as const
+
+export function isDealCurrency(value: string | undefined): value is (typeof DEAL_CURRENCIES)[number] {
+  return DEAL_CURRENCIES.some(currency => currency === value)
+}
+
+export const DEAL_CONTRACT_IDENTITY_FIELDS = [
   ["signedOn", "签订合同时间", "date"],
   ["expectedPaymentOn", "预计到款时间", "date"],
   ["actualPayment", "实际到款时间", "text"],
   ["handoffOn", "服务对接时间", "date"],
   ["serviceStartsOn", "合同服务开始计算日期", "date"],
   ["salesperson", "销售人员", "text"],
-  ["companyName", "客户全称", "text"],
+  ["mainlandCompanyName", "大陆公司", "text"],
+  ["hongKongCompanyName", "香港公司", "text"],
   ["contractNumber", "合同编号", "text"],
   ["website", "网址", "website"],
   ["category", "品类", "text"],
@@ -33,6 +40,11 @@ export const DEAL_CONTRACT_FIELDS = [
   ["contactTitle", "客户联系人职位", "text"],
   ["phone", "客户联系人电话", "tel"],
   ["email", "客户联系人邮箱", "email"],
+  ["address", "公司地址", "text"],
+] as const
+
+export const DEAL_CONTRACT_FIELDS = [
+  ...DEAL_CONTRACT_IDENTITY_FIELDS,
   ["cooperation", "合作模式", "cooperation"],
   ["spendRatio", "消耗比例", "percentage"],
   ["baseFee", "合同基础服务费总金额", "amount"],
@@ -40,8 +52,7 @@ export const DEAL_CONTRACT_FIELDS = [
   ["bonusAmount", "激励奖金的金额", "amount"],
   ["bonusTerms", "激励奖金的条件", "multiline"],
   ["needs", "客户初期目标及主要需求", "multiline"],
-  ["address", "公司地址", "text"],
-  ["currency", "币种", "text"],
+  ["currency", "币种", "currency"],
 ] as const
 
 export const DEAL_FINANCE_FIELDS = [
@@ -63,9 +74,15 @@ export const DEAL_ALLOCATION_FIELDS = [
 
 export const NO_WEBSITE = "暂无网站"
 export const NOT_PAID = "未到账"
+export const NO_CONTRACT_ATTACHMENTS = "none"
+export const MAX_BONUS_TERMS_HTML_LENGTH = 20_000
 export const CONTRACT_FILE_SIZE_LIMIT = 20 * 1024 * 1024
 export type DealContractField = (typeof DEAL_CONTRACT_FIELDS)[number][0]
-export type DealContractData = Partial<Record<DealContractField, string>> & { services: Record<string, string[]> }
+export type DealContractData = Partial<Record<DealContractField | "companyName", string>> & {
+  services: Record<string, string[]>
+  attachmentStatus?: typeof NO_CONTRACT_ATTACHMENTS | ""
+  bonusTermsHtml?: string
+}
 export type DealContractFinance = Partial<Record<DealContractField | (typeof DEAL_FINANCE_FIELDS)[number][0], string>>
 export type DealContractAllocation = Partial<Record<(typeof DEAL_ALLOCATION_FIELDS)[number][0], string>>
 
@@ -107,13 +124,13 @@ export function dealContractSubmissionErrors(data: DealContractData, attachmentC
     if (kind === "email" && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value)) errors.push(label)
     if (kind === "website" && !normalizeDealWebsite(value)) errors.push(label)
     if (kind === "cooperation" && !DEAL_COOPERATION_MODES.some(([key]) => key === value)) errors.push(label)
-    if (key === "currency" && !/^[A-Z]{3}$/.test(value)) errors.push(label)
+    if (kind === "currency" && !isDealCurrency(value)) errors.push(label)
   }
   if (Object.keys(data.services).length === 0) errors.push("服务内容")
   for (const group of DEAL_CONTRACT_SERVICES) {
     const selected = data.services[group.key]
     if (selected && group.options.length && selected.length === 0) errors.push(`${group.label}小类`)
   }
-  if (!attachmentCount) errors.push("客户售前信息和售后目标附件")
+  if (!attachmentCount && data.attachmentStatus !== NO_CONTRACT_ATTACHMENTS) errors.push("客户售前信息和售后目标附件")
   return errors
 }

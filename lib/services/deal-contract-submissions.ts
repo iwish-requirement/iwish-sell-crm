@@ -1,6 +1,6 @@
 import { getBrowserSupabaseClient } from "@/lib/supabase/client"
 import { fetchContractByLeadId, fetchContractPayments } from "@/lib/services/contracts"
-import { DEAL_CONTRACT_FIELDS, normalizeDealWebsite, type DealContractAllocation, type DealContractData, type DealContractFinance } from "@/lib/services/deal-contract-fields"
+import { DEAL_CONTRACT_FIELDS, isDealCurrency, normalizeDealWebsite, type DealContractAllocation, type DealContractData, type DealContractFinance } from "@/lib/services/deal-contract-fields"
 import { dealDateInputValue } from "@/lib/services/deal-date"
 import { loadDepartmentAllocationDetails } from "@/lib/services/department-allocation"
 
@@ -48,6 +48,8 @@ export async function loadDealContractSubmission(leadId: string, salesperson: st
   const record = submission.data as Submission | null
   const data: DealContractData = {
     services: record?.draft.services ?? {},
+    attachmentStatus: record?.draft.attachmentStatus,
+    bonusTermsHtml: record?.draft.bonusTermsHtml,
     signedOn: dealDateInputValue(contract?.signedAt),
     serviceStartsOn: dealDateInputValue(contract?.startDate),
     salesperson: salesperson ?? "",
@@ -59,13 +61,14 @@ export async function loadDealContractSubmission(leadId: string, salesperson: st
     phone: lead.data.customer_phone ?? "",
     email: lead.data.customer_email ?? "",
     address: lead.data.address ?? "",
-    currency: contract?.currency ?? "CNY",
+    currency: contract?.currency ?? "",
     actualPayment: dealDateInputValue(firstReceipt?.paidAt),
   }
   for (const [key] of DEAL_CONTRACT_FIELDS) {
     const draftValue = record?.draft[key]
     if (draftValue !== undefined) data[key] = draftValue
   }
+  if (access.data === true && !isDealCurrency(data.currency)) data.currency = ""
   return {
     record,
     data,

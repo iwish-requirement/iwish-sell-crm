@@ -122,4 +122,47 @@
   body {
     @apply bg-background text-foreground;
   }
+  :where(
+    a:any-link, area:any-link, button, select, summary,
+    input:is([type="button"], [type="reset"], [type="submit"], [type="checkbox"], [type="radio"], [type="file"]),
+    [role="button"], [role="link"], [role="tab"], [role="option"], [role="checkbox"],
+    [role="radio"], [role="switch"], [role^="menuitem"],
+    label:has(input:is([type="checkbox"], [type="radio"]):enabled, button:is([role="checkbox"], [role="radio"], [role="switch"]):enabled)
+  ):not(:disabled, [aria-disabled="true"], [data-disabled]:not([data-disabled="false"])) {
+    cursor: pointer;
+  }
+  input:enabled::file-selector-button {
+    cursor: pointer;
+  }
+  input:enabled:not([readonly])::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+  }
+  :where(button, input, select, textarea, [role]):is(:disabled, [aria-disabled="true"]) {
+    cursor: not-allowed;
+  }
 }
+
+.deal-bonus-terms table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-block: 0.25rem;
+}
+
+.deal-bonus-terms :is(th, td) {
+  min-width: 3rem;
+  border: 1px solid var(--border);
+  padding: 0.35rem 0.5rem;
+  vertical-align: top;
+}
+
+.deal-bonus-terms th {
+  background: var(--muted);
+  text-align: start;
+}
+
+.deal-bonus-terms :is(ul, ol) {
+  padding-inline-start: 1.5rem;
+}
+
+.deal-bonus-terms ul { list-style: disc; }
+.deal-bonus-terms ol { list-style: decimal; }

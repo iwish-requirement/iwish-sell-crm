@@ -766,13 +766,13 @@ export function LeadGradesAndSourcesSettingsCard() {
                     {channels.map((row, idx) => (
                       <TableRow
                         key={`${row.key}-${idx}`}
-                        className={selectedChannelKey === row.key ? "bg-primary/5" : ""}
+                        className={`cursor-pointer ${selectedChannelKey === row.key ? "bg-primary/5" : ""}`}
                         onClick={() => setSelectedChannelKey(row.key)}
                       >
                         <TableCell className="font-mono text-sm">{row.key}</TableCell>
                         <TableCell className="font-medium">{row.label}</TableCell>
                         <TableCell className="text-center text-sm text-muted-foreground">{row.children?.length ?? 0}</TableCell>
-                        <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                        <TableCell className="cursor-default text-right" onClick={(e) => e.stopPropagation()}>
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                               <Button variant="ghost" size="icon-sm" aria-label="操作">
