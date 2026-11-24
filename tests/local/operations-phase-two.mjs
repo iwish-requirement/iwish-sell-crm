@@ -91,9 +91,23 @@ async function seed() {
   await dealerCall(admin, tx => tx.query("select public.rpc_department_allocation_save('lead',$1,$2,0,$3)",
     [untouched,cutoff,asJson({ "performance/google":[departments["test-ad2"]], "performance/meta":[departments["test-ad2"]] })]))
   assert.equal(await scalar(db, "select count(*)::int as value from crm_allocation.operations_deliveries"), 0)
-  await db.exec("update crm_allocation.operations_release set enabled=true where singleton")
+  await db.query("update crm_allocation.operations_release set pilot_lead_id=$1 where singleton", [lead])
+  const allowed = (id, submitted) => scalar(db,"select crm_allocation.operations_in_scope($1,$2) as value",[id,submitted])
+  assert.equal(await allowed(lead,cutoff),true)
+  assert.equal(await allowed(untouched,cutoff),false)
+  assert.equal(await allowed(null,cutoff),false)
+  await db.exec("begin")
+  try {
+    await db.exec("update crm_allocation.operations_release set enabled=true, pilot_lead_id=null, enabled_after=now() where singleton")
+    assert.equal(await allowed(untouched,cutoff),false)
+    const later = await scalar(db,"select now()+interval '1 minute' as value")
+    assert.equal(await allowed(lead,later),true)
+    assert.equal(await allowed(null,later),false)
+  } finally {
+    await db.exec("rollback")
+  }
 
-  // A historical handoff can use a Hong Kong name and an attachment, without treating the old worksheet as finance confirmation.
+  // History retains its assignment and is outside the production pilot and automatic cohort.
   await db.exec("begin")
   try {
     const history = uuid(14)
@@ -114,14 +128,8 @@ async function seed() {
       history,submittedAt,asJson({ "performance/google":[departments["test-ad2"]], "performance/meta":[departments["test-ad2"]] }),
     ])
     await db.exec("reset role; set constraints all immediate")
-    const payload = await scalar(db, "select payload as value from crm_allocation.operations_deliveries")
-    assert.equal(payload.source,"history")
-    assert.equal(payload.company,form.hongKongCompanyName)
-    assert.equal(payload.mainlandCompanyName,undefined)
-    assert.equal(payload.contractCurrency,"USD")
-    assert.deepEqual(payload.attachments,[historicalFile])
-    assert.equal(payload.attachmentStatus,undefined)
-    assert.deepEqual(payload.finance,{})
+    assert.equal(await scalar(db, "select count(*)::int as value from crm_allocation.operations_deliveries"),0)
+    assert.equal(await scalar(db, "select count(*)::int as value from crm_allocation.assignments where history_id is not null"),1)
   } finally {
     await db.exec("rollback")
   }

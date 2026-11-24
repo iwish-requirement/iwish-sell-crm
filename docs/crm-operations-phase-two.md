@@ -18,7 +18,8 @@ v1.1.0 交接快照使用当前 CRM 的有效公司名称规则，按需发送�
 
 部署阶段的配置包括以下内容。
 
-- `CRM_OPERATIONS_ENABLED=true` 开启服务端路由。数据库 `crm_allocation.operations_release.enabled` 按环境独立开启。新迁移默认关闭，已有分配不会批量入队。
+- `CRM_OPERATIONS_ENABLED=true` 开启服务端路由。数据库发布状态默认关闭。试单时在 `crm_allocation.operations_release` 设置单笔虚构线索的 `pilot_lead_id`，全局 `enabled` 保持关闭。新任务入队、出队、回传和补发均校验同一个成交范围。
+- 首单验收后，可以清空 `pilot_lead_id`，设置正式起算时间 `enabled_after`，再开启 `enabled`。自动送单范围是起算后提交并完成分配的线索成交。历史成交和起算前资料的补发范围单独确认。
 - `CRM_OPERATIONS_BASE_URL` 配置运营系统 HTTPS 地址。 `CRM_OPERATIONS_INTAKE_TOKEN` 用于 CRM 发起送单，`CRM_OPERATIONS_CALLBACK_TOKEN` 用于接收人员回传，`CRM_OPERATIONS_JOB_TOKEN` 用于调用调度接口。
-- 环境调度器每分钟用专用 Bearer 凭据调用 `POST /api/jobs/operations-handoffs`。按需检查失败原因后调用 `POST /api/jobs/operations-handoffs?retry=<handoff-id>`。联调完成和试单通过后再配置生产调度。
+- Cloudflare 每分钟通过 Worker 服务绑定调用受保护的任务路由 `POST /api/jobs/operations-handoffs`。按需检查失败原因后调用 `POST /api/jobs/operations-handoffs?retry=<handoff-id>`。
 - 单独回退第二批时停止调度，将服务端开关关掉，并执行 [数据库回退](../supabase/rollbacks/crm_operations_phase_two.sql)。队列、回执和人员记录保留，第一批的合同确认及部门分配流程继续使用。暂停期间对已入队交接的改派会记录最新快照，恢复前先核对待发范围。

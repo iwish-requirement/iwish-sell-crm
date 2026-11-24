@@ -1,12 +1,15 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "main": ".open-next/worker.js",
+  "main": "cloudflare-worker.mjs",
   "name": "iwish-sell-crm",
   "compatibility_date": "2024-09-23",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   // Cloudflare for SaaS via iwishapp.cn. Production DNS: sell.iwishweb.com CNAME customers.iwishapp.cn
   // Manage the exact sell.iwishweb.com/* route in the Cloudflare dashboard.
   "workers_dev": false,
+  "triggers": {
+    "crons": ["* * * * *"]
+  },
   "vars": {
     "APP_PUBLIC_URL": "https://sell.iwishweb.com",
     "NEXT_PUBLIC_SYSTEM_KEY": "crm",

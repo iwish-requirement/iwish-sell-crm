@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { existsSync } from "node:fs"
+import { readFile } from "node:fs/promises"
 import { setTimeout } from "node:timers/promises"
 import { chromium, expect as baseExpect } from "@playwright/test"
 
@@ -155,7 +156,7 @@ export async function verifyLocalOperations({
     assert.equal(jobs.get(shared.body.id).workOrderId,shared.workOrderId)
     assert.equal((await sendStaffing(shared,true)).status,409)
     assert.ok((await readDetails(lead,sales)).handoffs.every(item => !item.staffing))
-    await db.exec("update crm_allocation.operations_release set enabled=false")
+    await db.exec(await readFile(new URL("../../supabase/rollbacks/crm_operations_phase_two.sql",import.meta.url),"utf8"))
     const dbOff = await sendStaffing(jobs.get(shared.body.id),false)
     assert.equal(dbOff.status,503)
     assert.equal((await dbOff.json()).error,"OPS_INTEGRATION_DISABLED")
