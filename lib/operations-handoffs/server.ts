@@ -95,8 +95,7 @@ async function deliver({ payload }: Delivery, { url, token }: IntakeConfiguratio
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(8000),
-      redirect: "error",
-      cache: "no-store",
+      redirect: "manual",
     })
   } catch {
     return { workOrderId: null, error: "INTAKE_UNREACHABLE", retry: true }
