@@ -21,11 +21,11 @@ const uuid = n => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`
 const [admin, sales, other, lead, untouched, outsideScope] = [1, 2, 3, 11, 12, 13].map(uuid)
 const salesName = "演示销售"
 const company = "第二批验收演示客户"
-const file = { path: `${lead}/${uuid(90)}`, name: "演示交接资料.txt" }
 const form = {
   signedOn: "2026-11-19", expectedPaymentOn: "2026-11-25", actualPayment: "未到账",
   handoffOn: "2026-11-22", serviceStartsOn: "2026-11-26", salesperson: salesName,
   companyName: company, contractNumber: "OPS-DEMO-2", website: "https://example.com",
+  mainlandCompanyName: company + "（大陆）", hongKongCompanyName: "香港演示签约公司", attachmentStatus: "none",
   category: "演示品类", contactName: "演示联系人", contactTitle: "采购", phone: "2025550147",
   email: "test@example.com", address: "演示地址", cooperation: "fixed_quarter", baseFee: "0",
   serviceFees: "Google 0 元，Meta 0 元", needs: "演示部门交接与换人", currency: "CNY",
@@ -48,12 +48,13 @@ const rpcArgs = {
   rpc_deal_contract_submission_can_edit: ["p_lead_id"],
   rpc_deal_contract_allocation_result: ["p_lead_id"],
   rpc_deal_contract_submission_save: ["p_lead_id", "p_data", "p_attachments", "p_version", "p_confirm"],
+  rpc_deal_contract_submission_confirm_finance: ["p_lead_id", "p_values"],
   rpc_operations_handoffs_claim: ["p_limit"],
   rpc_operations_handoff_finish: ["p_handoff_id", "p_lease", "p_work_order_id", "p_error", "p_retry"],
   rpc_operations_staffing_accept: ["p_handoff_id", "p_department_id", "p_body"],
   rpc_operations_handoff_retry: ["p_handoff_id"],
 }
-const browserRpc = new Set(Object.keys(rpcArgs).filter(name => !name.startsWith("rpc_operations_")))
+const browserRpc = new Set(Object.keys(rpcArgs).filter(name => !name.startsWith("rpc_operations_") && name !== "rpc_deal_contract_submission_confirm_finance"))
 const scheduleToken = randomUUID()
 const staffingToken = randomUUID()
 const intakeToken = randomUUID()
@@ -82,14 +83,48 @@ async function seed() {
     .map(row => [row.feishu_department_id, row.id]))
   await db.exec(sql)
   const cutoff = await scalar(db, "select required_after as value from crm_allocation.release")
-  await db.query("insert into storage.objects(bucket_id,name,owner_id) values ('deal-contract-materials',$1,$2)", [file.path,sales])
-  await db.query("insert into public.deal_contract_submissions(lead_id,draft,draft_attachments) values ($1,$2,$3)", [lead,asJson(form),asJson([file])])
+  await db.query("insert into public.deal_contract_submissions(lead_id,draft) values ($1,$2)", [lead,asJson(form)])
+  await db.exec("insert into public.role_permissions(role_id,permission_key,effect,scope_type) " +
+    "select id,'contracts.finance.confirm','allow','org' from public.roles where name='Admin' on conflict do nothing")
   await db.query("insert into public.deal_contract_submissions(lead_id,draft,submitted,submitted_at) values ($1,$2,$2,$3)",
-    [untouched,asJson({ ...form, companyName: "第一批已分配演示客户" }),cutoff])
+    [untouched,asJson({ ...form, companyName: "第一批已分配演示客户", mainlandCompanyName:undefined, hongKongCompanyName:undefined }),cutoff])
   await dealerCall(admin, tx => tx.query("select public.rpc_department_allocation_save('lead',$1,$2,0,$3)",
     [untouched,cutoff,asJson({ "performance/google":[departments["test-ad2"]], "performance/meta":[departments["test-ad2"]] })]))
   assert.equal(await scalar(db, "select count(*)::int as value from crm_allocation.operations_deliveries"), 0)
   await db.exec("update crm_allocation.operations_release set enabled=true where singleton")
+
+  // A historical handoff can use a Hong Kong name and an attachment, without treating the old worksheet as finance confirmation.
+  await db.exec("begin")
+  try {
+    const history = uuid(14)
+    const raw = Array(44).fill(null)
+    raw[7] = "旧表演示客户"
+    const historicalFile = { path: `${history}/${uuid(90)}`, name: "历史演示材料.txt" }
+    await db.exec("insert into public.deal_history_batches(id,source_sha,expected_count,published_at) values ('ops-test',repeat('d',64),1,now())")
+    await db.query("insert into public.deal_history_records(id,batch_id,source_row,owner_id,raw_values,source_types) " +
+      "values ($1,'ops-test',20,$2,$3,$4)", [history,sales,asJson(raw),asJson(Array(44).fill(null))])
+    const submittedAt = await scalar(db, "insert into crm_allocation.history_submissions(history_id,data,attachments,finance,submitted_at,submitted_by) " +
+      "values ($1,$2,$3,$4,clock_timestamp(),$5) returning submitted_at as value", [
+      history,asJson({ ...form, mainlandCompanyName:"暂无", currency:"USD", attachmentStatus:undefined }),
+      asJson([historicalFile]),asJson({ legalName:"旧表签署主体",receivedOn:"2026-11-20",receivedAmount:"500" }),sales,
+    ])
+    await db.query("select set_config('request.jwt.claim.sub',$1,true)",[admin])
+    await db.exec("set local role authenticated")
+    await db.query("select public.rpc_department_allocation_save('history',$1,$2,0,$3)", [
+      history,submittedAt,asJson({ "performance/google":[departments["test-ad2"]], "performance/meta":[departments["test-ad2"]] }),
+    ])
+    await db.exec("reset role; set constraints all immediate")
+    const payload = await scalar(db, "select payload as value from crm_allocation.operations_deliveries")
+    assert.equal(payload.source,"history")
+    assert.equal(payload.company,form.hongKongCompanyName)
+    assert.equal(payload.mainlandCompanyName,undefined)
+    assert.equal(payload.contractCurrency,"USD")
+    assert.deepEqual(payload.attachments,[historicalFile])
+    assert.equal(payload.attachmentStatus,undefined)
+    assert.deepEqual(payload.finance,{})
+  } finally {
+    await db.exec("rollback")
+  }
 }
 
 async function setupApp() {

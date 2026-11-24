@@ -81,7 +81,13 @@ export async function verifyLocalOperations({
     assert.deepEqual(retried[0],retried[1])
     assert.equal(received[0].payload.payment,"未到账")
     assert.deepEqual(received[0].payload.finance,{})
-    assert.equal(received[0].payload.attachments[0].name,"演示交接资料.txt")
+    assert.equal(received[0].payload.source,"lead")
+    assert.equal(received[0].payload.mainlandCompanyName,company + "（大陆）")
+    assert.equal(received[0].payload.hongKongCompanyName,"香港演示签约公司")
+    assert.equal(received[0].payload.company,company + "（大陆） / 香港演示签约公司")
+    assert.equal(received[0].payload.contractCurrency,"CNY")
+    assert.deepEqual(received[0].payload.attachments,[])
+    assert.equal(received[0].payload.attachmentStatus,"none")
     assert.equal((await readDetails(untouched,admin)).handoffs[0].delivery,undefined)
     const shared = [...jobs.values()].find(job => job.body.services.length === 2)
     assert.equal(shared.body.department.id, departments["test-ad3"])
@@ -124,11 +130,20 @@ export async function verifyLocalOperations({
     await deal.bringToFront()
     await expect(form.getByText("演示接任负责人", { exact:true })).toBeVisible()
 
-    await db.query("update public.deal_contract_submissions set finance=$2 where lead_id=$1",
-      [lead, JSON.stringify({ legalName:"演示签署主体", receivedOn:"2026-11-20", receivedAmount:"12000", currency:"CNY", actualPayment:"2026-11-20" })])
-    await waitFor(readDeliveries, rows => rows.every(item => item.state === "received" && Number(item.version) === 2), "Finance update did not reach original work orders")
+    await rpc("rpc_deal_contract_submission_confirm_finance",{ p_lead_id:lead,p_values:{ legalName:"演示签署主体" } },admin)
+    await waitFor(readDeliveries, rows => rows.every(item => item.state === "received" && Number(item.version) === 2), "Signing entity did not reach original work orders")
+    assert.deepEqual(jobs.get(shared.body.id).body.finance,{ legalName:"演示签署主体" })
+    assert.equal(jobs.get(shared.body.id).body.payment,"未到账")
+
+    await rpc("rpc_deal_contract_submission_confirm_finance",{ p_lead_id:lead,p_values:{
+      receivedOn:"2026-11-20",receivedAmount:"12000",currency:"USD",
+    } },admin)
+    await waitFor(readDeliveries, rows => rows.every(item => item.state === "received" && Number(item.version) === 3), "Finance update did not reach original work orders")
     assert.equal(jobs.get(shared.body.id).workOrderId,shared.workOrderId)
     assert.equal(jobs.get(shared.body.id).body.finance.receivedAmount,"12000")
+    assert.equal(jobs.get(shared.body.id).body.finance.currency,"USD")
+    assert.equal(jobs.get(shared.body.id).body.contractCurrency,"CNY")
+    assert.equal(jobs.get(shared.body.id).body.scopeVersion,shared.body.scopeVersion)
     assert.ok((await readDetails(lead,sales)).handoffs.some(item => item.staffing?.projectLead.name === "演示接任负责人"))
 
     await allocation.bringToFront()
