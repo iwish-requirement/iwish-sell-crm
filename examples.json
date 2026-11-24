@@ -1,12 +1,12 @@
 {
   "handoff": {
-    "id": "demo-stellar-home:ad2",
+    "id": "00000000-0000-4000-8000-000000000101",
     "version": 1,
     "scopeVersion": 1,
     "active": true,
-    "dealId": "demo-stellar-home",
+    "dealId": "00000000-0000-4000-8000-000000000201",
     "department": {
-      "id": "ad2",
+      "id": "00000000-0000-4000-8000-000000000301",
       "name": "效果营销二部"
     },
     "services": [
@@ -21,26 +21,30 @@
         "group": "效果营销服务"
       }
     ],
-    "company": "星桥家居（演示）",
+    "company": "深圳星桥家居科技有限公司（演示） / 星桥家居香港有限公司（演示）",
     "contractNumber": "DEMO-C2026-001",
     "handoffOn": "2026-11-27",
     "needs": "完善广告数据跟踪，建立每周复盘机制。",
     "attachments": [
       {
-        "path": "demo-handoff-notes",
+        "path": "00000000-0000-4000-8000-000000000201/00000000-0000-4000-8000-000000000401",
         "name": "星桥家居交接资料（演示）.txt"
       }
     ],
     "payment": "未到账",
-    "finance": {}
+    "finance": {},
+    "source": "lead",
+    "mainlandCompanyName": "深圳星桥家居科技有限公司（演示）",
+    "hongKongCompanyName": "星桥家居香港有限公司（演示）",
+    "contractCurrency": "CNY"
   },
   "intakeReceipt": {
-    "id": "demo-stellar-home:ad2",
+    "id": "00000000-0000-4000-8000-000000000101",
     "workOrderId": "OPS-001"
   },
   "staffing": {
-    "handoffId": "demo-stellar-home:ad2",
-    "departmentId": "ad2",
+    "handoffId": "00000000-0000-4000-8000-000000000101",
+    "departmentId": "00000000-0000-4000-8000-000000000301",
     "workOrderId": "OPS-001",
     "scopeVersion": 1,
     "version": 1,
@@ -75,8 +79,8 @@
     "version": 1
   },
   "staffingUpdate": {
-    "handoffId": "demo-stellar-home:ad2",
-    "departmentId": "ad2",
+    "handoffId": "00000000-0000-4000-8000-000000000101",
+    "departmentId": "00000000-0000-4000-8000-000000000301",
     "workOrderId": "OPS-001",
     "scopeVersion": 1,
     "version": 2,
@@ -106,14 +110,14 @@
       }
     ]
   },
-  "financeUpdate": {
-    "id": "demo-stellar-home:ad2",
+  "signingEntityUpdate": {
+    "id": "00000000-0000-4000-8000-000000000101",
     "version": 2,
     "scopeVersion": 1,
     "active": true,
-    "dealId": "demo-stellar-home",
+    "dealId": "00000000-0000-4000-8000-000000000201",
     "department": {
-      "id": "ad2",
+      "id": "00000000-0000-4000-8000-000000000301",
       "name": "效果营销二部"
     },
     "services": [
@@ -128,23 +132,102 @@
         "group": "效果营销服务"
       }
     ],
-    "company": "星桥家居（演示）",
+    "company": "深圳星桥家居科技有限公司（演示） / 星桥家居香港有限公司（演示）",
     "contractNumber": "DEMO-C2026-001",
     "handoffOn": "2026-11-27",
     "needs": "完善广告数据跟踪，建立每周复盘机制。",
     "attachments": [
       {
-        "path": "demo-handoff-notes",
+        "path": "00000000-0000-4000-8000-000000000201/00000000-0000-4000-8000-000000000401",
         "name": "星桥家居交接资料（演示）.txt"
       }
     ],
-    "payment": "已到账",
+    "payment": "未到账",
+    "finance": {
+      "legalName": "深圳星桥家居科技有限公司（演示）"
+    },
+    "source": "lead",
+    "mainlandCompanyName": "深圳星桥家居科技有限公司（演示）",
+    "hongKongCompanyName": "星桥家居香港有限公司（演示）",
+    "contractCurrency": "CNY"
+  },
+  "financeUpdate": {
+    "id": "00000000-0000-4000-8000-000000000101",
+    "version": 3,
+    "scopeVersion": 1,
+    "active": true,
+    "dealId": "00000000-0000-4000-8000-000000000201",
+    "department": {
+      "id": "00000000-0000-4000-8000-000000000301",
+      "name": "效果营销二部"
+    },
+    "services": [
+      {
+        "id": "performance/google",
+        "label": "Google",
+        "group": "效果营销服务"
+      },
+      {
+        "id": "performance/meta",
+        "label": "Meta",
+        "group": "效果营销服务"
+      }
+    ],
+    "company": "深圳星桥家居科技有限公司（演示） / 星桥家居香港有限公司（演示）",
+    "contractNumber": "DEMO-C2026-001",
+    "handoffOn": "2026-11-27",
+    "needs": "完善广告数据跟踪，建立每周复盘机制。",
+    "attachments": [
+      {
+        "path": "00000000-0000-4000-8000-000000000201/00000000-0000-4000-8000-000000000401",
+        "name": "星桥家居交接资料（演示）.txt"
+      }
+    ],
+    "payment": "2026-11-19",
     "finance": {
       "legalName": "深圳星桥家居科技有限公司（演示）",
       "receivedOn": "2026-11-19",
       "receivedAmount": "12000",
       "currency": "CNY",
       "actualPayment": "2026-11-19"
-    }
+    },
+    "source": "lead",
+    "mainlandCompanyName": "深圳星桥家居科技有限公司（演示）",
+    "hongKongCompanyName": "星桥家居香港有限公司（演示）",
+    "contractCurrency": "CNY"
+  },
+  "handoffWithoutAttachments": {
+    "id": "00000000-0000-4000-8000-000000000102",
+    "version": 1,
+    "scopeVersion": 1,
+    "active": true,
+    "dealId": "00000000-0000-4000-8000-000000000202",
+    "department": {
+      "id": "00000000-0000-4000-8000-000000000301",
+      "name": "效果营销二部"
+    },
+    "services": [
+      {
+        "id": "performance/google",
+        "label": "Google",
+        "group": "效果营销服务"
+      },
+      {
+        "id": "performance/meta",
+        "label": "Meta",
+        "group": "效果营销服务"
+      }
+    ],
+    "company": "星桥家居香港有限公司（演示）",
+    "contractNumber": "DEMO-C2026-002",
+    "handoffOn": "2026-11-27",
+    "needs": "完善广告数据跟踪，建立每周复盘机制。",
+    "attachments": [],
+    "payment": "未到账",
+    "finance": {},
+    "source": "history",
+    "hongKongCompanyName": "星桥家居香港有限公司（演示）",
+    "contractCurrency": "USD",
+    "attachmentStatus": "none"
   }
 }

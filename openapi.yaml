@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: 销售 CRM 与运营系统交接 API
-  version: 1.0.0
-  description: 双向接口契约。正式地址由各环境配置，回环地址用于本地模拟。
+  version: 1.1.0
+  description: 双向接口联调契约。正式接口尚未启用。正式地址由各环境配置，回环地址用于本地模拟。
 externalDocs:
   description: 接入步骤、权限、版本和验收场景
   url: https://github.com/iwish-requirement/iwish-sell-crm/tree/codex/operations-handoff-api
@@ -15,7 +15,7 @@ paths:
       servers:
         - url: https://operations.example.invalid
           description: 替换为运营系统环境地址
-        - url: http://127.0.0.1:4183
+        - url: http://127.0.0.1:4185
           description: 本地模拟器
       security:
         - OperationsIntakeBearer: []
@@ -49,7 +49,7 @@ paths:
       servers:
         - url: https://crm.example.invalid
           description: 替换为销售 CRM 环境地址
-        - url: http://127.0.0.1:4183
+        - url: http://127.0.0.1:4185
           description: 本地模拟器
       security:
         - CrmCallbackBearer: []
@@ -74,6 +74,12 @@ paths:
           $ref: '#/components/responses/Conflict'
         '413':
           $ref: '#/components/responses/TooLarge'
+        '503':
+          description: 运营回传未启用或暂时无法处理。未启用时返回 OPS_INTEGRATION_DISABLED。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
 components:
   securitySchemes:
@@ -116,16 +122,34 @@ components:
     Identifier:
       type: string
       minLength: 1
+      maxLength: 256
+    CRMIdentifier:
+      type: string
+      format: uuid
     Version:
       type: integer
       minimum: 1
       maximum: 9007199254740991
+    ScopeVersion:
+      type: integer
+      minimum: 1
+      maximum: 2147483647
     NamedId:
       type: object
       required: [id, name]
       properties:
         id:
           $ref: '#/components/schemas/Identifier'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 256
+    Department:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          $ref: '#/components/schemas/CRMIdentifier'
         name:
           type: string
           minLength: 1
@@ -148,17 +172,18 @@ components:
         path:
           type: string
           minLength: 1
-          description: CRM 附件引用，正式读取方式由双方配置。
+          description: CRM 私有附件引用。授权读取方式待双方确认。
         name:
           type: string
           minLength: 1
     Finance:
       type: object
-      description: 待确认时为空对象。主体可单独确认，到账日期、金额与币种一起更新。
+      description: 待确认时为空对象。正式签署主体可以先确认，到账日期、金额与实际到账币种一起更新。
       properties:
         legalName:
           type: string
           minLength: 1
+          description: 财务确认的唯一合同签署主体全称。缺省时待确认。
         receivedOn:
           type: string
           format: date
@@ -168,6 +193,7 @@ components:
         currency:
           type: string
           pattern: '^[A-Z]{3}$'
+          description: 实际到账币种，来自财务确认。
         actualPayment:
           type: string
           format: date
@@ -180,17 +206,21 @@ components:
       required: [id, dealId, version, scopeVersion, active, department, services, company, contractNumber, handoffOn, needs, attachments, payment, finance]
       properties:
         id:
-          $ref: '#/components/schemas/Identifier'
+          $ref: '#/components/schemas/CRMIdentifier'
         dealId:
-          $ref: '#/components/schemas/Identifier'
+          $ref: '#/components/schemas/CRMIdentifier'
+        source:
+          type: string
+          enum: [lead, history]
+          description: CRM 成交来源。旧版报文可能省略。
         version:
           $ref: '#/components/schemas/Version'
         scopeVersion:
-          $ref: '#/components/schemas/Version'
+          $ref: '#/components/schemas/ScopeVersion'
         active:
           type: boolean
         department:
-          $ref: '#/components/schemas/NamedId'
+          $ref: '#/components/schemas/Department'
         services:
           type: array
           minItems: 1
@@ -200,9 +230,22 @@ components:
         company:
           type: string
           minLength: 1
+          description: 客户展示名。仅有一个有效公司名时使用该名称，两个有效名称都存在时用斜杠连接。
+        mainlandCompanyName:
+          type: string
+          minLength: 1
+          description: 销售填写的有效大陆公司名称。空白和「暂无」等占位值省略。
+        hongKongCompanyName:
+          type: string
+          minLength: 1
+          description: 销售填写的有效香港公司名称。空白和「暂无」等占位值省略。
         contractNumber:
           type: string
           minLength: 1
+        contractCurrency:
+          type: string
+          enum: [CNY, USD]
+          description: 合同币种。缺省时表示旧合同尚无可用值。
         handoffOn:
           oneOf:
             - type: string
@@ -214,17 +257,28 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Attachment'
+        attachmentStatus:
+          type: string
+          const: none
+          description: 销售明确选择「暂无附件」。同时 attachments 为空数组。
         payment:
           type: string
           minLength: 1
+          description: CRM 的到账状态或日期展示值。以财务字段判断是否确认到账。
         finance:
           $ref: '#/components/schemas/Finance'
+      if:
+        required: [attachmentStatus]
+      then:
+        properties:
+          attachments:
+            maxItems: 0
     IntakeReceipt:
       type: object
       required: [id, workOrderId]
       properties:
         id:
-          $ref: '#/components/schemas/Identifier'
+          $ref: '#/components/schemas/CRMIdentifier'
         workOrderId:
           $ref: '#/components/schemas/Identifier'
     StaffingRow:
@@ -236,6 +290,7 @@ components:
         members:
           type: array
           minItems: 1
+          maxItems: 100
           description: 一项服务至少一人，成员 ID 在这项服务内唯一。
           items:
             $ref: '#/components/schemas/NamedId'
@@ -244,13 +299,13 @@ components:
       required: [handoffId, departmentId, workOrderId, scopeVersion, version, confirmedAt, projectLead, staffing]
       properties:
         handoffId:
-          $ref: '#/components/schemas/Identifier'
+          $ref: '#/components/schemas/CRMIdentifier'
         departmentId:
-          $ref: '#/components/schemas/Identifier'
+          $ref: '#/components/schemas/CRMIdentifier'
         workOrderId:
           $ref: '#/components/schemas/Identifier'
         scopeVersion:
-          $ref: '#/components/schemas/Version'
+          $ref: '#/components/schemas/ScopeVersion'
         version:
           $ref: '#/components/schemas/Version'
         confirmedAt:
@@ -261,6 +316,7 @@ components:
         staffing:
           type: array
           minItems: 1
+          maxItems: 32
           description: 每个承接的服务 ID 恰好出现一次，包含该范围的完整人员名单。
           items:
             $ref: '#/components/schemas/StaffingRow'
