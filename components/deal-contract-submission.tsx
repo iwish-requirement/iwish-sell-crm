@@ -295,7 +295,7 @@ export function DealContractSubmissionDialog({ leadId, companyName, salesperson,
               <DealContractReturnedFields title="分配结果"
                 status={loaded.allocationUnavailable ? "暂时无法读取分配结果" : !loaded.allocation ? "分配完成后回传" : undefined}
                 fields={DEAL_ALLOCATION_FIELDS.map(([key, label]) => [label, loaded.allocation?.[key]])} />
-              <DepartmentHandoffResults handoffs={loaded.departmentAllocation?.handoffs ?? []} />
+              <DepartmentHandoffResults handoffs={loaded.departmentAllocation?.handoffs ?? []} source="lead" recordId={leadId} />
               <DealContractReturnedFields title="财务确认"
                 status={DEAL_FINANCE_FIELDS.some(([key]) => returned[key]) ? undefined : "财务确认后回传"}
                 fields={DEAL_FINANCE_FIELDS.map(([key, label]) => [label, key === "receivedOn" ? formatDealDate(returned[key]) : returned[key]])} />

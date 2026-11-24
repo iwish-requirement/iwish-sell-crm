@@ -259,7 +259,7 @@ export function HistoryContractForm({ row, close, save, allocationCutoff }: {
           </section>}
           <DealContractReturnedFields title="分配结果"
             fields={allocations} status={allocations.some(([,value]) => value) ? undefined : "分配完成后回传"} />
-          <DepartmentHandoffResults handoffs={row.departmentAllocation?.handoffs ?? []} />
+          <DepartmentHandoffResults handoffs={row.departmentAllocation?.handoffs ?? []} source="history" recordId={row.id} />
           <DealContractReturnedFields title={HISTORY_HEADERS[0][HISTORY_COLUMNS.indexOf("AN")] ?? "审批记录"}
             fields={returnedFields(["AN","AO"])} />
           <DealContractReturnedFields title="财务确认"

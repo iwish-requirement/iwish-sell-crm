@@ -4,7 +4,20 @@ import type { DealContractAttachment } from "@/lib/services/deal-contract-submis
 
 export type AllocationSource = "lead" | "history"
 export type LeadDepartmentState = "needs_contract" | "ready" | "assigned"
-export type DepartmentHandoff = { id: string; departmentId: string; departmentName: string; services: string[] }
+type OperationsPerson = { id: string; name: string }
+export type DepartmentHandoff = {
+  id: string
+  departmentId: string
+  departmentName: string
+  services: string[]
+  delivery?: "queued" | "sending" | "retrying" | "failed" | "received"
+  deliveryAttempts?: number
+  workOrderId?: string | null
+  staffing?: {
+    projectLead: OperationsPerson
+    staffing: { serviceId: string; members: OperationsPerson[] }[]
+  } | null
+}
 export type DepartmentResult = { revision: number; assignedAt?: string; handoffs: DepartmentHandoff[] }
 export type AllocationRow = DepartmentResult & {
   source: AllocationSource
@@ -57,6 +70,16 @@ export async function loadDepartmentAllocationDetails(source: AllocationSource, 
   if (error?.code === "PGRST202") return null
   if (error) throw error
   return data as AllocationDetails | null
+}
+
+export function departmentOperationsStatus(handoffs: DepartmentHandoff[]) {
+  if (!handoffs.some(handoff => handoff.delivery)) return "待运营交接"
+  if (handoffs.some(handoff => handoff.delivery === "failed")) return "送单失败"
+  if (handoffs.some(handoff => handoff.delivery === "retrying")) return "送单重试中"
+  const confirmed = handoffs.filter(handoff => handoff.staffing).length
+  if (confirmed > 0) return `人员已确认 ${confirmed}/${handoffs.length}`
+  if (handoffs.every(handoff => handoff.workOrderId)) return "运营已收单"
+  return "待运营收单"
 }
 
 export async function saveServiceDepartments(row: AllocationRow, departments: Record<string, string[]>) {

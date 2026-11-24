@@ -1,23 +1,76 @@
+"use client"
+
+import { useEffect, useState } from "react"
 import { Badge } from "@/components/ui/badge"
-import { selectedAllocationServices, type DepartmentHandoff } from "@/lib/services/department-allocation"
+import { loadDepartmentAllocationDetails, selectedAllocationServices, type AllocationSource, type DepartmentHandoff } from "@/lib/services/department-allocation"
 import { DEAL_CONTRACT_SERVICES } from "@/lib/services/deal-contract-fields"
 
 const serviceNames = new Map(DEAL_CONTRACT_SERVICES.flatMap(group =>
   selectedAllocationServices({ [group.key]: group.options.map(([id]) => id) }).map(service => [service.id, service.name] as const)
 ))
 
-export function DepartmentHandoffResults({ handoffs }: { handoffs: DepartmentHandoff[] }) {
-  if (!handoffs.length) return null
+export function DepartmentHandoffResults({ handoffs, source, recordId }: {
+  handoffs: DepartmentHandoff[]
+  source: AllocationSource
+  recordId: string
+}) {
+  const [updated, setUpdated] = useState<{ initial: DepartmentHandoff[]; handoffs: DepartmentHandoff[] }>()
+  const enabled = handoffs.some(handoff => handoff.delivery)
+  useEffect(() => {
+    if (!enabled) return
+    let active = true
+    let loading = false
+    async function refresh() {
+      if (loading || document.visibilityState !== "visible") return
+      loading = true
+      try {
+        const details = await loadDepartmentAllocationDetails(source, recordId)
+        if (active) setUpdated({ initial: handoffs, handoffs: details?.handoffs ?? [] })
+      } catch {
+        // Keep the last result if a refresh fails.
+      } finally {
+        loading = false
+      }
+    }
+    const timer = window.setInterval(() => void refresh(), 10000)
+    window.addEventListener("focus", refresh)
+    document.addEventListener("visibilitychange", refresh)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+      window.removeEventListener("focus", refresh)
+      document.removeEventListener("visibilitychange", refresh)
+    }
+  }, [enabled, handoffs, recordId, source])
+
+  const rows = updated?.initial === handoffs ? updated.handoffs : handoffs
+  if (!rows.length) return null
   return <section className="space-y-3 border-t pt-4" aria-label="部门承接进度">
     <h3 className="font-semibold">部门承接进度</h3>
     <ul className="space-y-2">
-      {handoffs.map(handoff => (
-        <li key={handoff.id} className="flex flex-wrap items-start justify-between gap-2 rounded-md border p-3 text-sm">
-          <div className="space-y-1">
+      {rows.map(handoff => (
+        <li key={handoff.id} className="space-y-2 rounded-md border p-3 text-sm">
+          <div className="flex flex-wrap items-start justify-between gap-2">
             <p className="font-medium">{handoff.departmentName}</p>
-            <p className="text-muted-foreground">{handoff.services.map(service => serviceNames.get(service) ?? service).join("、")}</p>
+            <div className="flex flex-wrap gap-1">
+              <Badge variant="outline">{handoff.staffing ? "人员已确认" : handoff.workOrderId ? "运营已收单" : handoff.delivery ? "待运营收单" : "待运营交接"}</Badge>
+              {handoff.delivery === "retrying" && <Badge variant="secondary">自动重试中</Badge>}
+              {handoff.delivery === "failed" && <Badge variant="destructive">送单失败</Badge>}
+            </div>
           </div>
-          <Badge variant="outline">待运营交接</Badge>
+          <div className="space-y-1">
+            <p className="text-muted-foreground">{handoff.services.map(service => serviceNames.get(service) ?? service).join("、")}</p>
+            {handoff.workOrderId && <p className="break-words text-muted-foreground">运营工单 {handoff.workOrderId}</p>}
+            {(handoff.delivery === "retrying" || handoff.delivery === "failed") &&
+              <p className="text-muted-foreground">已尝试 {handoff.deliveryAttempts} 次</p>}
+          </div>
+          {handoff.staffing && <dl className="grid gap-2 border-t pt-2 sm:grid-cols-2">
+            <div><dt className="text-muted-foreground">项目负责人</dt><dd>{handoff.staffing.projectLead.name}</dd></div>
+            {handoff.staffing.staffing.map(item => <div key={item.serviceId}>
+              <dt className="text-muted-foreground">{serviceNames.get(item.serviceId) ?? item.serviceId}承接人员</dt>
+              <dd className="break-words">{item.members.map(person => person.name).join("、")}</dd>
+            </div>)}
+          </dl>}
         </li>
       ))}
     </ul>
