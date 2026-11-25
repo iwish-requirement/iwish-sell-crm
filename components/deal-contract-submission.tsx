@@ -187,15 +187,15 @@ export function DealContractSubmissionDialog({ leadId, companyName, salesperson,
     } else {
       control = <div className="flex items-center gap-2">
         <Input id={id} type={kind === "amount" ? "text" : kind} inputMode={kind === "amount" ? "decimal" : undefined}
-          placeholder={key === "actualPayment" ? "填写到账时间，尚未到账请写明「未到账」" : undefined}
-          value={value} aria-required="true"
+          value={value} aria-required={key !== "shortName"}
+          placeholder={key === "shortName" ? "选填，例如品牌名" : key === "actualPayment" ? "填写到账时间，尚未到账请写明「未到账」" : undefined}
           onChange={(event) => update(key, event.target.value)} />
         {key === "actualPayment" &&
           <Button type="button" variant="outline" size="sm" onClick={() => update(key, NOT_PAID)}>未到账</Button>}
       </div>
     }
     return <div key={key} className={kind === "multiline" ? "space-y-2 sm:col-span-2" : "space-y-2"}>
-      <Label htmlFor={id}>{label}<span className="text-destructive">*</span></Label>
+      <Label htmlFor={id}>{label}{key !== "shortName" && <span className="text-destructive">*</span>}</Label>
       {control}
     </div>
   }

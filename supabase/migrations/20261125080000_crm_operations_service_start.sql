@@ -1,5 +1,6 @@
--- 送单带上「合同服务开始计算日期」（serviceStartsOn），运营系统按它记合作开始日（iWish 运营系统 2026-11-25）。
--- 之前只带服务对接时间（handoffOn）。已送的效果营销交接重新入队一次，报文变了会按新版本补发。
+-- 送单带上合同资料（iWish 运营系统 2026-11-25）：签订合同时间、预计到款时间、实际到款时间、服务对接时间、合同服务开始计算日期、
+-- 销售人员、客户简称、网址、品类、合作模式、签单服务费金额（基础服务费总额、各板块、消耗比例、激励奖金）。
+-- 运营系统按合同服务开始计算日期记合作开始日。之前只带服务对接时间（handoffOn）。已送的效果营销交接重新入队一次，报文变了会按新版本补发。
 
 create or replace function crm_allocation.enqueue_operations_assignment(p_assignment_id uuid)
 returns void language sql volatile set search_path = '' as $$
@@ -25,6 +26,19 @@ returns void language sql volatile set search_path = '' as $$
     'hongKongCompanyName', display.names->>'hongKongCompanyName',
     'contractCurrency', case when form.data->>'currency' in ('CNY', 'USD') then form.data->>'currency' end,
     'serviceStartsOn', crm_allocation.operations_date(form.data->>'serviceStartsOn'),
+    'signedOn', crm_allocation.operations_date(form.data->>'signedOn'),
+    'expectedPaymentOn', crm_allocation.operations_date(form.data->>'expectedPaymentOn'),
+    'actualPayment', nullif(btrim(form.data->>'actualPayment'), ''),
+    'salesperson', nullif(btrim(form.data->>'salesperson'), ''),
+    'shortName', nullif(btrim(form.data->>'shortName'), ''),
+    'website', nullif(btrim(form.data->>'website'), ''),
+    'category', nullif(btrim(form.data->>'category'), ''),
+    'cooperation', nullif(btrim(form.data->>'cooperation'), ''),
+    'baseFee', nullif(btrim(form.data->>'baseFee'), ''),
+    'serviceFees', nullif(btrim(form.data->>'serviceFees'), ''),
+    'spendRatio', nullif(btrim(form.data->>'spendRatio'), ''),
+    'bonusAmount', nullif(btrim(form.data->>'bonusAmount'), ''),
+    'bonusTerms', nullif(btrim(form.data->>'bonusTerms'), ''),
     'attachmentStatus', case when form.data->>'attachmentStatus' = 'none'
       and jsonb_array_length(form.attachments) = 0 then 'none' end
   ))
