@@ -65,8 +65,12 @@ export const DEAL_FINANCE_FIELDS = [
 export const DEAL_ALLOCATION_FIELDS = [
   ["department", "部门分配"],
   ["manager", "项目负责人"],
+  ["googleManager", "Google经理"],
   ["google", "Google优化师"],
+  ["googleAssistant", "Google优化师助理"],
+  ["metaManager", "Meta（FB）经理"],
   ["meta", "Meta优化师"],
+  ["metaAssistant", "Meta（FB）优化师助理"],
   ["criteo", "Criteo优化师"],
   ["bing", "Bing优化师"],
   ["edm", "EDM营销优化经理/优化师"],
