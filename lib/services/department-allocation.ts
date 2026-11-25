@@ -19,6 +19,14 @@ export type DepartmentHandoff = {
     projectLead: OperationsPerson
     staffing: { serviceId: string; members: OperationsMember[] }[]
   } | null
+  /** 运营回传过的每一版名单，新的在前（2026-11-25 起记录）。 */
+  staffingHistory?: {
+    version: number
+    acceptedAt: string
+    scopeVersion?: number
+    projectLead: OperationsPerson
+    staffing: { serviceId: string; members: OperationsMember[] }[]
+  }[]
 }
 export type DepartmentResult = { revision: number; assignedAt?: string; handoffs: DepartmentHandoff[] }
 export type AllocationRow = DepartmentResult & {

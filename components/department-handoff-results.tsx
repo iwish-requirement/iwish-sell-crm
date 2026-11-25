@@ -27,6 +27,11 @@ function staffingRows(serviceId: string, members: { name: string; role?: string 
   })
 }
 
+function formatAcceptedAt(value: string) {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString("zh-CN", { hour12: false })
+}
+
 export function DepartmentHandoffResults({ handoffs, source, recordId }: {
   handoffs: DepartmentHandoff[]
   source: AllocationSource
@@ -89,6 +94,18 @@ export function DepartmentHandoffResults({ handoffs, source, recordId }: {
               <dd className="break-words">{row.names}</dd>
             </div>)}
           </dl>}
+          {(handoff.staffingHistory?.length ?? 0) > 1 && <details className="border-t pt-2">
+            <summary className="cursor-pointer text-muted-foreground">人员调整记录（{handoff.staffingHistory!.length} 版）</summary>
+            <ol className="mt-2 space-y-2">
+              {handoff.staffingHistory!.map(entry => <li key={entry.version} className="rounded border p-2">
+                <p className="font-medium">第 {entry.version} 版 · {formatAcceptedAt(entry.acceptedAt)}</p>
+                <p className="break-words text-muted-foreground">
+                  项目负责人 {entry.projectLead?.name ?? "-"}；{entry.staffing.flatMap(item => staffingRows(item.serviceId, item.members))
+                    .filter(row => row.names !== "-").map(row => `${row.label} ${row.names}`).join("；")}
+                </p>
+              </li>)}
+            </ol>
+          </details>}
         </li>
       ))}
     </ul>
