@@ -22,6 +22,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { LeadHandoffProgress } from "@/components/lead-handoff-progress"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 
 import {
@@ -5012,6 +5013,8 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                   </Button>
                 </div>
                 )}
+
+                {selectedLead.id && <LeadHandoffProgress leadId={String(selectedLead.id)} />}
 
                 {/* Interaction Timeline */}
 
