@@ -31,6 +31,7 @@ export const DEAL_CONTRACT_IDENTITY_FIELDS = [
   ["handoffOn", "服务对接时间", "date"],
   ["serviceStartsOn", "合同服务开始计算日期", "date"],
   ["salesperson", "销售人员", "text"],
+  ["shortName", "客户简称", "text"],
   ["mainlandCompanyName", "大陆公司", "text"],
   ["hongKongCompanyName", "香港公司", "text"],
   ["contractNumber", "合同编号", "text"],
@@ -107,11 +108,15 @@ export function normalizeDealWebsite(value: string): string | null {
   }
 }
 
+/** 选填：客户简称（运营系统用它当客户名 / 项目名，2026-11-25 新增，旧合同没有）。 */
+const DEAL_CONTRACT_OPTIONAL_FIELDS = new Set<string>(["shortName"])
+
 export function dealContractSubmissionErrors(data: DealContractData, attachmentCount: number): string[] {
   const errors: string[] = []
   for (const [key, label, kind] of DEAL_CONTRACT_FIELDS) {
     if (!isDealContractFieldVisible(key, data.cooperation)) continue
     const value = data[key]?.trim() ?? ""
+    if (!value && DEAL_CONTRACT_OPTIONAL_FIELDS.has(key)) continue
     if (!value) {
       errors.push(label)
       continue
