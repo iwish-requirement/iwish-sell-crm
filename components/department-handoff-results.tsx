@@ -14,14 +14,15 @@ const ROLE_ORDER = [
   ["optimizer", "优化师"],
   ["optimizer_assistant", "优化师助理"],
 ] as const
-// Google、Meta 固定预留优化经理 / 优化师 / 优化师助理三行（2026-11-25 要求），没人显示「-」；其他服务只列有人的角色。
-const RESERVED_ROLE_SERVICES = new Set(["performance/google", "performance/meta"])
+// 效果营销各平台（Google、Meta、Criteo、Bing、Pinterest、TikTok、CTV）固定预留优化经理 / 优化师 / 优化师助理三行
+// （2026-11-25「其他平台的对应的优化师也补充」），没人显示「-」；其他服务只列有人的角色。
+const reservesRoles = (serviceId: string) => serviceId.startsWith("performance/")
 
 function staffingRows(serviceId: string, members: { name: string; role?: string }[]) {
   const service = serviceNames.get(serviceId) ?? serviceId
   return ROLE_ORDER.flatMap(([role, label]) => {
     const names = members.filter(person => (person.role ?? "optimizer") === role).map(person => person.name)
-    if (!names.length && !RESERVED_ROLE_SERVICES.has(serviceId)) return []
+    if (!names.length && !reservesRoles(serviceId)) return []
     return [{ key: `${serviceId}:${role}`, label: `${service} ${label}`, names: names.join("、") || "-" }]
   })
 }
