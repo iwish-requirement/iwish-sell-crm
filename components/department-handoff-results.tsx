@@ -10,11 +10,11 @@ const serviceNames = new Map(DEAL_CONTRACT_SERVICES.flatMap(group =>
 ))
 
 const ROLE_ORDER = [
-  ["optimizer_manager", "经理"],
+  ["optimizer_manager", "优化经理"],
   ["optimizer", "优化师"],
   ["optimizer_assistant", "优化师助理"],
 ] as const
-// Google、Meta 固定预留经理 / 优化师 / 优化师助理三行（2026-11-25 要求），没人显示「-」；其他服务只列有人的角色。
+// Google、Meta 固定预留优化经理 / 优化师 / 优化师助理三行（2026-11-25 要求），没人显示「-」；其他服务只列有人的角色。
 const RESERVED_ROLE_SERVICES = new Set(["performance/google", "performance/meta"])
 
 function staffingRows(serviceId: string, members: { name: string; role?: string }[]) {
