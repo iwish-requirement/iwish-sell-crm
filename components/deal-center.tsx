@@ -114,6 +114,10 @@ function CurrentDealCenter({ allocationCutoff }: { allocationCutoff: string | nu
     return () => { active = false }
   }, [allocationCutoff, deals, departmentRefresh])
   const [selectedDeal, setSelectedDeal] = useState<DealRow | null>(null)
+  // 追加合同：建好子线索后重新拉成交列表，选中新的那条并打开合同资料
+  const [dealsRefresh, setDealsRefresh] = useState(0)
+  const [addonPendingId, setAddonPendingId] = useState<string | null>(null)
+  const [isCreatingAddon, setIsCreatingAddon] = useState(false)
   const [isDetailOpen, setIsDetailOpen] = useState(false)
   const [isSubmissionOpen, setIsSubmissionOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
@@ -465,7 +469,7 @@ function CurrentDealCenter({ allocationCutoff }: { allocationCutoff: string | nu
     return () => {
       isMounted = false
     }
-  }, [mePermissions, currentProfile, canReadContracts])
+  }, [mePermissions, currentProfile, canReadContracts, dealsRefresh])
 
   // 选中成交时加载合同信息
 
@@ -519,6 +523,33 @@ function CurrentDealCenter({ allocationCutoff }: { allocationCutoff: string | nu
       isMounted = false
     }
   }, [selectedDeal])
+
+  useEffect(() => {
+    if (!addonPendingId) return
+    const created = deals.find(deal => deal.id === addonPendingId)
+    if (!created) return
+    setSelectedDeal(created)
+    setAddonPendingId(null)
+    setIsSubmissionOpen(true)
+  }, [addonPendingId, deals])
+
+  async function createAddonContract(parent: DealRow) {
+    setIsCreatingAddon(true)
+    try {
+      const { data, error } = await getBrowserSupabaseClient().rpc("rpc_deal_addon_create", { p_parent_id: parent.id })
+      if (error || !data) throw error ?? new Error("no id")
+      toast.success("已建追加合同", { description: "请填写这份合同的编号、服务板块和金额，再分配部门。" })
+      setAddonPendingId(String(data))
+      setDealsRefresh(value => value + 1)
+    } catch (error) {
+      const message = String((error as { message?: string })?.message ?? "")
+      toast.error("追加合同失败", {
+        description: message.includes("ERR_NO_PERMISSION") ? "只有负责销售或有合同管理权限的人能追加合同。" : "请稍后重试。",
+      })
+    } finally {
+      setIsCreatingAddon(false)
+    }
+  }
 
 
 
@@ -965,9 +996,13 @@ function CurrentDealCenter({ allocationCutoff }: { allocationCutoff: string | nu
                   )}
                 </div>
 
-                <div className="border-t pt-4">
+                <div className="flex flex-wrap gap-2 border-t pt-4">
                   <Button type="button" onClick={() => setIsSubmissionOpen(true)}>合同资料提交</Button>
+                  <Button type="button" variant="outline" disabled={isCreatingAddon} onClick={() => void createAddonContract(selectedDeal)}>
+                    {isCreatingAddon ? "正在建追加合同…" : "追加合同"}
+                  </Button>
                 </div>
+                <p className="text-xs text-muted-foreground">老客户再签合同（二次开发 / 加服务）点「追加合同」：会建一条挂在本客户下的成交，单独填合同编号、服务板块和金额，再分配部门。</p>
 
 
 
