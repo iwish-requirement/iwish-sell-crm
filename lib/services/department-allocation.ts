@@ -5,6 +5,8 @@ import type { DealContractAttachment } from "@/lib/services/deal-contract-submis
 export type AllocationSource = "lead" | "history"
 export type LeadDepartmentState = "needs_contract" | "ready" | "assigned"
 type OperationsPerson = { id: string; name: string }
+export type OperationsMemberRole = "optimizer" | "optimizer_manager" | "optimizer_assistant" | "project_manager"
+type OperationsMember = OperationsPerson & { role?: OperationsMemberRole }
 export type DepartmentHandoff = {
   id: string
   departmentId: string
@@ -15,7 +17,7 @@ export type DepartmentHandoff = {
   workOrderId?: string | null
   staffing?: {
     projectLead: OperationsPerson
-    staffing: { serviceId: string; members: OperationsPerson[] }[]
+    staffing: { serviceId: string; members: OperationsMember[] }[]
   } | null
 }
 export type DepartmentResult = { revision: number; assignedAt?: string; handoffs: DepartmentHandoff[] }

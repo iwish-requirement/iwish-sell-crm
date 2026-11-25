@@ -5,6 +5,10 @@ import { createAdminSupabaseClient } from "@/lib/supabase/admin"
 const jsonLimit = 64 * 1024
 const identifier = z.string().min(1).max(256).refine(value => value.trim() === value)
 const person = z.object({ id: identifier, name: z.string().trim().min(1).max(256) })
+// 运营端按服务给的角色：经理 / 优化师 / 优化师助理（2026-11-25 起回传；旧回传没有，按优化师显示）
+const member = person.extend({
+  role: z.enum(["optimizer", "optimizer_manager", "optimizer_assistant", "project_manager"]).optional(),
+})
 const version = z.number().int().positive().safe()
 
 export const staffingCallback = z.object({
@@ -17,7 +21,7 @@ export const staffingCallback = z.object({
   projectLead: person,
   staffing: z.array(z.object({
     serviceId: identifier,
-    members: z.array(person).min(1).max(100),
+    members: z.array(member).min(1).max(100),
   })).min(1).max(32),
 }).superRefine((body, context) => {
   if (new Set(body.staffing.map(row => row.serviceId)).size !== body.staffing.length ||

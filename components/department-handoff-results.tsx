@@ -9,6 +9,23 @@ const serviceNames = new Map(DEAL_CONTRACT_SERVICES.flatMap(group =>
   selectedAllocationServices({ [group.key]: group.options.map(([id]) => id) }).map(service => [service.id, service.name] as const)
 ))
 
+const ROLE_ORDER = [
+  ["optimizer_manager", "经理"],
+  ["optimizer", "优化师"],
+  ["optimizer_assistant", "优化师助理"],
+] as const
+// Google、Meta 固定预留经理 / 优化师 / 优化师助理三行（2026-11-25 要求），没人显示「-」；其他服务只列有人的角色。
+const RESERVED_ROLE_SERVICES = new Set(["performance/google", "performance/meta"])
+
+function staffingRows(serviceId: string, members: { name: string; role?: string }[]) {
+  const service = serviceNames.get(serviceId) ?? serviceId
+  return ROLE_ORDER.flatMap(([role, label]) => {
+    const names = members.filter(person => (person.role ?? "optimizer") === role).map(person => person.name)
+    if (!names.length && !RESERVED_ROLE_SERVICES.has(serviceId)) return []
+    return [{ key: `${serviceId}:${role}`, label: `${service} ${label}`, names: names.join("、") || "-" }]
+  })
+}
+
 export function DepartmentHandoffResults({ handoffs, source, recordId }: {
   handoffs: DepartmentHandoff[]
   source: AllocationSource
@@ -66,9 +83,9 @@ export function DepartmentHandoffResults({ handoffs, source, recordId }: {
           </div>
           {handoff.staffing && <dl className="grid gap-2 border-t pt-2 sm:grid-cols-2">
             <div><dt className="text-muted-foreground">项目负责人</dt><dd>{handoff.staffing.projectLead.name}</dd></div>
-            {handoff.staffing.staffing.map(item => <div key={item.serviceId}>
-              <dt className="text-muted-foreground">{serviceNames.get(item.serviceId) ?? item.serviceId}承接人员</dt>
-              <dd className="break-words">{item.members.map(person => person.name).join("、")}</dd>
+            {handoff.staffing.staffing.flatMap(item => staffingRows(item.serviceId, item.members)).map(row => <div key={row.key}>
+              <dt className="text-muted-foreground">{row.label}</dt>
+              <dd className="break-words">{row.names}</dd>
             </div>)}
           </dl>}
         </li>
