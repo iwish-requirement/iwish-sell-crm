@@ -6,8 +6,8 @@ const require = createRequire(import.meta.url)
 const { PGlite } = require(process.env.CRM_PGLITE_MODULE ?? "@electric-sql/pglite")
 const db = new PGlite()
 const id = (key) => "00000000-0000-4000-8000-" + String(key).padStart(12, "0")
-const [admin, owner, companion, outsider, lead, historic, won, visitA, visitB, foreignLead] =
-  [1, 2, 3, 4, 11, 12, 13, 16, 17, 18].map(id)
+const [admin, owner, companion, outsider, lead, historic, won, visitA, visitB, foreignLead, junior] =
+  [1, 2, 3, 4, 11, 12, 13, 16, 17, 18, 28].map(id)
 const rows = async (sql, args) => (await db.query(sql, args)).rows
 const value = async (sql, args) => (await rows(sql, args))[0]?.value
 const rejects = (sql, args, code) => assert.rejects(() => rows(sql, args), (error) => error.message.includes(code))
@@ -34,9 +34,9 @@ try {
     if (!filename.endsWith("_crm_first_release.sql")) return
     rulesBefore = await ruleDefinitions()
     await db.exec("insert into public.teams(id,name) values (8101,'测试团队'), (8102,'独立团队')")
-    for (const [user, role, assignedTeam] of [[admin, "SuperAdmin", team], [owner, "Sales", team], [companion, "Sales", team], [outsider, "Sales", 8102]]) {
+    for (const [user, role, assignedTeam] of [[admin, "SuperAdmin", team], [owner, "Sales", team], [companion, "Sales", team], [outsider, "Sales", 8102], [junior, "Sales", team]]) {
       await rows("insert into auth.users(id,email,raw_user_meta_data) values($1,$2,$3)", [
-        user, user + "@example.com", json({ full_name: "演示 " + user.slice(-2), phone: user.slice(-8) }),
+        user, user + "@example.com", json({ full_name: user === junior ? "冀腾飞" : "演示 " + user.slice(-2), phone: user.slice(-8) }),
       ])
       await rows("update public.profiles set status='active',team_id=$2,role_id=(select id from public.roles where name=$3) where id=$1",
         [user, assignedTeam, role])
@@ -48,6 +48,10 @@ try {
     await db.exec("alter table public.leads enable trigger trg_lead_pipeline_defaults")
   })
   assert.deepEqual(await ruleDefinitions(), rulesBefore)
+  assert.deepEqual(await rows("select monthly, quarterly, yearly, weekly_reference from iwish.crm_visit_goals where profile_id=$1 order by effective_on",[junior]), [
+    { monthly: 16, quarterly: null, yearly: null, weekly_reference: null },
+    { monthly: 20, quarterly: 60, yearly: 240, weekly_reference: "5" },
+  ])
   assert.deepEqual(await rows("select follow_up_stage,locked_until,protected_until from public.leads where id=$1",[historic]), [{
     follow_up_stage: "online_communication",
     locked_until: new Date("2026-11-02T04:00:00Z"),
