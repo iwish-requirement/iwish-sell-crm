@@ -24,7 +24,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { LeadHandoffProgress } from "@/components/lead-handoff-progress"
-import { CrmVisitActivity, CrmVisitDialog } from "@/components/crm-lead-visits"
+import { CrmLeadProtection, CrmVisitActivity, CrmVisitDialog } from "@/components/crm-lead-visits"
 import { DealContractSubmissionDialog } from "@/components/deal-contract-submission"
 import { crmDate, getCrmError, getLeadWorkflow, substantiveFollowUpKinds, type LeadWorkflow } from "@/lib/services/crm-visits"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -1179,7 +1179,8 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
           { data: businessRulesRpcResult, error: businessRulesError },
         ] = await Promise.all([
           loadLeadRows(),
-          supabase.rpc("rpc_get_pipeline_business_rules"),
+          Promise.all([supabase.rpc("rpc_get_pipeline_business_rules"), supabase.rpc("rpc_crm_my_quota")])
+            .then(([rules, quota]) => ({ ...rules, data: { ...(rules.data ?? {}), quota_limit: quota.data ?? 60 } })),
         ])
 
         if (businessRulesError) {
@@ -1271,7 +1272,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                 lastContactAt: (row.last_contact_at as string | null) ?? null,
                 stage: row.stage ?? "L1",
                 customerAttribute: (row.customer_attribute as "followable" | "potential_intent" | "invalid" | null) ?? "followable",
-                followUpStage: row.follow_up_stage === "online_communication" ? "offline_visit" : (row.follow_up_stage as string | null) ?? "uncontacted",
+                followUpStage: (row.follow_up_stage as string | null) ?? "uncontacted",
                 ownershipStartedAt: (row.ownership_started_at as string | null) ?? null,
                 status: (row.status as string | null) === "closed" ? "closed" : "open",
                 nextContactAt: row.next_contact_at ?? null,
@@ -1906,15 +1907,6 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       const canAssignLeads = mePermissions?.canAssignLeads ?? false
       const isOwnerSelectable = canAssignLeads && newLead.owner && ownerOptions.some((rep) => rep.id === newLead.owner)
       const ownerId = isOwnerSelectable ? newLead.owner : profile.id
-      const currentQuotaCount = activeLeadsByOwnerId.get(ownerId) ?? 0
-      if (currentQuotaCount >= quotaLimitRef.current && !mePermissions?.canOverrideLeadQuota) {
-        toast.error("已达到有效客户名额上限", {
-          description: `当前负责人已有 ${currentQuotaCount} 个有效客户，上限为 ${quotaLimitRef.current} 个。`,
-        })
-        return
-      }
-
-
       const sourceLabel = resolveSourceLabel(newLead.responsibilityType, newLead.sourceLevel2 || null)
 
       const selectedTypeIds = newLead.businessTypeIds.map((id) => Number(id)).filter((v) => Number.isFinite(v))
@@ -1969,7 +1961,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       }
 
 
-      const { data, error } = await supabase.rpc("rpc_lead_create", {
+      const { data, error } = await supabase.rpc("rpc_crm_create_lead", {
         payload,
       })
 
@@ -1982,80 +1974,8 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
         return
       }
 
-      const createdId = (data as string | null) ?? `temp-${Date.now()}`
-      if (typeof createdId === "string" && !createdId.startsWith("temp-")) {
-        const { error: pipelineError } = await supabase.rpc("rpc_lead_pipeline_update", {
-          p_lead_id: createdId,
-          p_customer_attribute: newLead.customerAttribute,
-          p_follow_up_stage: newLead.followUpStage,
-          p_reason: "新增线索设置客户属性与跟进阶段",
-        })
-        if (pipelineError) {
-          console.error("Failed to save lead pipeline fields after create", pipelineError)
-          toast.warning("线索已创建，但客户属性/跟进阶段保存失败", {
-            description: "请打开线索详情后重新保存",
-          })
-        }
-      }
-      const budgetLabel =
-        budgetValue != null ? `¥${budgetValue.toLocaleString("zh-CN")}` : "待确认"
-
-      if (trimmedWechat && typeof createdId === "string" && !createdId.startsWith("temp-")) {
-        try {
-          await updateLead(createdId, { wechat: trimmedWechat }, "补充微信联系方式")
-        } catch (updateErr) {
-          console.error("Failed to update wechat for new lead", updateErr)
-        }
-      }
-
-      const sourceLabelForLocal = resolveSourceLabel(newLead.responsibilityType, newLead.sourceLevel2 || null)
-
-
-
-      setLeads([
-        ...leads,
-        {
-          id: createdId,
-          company: newLead.company,
-          website: newLead.website.trim(),
-          productCategory: newLead.productCategory.trim(),
-          contact: newLead.contact || "新联系人",
-          phone: trimmedPhone,
-          wechat: trimmedWechat,
-
-          source: sourceLabelForLocal,
-          sourceLevel1: newLead.responsibilityType || null,
-          sourceLevel2: newLead.sourceLevel2 || null,
-
-          businessTypes: selectedTypeIds.map((id) => {
-            const found = businessTypeMap.get(id)
-            return found ? { id: found.id, name: found.name, categoryId: found.category_id } : { id, name: `类型 #${id}`, categoryId: -1 }
-          }),
-          businessCategories: categoryIds.map((cid) => {
-            const found = businessCategories.find((c) => c.id === cid)
-            return { id: cid, name: found?.name ?? `分类 #${cid}` }
-          }),
-          budget: budgetLabel,
-          lastInteraction: 0,
-          lastContactAt: new Date().toISOString(),
-          stage: "L1",
-          customerAttribute: newLead.customerAttribute,
-          followUpStage: newLead.followUpStage,
-          ownershipStartedAt: new Date().toISOString(),
-          status: "open",
-          nextContactAt: null,
-          ownerId,
-          teamId: profile.teamId,
-          grade: newLead.grade || null,
-          tags:
-
-            newLead.tags
-              .split(",")
-              .map((tag) => tag.trim())
-              .filter((tag) => tag.length > 0),
-          interactions: [],
-        },
-      ])
+      const pendingAssignment = data?.pendingAssignment === true
+      setReloadToken((current) => current + 1)
       setNewLead({
         company: "",
         website: "",
@@ -2086,8 +2006,8 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
       setDialogOpen(false)
       const leadTitleForToast = newLead.company || newLead.website
-      toast.success("线索添加成功", {
-        description: `${leadTitleForToast || "新线索"} 已添加到 L1 询盘阶段`,
+      toast.success(pendingAssignment ? "已进入公共待分配" : "线索添加成功", {
+        description: `${leadTitleForToast || "新线索"}${pendingAssignment ? " 已保存，待负责人有名额后分配" : " 已保存"}`,
       })
     } catch (err) {
       console.error("Failed to create lead", err)
@@ -2421,7 +2341,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     if (!data) return
     const update = (lead: Lead) => lead.id === leadId ? {
       ...lead,
-      followUpStage: data.follow_up_stage === "online_communication" ? "offline_visit" : data.follow_up_stage ?? lead.followUpStage,
+      followUpStage: data.follow_up_stage ?? lead.followUpStage,
       protectedUntil: data.protected_until,
       lastContactAt: data.last_contact_at,
       lastInteraction: data.last_contact_at
@@ -4329,40 +4249,18 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                   </div>
                 )}
 
-                {selectedLead && selectedLead.firstContactAt && (
-
-                  <div className="flex flex-wrap items-center gap-3 rounded-md bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
-                    <span>
-                      首次有效联系：
-                      <span className="font-medium text-foreground">
-                        {new Date(selectedLead.firstContactAt).toLocaleString("zh-CN", { hour12: false })}
-                      </span>
-                    </span>
-                    {selectedLead.lockedUntil && (
-                      <span>
-                        锁单至：
-                        <span className="font-medium text-foreground">
-                          {new Date(selectedLead.lockedUntil).toLocaleString("zh-CN", { hour12: false })}
-                        </span>
-                      </span>
-                    )}
-                    {selectedLead.protectedUntil && (
-                      <span>
-                        保护期至：
-                        <span className="font-medium text-foreground">
-                          {new Date(selectedLead.protectedUntil).toLocaleDateString("zh-CN")}
-                        </span>
-                      </span>
-                    )}
-                    {isSelectedLeadProtectedForOthers && (
-                      <span className="text-amber-700">
-                        当前线索处于保护期，仅负责人可在保护期内重新分配、跨团队转移或退回公海。
-                      </span>
-                    )}
-                  </div>
+                {(selectedLead.firstContactAt || selectedLead.lockedUntil) && (
+                  <details className="rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+                    <summary className="cursor-pointer">历史联系与锁单记录</summary>
+                    {selectedLead.firstContactAt && <p>首次有效联系 {new Date(selectedLead.firstContactAt).toLocaleString("zh-CN")}</p>}
+                    {selectedLead.lockedUntil && <p>原锁单至 {new Date(selectedLead.lockedUntil).toLocaleString("zh-CN")}</p>}
+                  </details>
                 )}
-
+                {activeLeadId && workflow && <CrmLeadProtection
+                  key={activeLeadId + workflow.protectionClass + String(workflow.reviewRequired)}
+                  leadId={activeLeadId} workflow={workflow} onChange={() => refreshCustomerActivity(activeLeadId)} />}
                 {workflowError && <p role="alert" className="text-sm text-muted-foreground">{workflowError}</p>}
+
                 {/* Key Info Grid */}
 
                 <div className="grid grid-cols-2 gap-x-6 gap-y-5 py-4 border-y border-muted/30">

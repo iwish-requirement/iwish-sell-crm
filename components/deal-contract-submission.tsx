@@ -310,6 +310,7 @@ export function DealContractSubmissionDialog({ leadId, companyName, salesperson,
               {submittedAt && <CrmFinanceReceipt
                 leadId={leadId} currency={returned.currency ?? data?.currency}
                 receivedOn={returned.receivedOn} receivedAmount={returned.receivedAmount}
+                grossProfit={returned.grossProfit} grossProfitCurrency={returned.grossProfitCurrency}
                 onConfirmed={() => setAttempt((item) => item + 1)}
               />}
               {children}

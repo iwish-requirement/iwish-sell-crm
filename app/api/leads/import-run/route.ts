@@ -249,6 +249,7 @@ export async function POST(req: NextRequest) {
     }
 
     const importedCount = Number((data as any)?.importedCount ?? 0)
+    const pendingAssignmentCount = Number((data as any)?.pendingAssignmentCount ?? 0)
     const failedCount = Number((data as any)?.failedCount ?? 0)
     const rowErrors = Array.isArray((data as any)?.rowErrors)
       ? ((data as any).rowErrors as any[]).map((item) => ({
@@ -299,6 +300,7 @@ export async function POST(req: NextRequest) {
       jobId,
       totalCount: parsed.totalCount,
       importedCount,
+      pendingAssignmentCount,
       failedCount: 0,
       duplicateCount: 0,
       rowErrors: [],

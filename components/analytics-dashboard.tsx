@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useEffect, useContext, useMemo, useRef } from "react"
+import { CrmOperatingDashboard } from "@/components/crm-operating-dashboard"
+import { useState, useEffect, useContext, useMemo, useRef, type ReactNode } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -163,6 +164,115 @@ async function fetchAnalyticsExclusions(client: ReturnType<typeof getBrowserSupa
   return { teamIds: new Set(teams), profileIds: new Set(profiles), revision: JSON.stringify([teams, profiles]) }
 }
 
+function SalesFunnelChart({ funnelData, rates, stock, setStock, output, asOf, onExport, exporting, actions }: {
+  funnelData: { stage: string; fullName: string; count: number }[]
+  rates: (string | null)[]
+  stock: string
+  setStock: (stock: string) => void
+  output: string
+  asOf: string
+  onExport?: () => void
+  exporting: boolean
+  actions: ReactNode
+}) {
+  return (
+    <Card className="border-muted-foreground/10 shadow-sm">
+        <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 gap-2 border-b border-muted/30">
+          <div>
+            <CardTitle className="text-xl font-bold tracking-tight">销售漏斗转化分析</CardTitle>
+            <CardDescription className="text-sm font-medium">从原始线索到成交的全流程阶段转化看板 · 统计截至 {asOf}</CardDescription>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <select aria-label="漏斗统计口径" className="h-9 rounded-md border bg-background px-2 text-sm" value={stock} onChange={(event) => setStock(event.target.value)}>
+              <option value="new">本期新增客户</option><option value="active">全部在跟进客户</option><option value="output">本期实际经营产出</option>
+            </select>
+            {actions}
+            {onExport && <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="font-semibold h-9" disabled={exporting}>
+                  <Download className="h-4 w-4 mr-2" />
+                  导出数据
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={onExport} className="font-medium">下载 Excel 报表</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>}
+          </div>
+        </CardHeader>
+        <CardContent className="pt-4 sm:pt-6 px-2 sm:px-4">
+          {stock === "output" ? <p className="p-2 text-sm">{output}</p> : <>
+          <div className="h-[320px] sm:h-[360px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={funnelData} layout="vertical" margin={{ top: 10, right: 32, left: 12, bottom: 10 }}>
+                <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} strokeOpacity={0.5} />
+                <XAxis type="number" hide />
+                <YAxis dataKey="stage" type="category" width={104} tick={{ fontSize: 13, fontWeight: 600, fill: "hsl(var(--foreground))" }} axisLine={false} tickLine={false} />
+                <Tooltip
+                  cursor={{ fill: 'hsl(var(--muted))', opacity: 0.2 }}
+                  contentStyle={{ borderRadius: '12px', border: '1px solid hsl(var(--border))', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                  formatter={(value: number | undefined) => [`${value} 条`, "线索数量"]}
+                  labelFormatter={(label) => funnelData.find((d) => d.stage === label)?.fullName || label}
+                />
+                <Bar dataKey="count" fill="#3b82f6" radius={[0, 6, 6, 0]} barSize={40} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+          {/* Conversion rate indicators - mobile & desktop variants */}
+          {/* Mobile: compact horizontal summary chips */}
+          <div className="mt-4 flex gap-2 overflow-x-auto sm:hidden pb-1 -mx-2 px-2">
+            {funnelData.slice(0, -1).map((item, index) => {
+              const nextStage = funnelData[index + 1]
+              if (!nextStage) return null
+              return (
+                <div key={item.stage} className="flex flex-col items-center flex-shrink-0 min-w-[88px]">
+                  <span className="text-[10px] text-muted-foreground mb-1">
+                    {item.stage} → {nextStage.stage}
+                  </span>
+                  <Badge
+                    variant="secondary"
+                    className="text-[11px] font-bold bg-emerald-50 text-emerald-700 border-emerald-100 h-6 px-2"
+                  >
+                    {rates[index] ?? "—"}
+                  </Badge>
+                </div>
+              )
+            })}
+          </div>
+
+          {/* Desktop: detailed stage cards with conversion between each step */}
+          <div className="mt-6 hidden sm:flex flex-col gap-3 items-stretch md:flex-row md:flex-wrap md:items-center md:justify-center">
+            {funnelData.map((item, index) => (
+              <div key={item.stage} className="flex flex-col items-center md:flex-row md:items-center">
+                <div className="text-center px-4 py-2 bg-primary/5 rounded-xl border border-primary/10 shadow-sm min-w-[80px]">
+                  <div className="text-[11px] font-bold text-primary/60 uppercase tracking-widest">{item.stage}</div>
+                  <div className="text-base font-bold text-foreground mt-0.5">{item.count.toLocaleString()}</div>
+                </div>
+                {index < funnelData.length - 1 && (
+                  <div className="flex flex-col items-center mt-2 md:mt-0 md:mx-2">
+                    <div className="flex items-center">
+                      <ChevronRight className="h-4 w-4 text-muted-foreground opacity-30" />
+                      <Badge
+                        variant="secondary"
+                        className="text-xs font-bold bg-emerald-50 text-emerald-700 border-emerald-100 h-6 px-2"
+                      >
+                        {rates[index] ?? "—"}
+                      </Badge>
+                      <ChevronRight className="h-4 w-4 text-muted-foreground opacity-30" />
+                    </div>
+                    <span className="text-[10px] font-bold text-muted-foreground/60 mt-1 uppercase">转化</span>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          </>}
+        </CardContent>
+      </Card>
+  )
+}
+
+
 export function AnalyticsDashboard() {
   const [dateRange, setDateRange] = useState<DateRange | undefined>({
     from: subDays(new Date(), 30),
@@ -173,7 +283,6 @@ export function AnalyticsDashboard() {
   const [teams, setTeams] = useState<TeamOption[]>([ALL_TEAMS_OPTION])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [funnelData, setFunnelData] = useState<FunnelItem[]>([])
   const [sourceVolumeData, setSourceVolumeData] = useState<SourceVolumeItem[]>([])
   const [sourceConversionData, setSourceConversionData] = useState<SourceConversionItem[]>([])
   const [sourceRoiData, setSourceRoiData] = useState<SourceRoiItem[]>([])
@@ -375,7 +484,6 @@ export function AnalyticsDashboard() {
       })
 
       if (filteredLeads.length === 0) {
-        setFunnelData([])
         setSourceVolumeData([])
         setSourceConversionData([])
         setSourceRoiData([])
@@ -481,23 +589,6 @@ export function AnalyticsDashboard() {
       }
 
       const getLogicalStage = (lead: LeadSecureRow) => getAnalyticsFollowUpStage(lead)
-
-      const stageCounts = new Map<string, number>()
-      for (const lead of filteredLeads) {
-        const key = getLogicalStage(lead)
-        stageCounts.set(key, (stageCounts.get(key) ?? 0) + 1)
-      }
-
-      const nextFunnelData: FunnelItem[] = []
-      for (const stageKey of ANALYTICS_STAGE_ORDER) {
-        const labelDef = ANALYTICS_STAGE_LABELS[stageKey]
-        const count = stageCounts.get(stageKey) ?? 0
-        nextFunnelData.push({
-          stage: labelDef.stage,
-          fullName: labelDef.fullName,
-          count,
-        })
-      }
 
       const sourceCounts = new Map<string, { leads: number; converted: number }>()
       for (const lead of filteredLeads) {
@@ -738,7 +829,6 @@ export function AnalyticsDashboard() {
       )
 
       if (!active) return
-      setFunnelData(nextFunnelData)
       setSourceVolumeData(nextSourceVolume)
       setSourceConversionData(nextSourceConversion)
       setSourceRoiData(nextSourceRoi)
@@ -787,7 +877,7 @@ export function AnalyticsDashboard() {
     }
   }, [leadScopeType, currentProfile, selectedTeam])
 
-  const handleDownloadCSV = async (dataType: string) => {
+  const handleDownloadExcel = async (dataType: string) => {
     if (error || isLoading || loadedReport?.key !== reportKey) return
     try {
       const supabase = getBrowserSupabaseClient()
@@ -808,7 +898,7 @@ export function AnalyticsDashboard() {
 
       const { error } = await supabase.rpc("rpc_leads_export_request", {
         p_source: `analytics_${dataType}`,
-        p_format: "csv",
+        p_format: "xlsx",
         p_filters: filters,
       })
 
@@ -836,12 +926,7 @@ export function AnalyticsDashboard() {
     const rows: string[][] = []
 
 
-    if (dataType === "funnel") {
-      rows.push(["阶段", "线索数"])
-      funnelData.forEach((item) => {
-        rows.push([item.fullName || item.stage, String(item.count)])
-      })
-    } else if (dataType === "source-volume") {
+    if (dataType === "source-volume") {
       rows.push(["来源渠道", "线索数"])
       sourceVolumeData.forEach((item) => {
         rows.push([item.name, String(item.value)])
@@ -904,56 +989,14 @@ export function AnalyticsDashboard() {
       return
     }
 
-    const csvContent = rows
-      .map((cols) =>
-        cols
-          .map((col) => {
-            const value = col ?? ""
-            if (value.includes(",") || value.includes("\"") || value.includes("\n")) {
-              return `"${value.replace(/"/g, '""')}"`
-            }
-            return value
-          })
-          .join(","),
-      )
-      .join("\n")
-
-    const blob = new Blob(["\ufeff" + csvContent], { type: "text/csv;charset=utf-8;" })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement("a")
-    link.href = url
-    const fileNameMap: Record<string, string> = {
-      funnel: "sales-funnel.csv",
-      "source-volume": "lead-source-volume.csv",
-      "source-conversion": "lead-source-conversion.csv",
-      "team-leaderboard": "team-leaderboard.csv",
-      "product-type": "product-type-distribution.csv",
-      "source-roi": "lead-source-roi.csv",
+    try {
+      const XLSX = await import("xlsx")
+      const book = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet(rows), "经营数据")
+      XLSX.writeFile(book, dataType + "-" + format(new Date(), "yyyy-MM-dd") + ".xlsx")
+    } catch {
+      toast.error("生成 Excel 失败，请重试")
     }
-
-    link.download = fileNameMap[dataType] ?? "analytics-export.csv"
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    URL.revokeObjectURL(url)
-  }
-
-
-  // Calculate conversion rates between stages
-  const getConversionRate = (fromIndex: number) => {
-    if (fromIndex >= funnelData.length - 1) return null
-    const from = funnelData[fromIndex]?.count ?? 0
-    const to = funnelData[fromIndex + 1]?.count ?? 0
-
-    if (from === 0) {
-      if (to === 0) {
-        return "0%"
-      }
-      return null
-    }
-
-    const rate = ((to / from) * 100).toFixed(1)
-    return `${rate}%`
   }
 
   if (isPermissionsLoading) {
@@ -1137,92 +1180,11 @@ export function AnalyticsDashboard() {
       </div>
 
 
-      {/* Chart 1: Sales Funnel with Conversion Rates */}
-      <Card className="border-muted-foreground/10 shadow-sm">
-        <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 gap-2 border-b border-muted/30">
-          <div>
-            <CardTitle className="text-xl font-bold tracking-tight">销售漏斗转化分析</CardTitle>
-            <CardDescription className="text-sm font-medium">从原始线索到成交的全流程阶段转化看板</CardDescription>
-          </div>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="font-semibold h-9">
-                <Download className="h-4 w-4 mr-2" />
-                导出数据
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => handleDownloadCSV("funnel")} className="font-medium">下载 CSV 报表</DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </CardHeader>
-        <CardContent className="pt-4 sm:pt-6 px-2 sm:px-4">
-          <div className="h-[320px] sm:h-[360px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={funnelData} layout="vertical" margin={{ top: 10, right: 32, left: 12, bottom: 10 }}>
-                <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} strokeOpacity={0.5} />
-                <XAxis type="number" hide />
-                <YAxis dataKey="stage" type="category" width={80} tick={{ fontSize: 13, fontWeight: 600, fill: "hsl(var(--foreground))" }} axisLine={false} tickLine={false} />
-                <Tooltip
-                  cursor={{ fill: 'hsl(var(--muted))', opacity: 0.2 }}
-                  contentStyle={{ borderRadius: '12px', border: '1px solid hsl(var(--border))', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                  formatter={(value: number | undefined) => [`${value} 条`, "线索数量"]}
-                  labelFormatter={(label) => funnelData.find((d) => d.stage === label)?.fullName || label}
-                />
-                <Bar dataKey="count" fill="#3b82f6" radius={[0, 6, 6, 0]} barSize={40} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-          {/* Conversion rate indicators - mobile & desktop variants */}
-          {/* Mobile: compact horizontal summary chips */}
-          <div className="mt-4 flex gap-2 overflow-x-auto sm:hidden pb-1 -mx-2 px-2">
-            {funnelData.slice(0, -1).map((item, index) => {
-              const nextStage = funnelData[index + 1]
-              if (!nextStage) return null
-              return (
-                <div key={item.stage} className="flex flex-col items-center flex-shrink-0 min-w-[88px]">
-                  <span className="text-[10px] text-muted-foreground mb-1">
-                    {item.stage} → {nextStage.stage}
-                  </span>
-                  <Badge
-                    variant="secondary"
-                    className="text-[11px] font-bold bg-emerald-50 text-emerald-700 border-emerald-100 h-6 px-2"
-                  >
-                    {getConversionRate(index)}
-                  </Badge>
-                </div>
-              )
-            })}
-          </div>
-
-          {/* Desktop: detailed stage cards with conversion between each step */}
-          <div className="mt-6 hidden sm:flex flex-col gap-3 items-stretch md:flex-row md:flex-wrap md:items-center md:justify-center">
-            {funnelData.map((item, index) => (
-              <div key={item.stage} className="flex flex-col items-center md:flex-row md:items-center">
-                <div className="text-center px-4 py-2 bg-primary/5 rounded-xl border border-primary/10 shadow-sm min-w-[80px]">
-                  <div className="text-[11px] font-bold text-primary/60 uppercase tracking-widest">{item.stage}</div>
-                  <div className="text-base font-bold text-foreground mt-0.5">{item.count.toLocaleString()}</div>
-                </div>
-                {index < funnelData.length - 1 && (
-                  <div className="flex flex-col items-center mt-2 md:mt-0 md:mx-2">
-                    <div className="flex items-center">
-                      <ChevronRight className="h-4 w-4 text-muted-foreground opacity-30" />
-                      <Badge
-                        variant="secondary"
-                        className="text-xs font-bold bg-emerald-50 text-emerald-700 border-emerald-100 h-6 px-2"
-                      >
-                        {getConversionRate(index)}
-                      </Badge>
-                      <ChevronRight className="h-4 w-4 text-muted-foreground opacity-30" />
-                    </div>
-                    <span className="text-[10px] font-bold text-muted-foreground/60 mt-1 uppercase">转化</span>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
+      {dateRange?.from && dateRange.to && <CrmOperatingDashboard
+        analytics renderFunnel={SalesFunnelChart} start={dateRange.from}
+        end={new Date(dateRange.to.getFullYear(), dateRange.to.getMonth(), dateRange.to.getDate() + 1)}
+        period="custom" reportTeam={selectedTeam === ALL_TEAMS_OPTION.id ? "" : selectedTeam}
+      />}
 
       {/* Chart 2: Source Performance - Two charts side by side */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -1241,7 +1203,7 @@ export function AnalyticsDashboard() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => handleDownloadCSV("source-volume")} className="font-medium">下载 CSV</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleDownloadExcel("source-volume")} className="font-medium">下载 Excel</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </CardHeader>
@@ -1304,7 +1266,7 @@ export function AnalyticsDashboard() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => handleDownloadCSV("source-conversion")} className="font-medium">下载 CSV</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleDownloadExcel("source-conversion")} className="font-medium">下载 Excel</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </CardHeader>
@@ -1346,8 +1308,8 @@ export function AnalyticsDashboard() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => handleDownloadCSV("source-roi")} className="font-medium">
-                下载 CSV 报表
+              <DropdownMenuItem onClick={() => handleDownloadExcel("source-roi")} className="font-medium">
+                下载 Excel 报表
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -1431,8 +1393,8 @@ export function AnalyticsDashboard() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => handleDownloadCSV("product-type")} className="font-medium">
-                下载 CSV
+              <DropdownMenuItem onClick={() => handleDownloadExcel("product-type")} className="font-medium">
+                下载 Excel
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -1487,7 +1449,7 @@ export function AnalyticsDashboard() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => handleDownloadCSV("team-leaderboard")} className="font-medium">下载 CSV 排行榜</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleDownloadExcel("team-leaderboard")} className="font-medium">下载 Excel 排行榜</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </CardHeader>

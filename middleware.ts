@@ -19,6 +19,7 @@ function isPublicPath(pathname: string): boolean {
   if (
     pathname === '/api/version' || pathname === '/api/v1/crm/handoff-staffing' ||
     pathname === '/api/jobs/operations-handoffs' ||
+    pathname === '/api/jobs/crm-protection' ||
     pathname === '/api/jobs/renewal-wecom-notify' ||
     pathname === '/api/jobs/feishu-sync' ||
     pathname === '/api/feishu/callback' ||

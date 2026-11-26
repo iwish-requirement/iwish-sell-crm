@@ -24,6 +24,7 @@ import {
 
 import { MePermissionsContext } from "@/components/app-root"
 import { CrmOperatingDashboard, CrmOperatingReportDialog } from "@/components/crm-operating-dashboard"
+import { CrmProtectionNotices } from "@/components/crm-sales-settings"
 import { FollowUpFunnel } from "@/components/follow-up-funnel"
 import { ChartSkeleton } from "@/components/skeleton-loaders"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -1079,6 +1080,7 @@ export function Dashboard() {
         }}
       />
 
+      {permissionsReady && <CrmProtectionNotices />}
       <DashboardLoadNotice label="销售过程数据" status={activitySection.result.status} retry={activitySection.retry} />
       <DashboardLoadNotice label="本月回款" status={revenueSection.result.status} retry={revenueSection.retry} />
 

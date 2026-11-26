@@ -60,6 +60,8 @@ export const DEAL_FINANCE_FIELDS = [
   ["legalName", "合同签署主体全称（唯一值）"],
   ["receivedOn", "确认到账日期"],
   ["receivedAmount", "确认到账金额"],
+  ["grossProfit", "实际签单毛利"],
+  ["grossProfitCurrency", "实际签单毛利币种"],
 ] as const
 
 export const DEAL_ALLOCATION_FIELDS = [

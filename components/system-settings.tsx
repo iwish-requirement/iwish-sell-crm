@@ -68,9 +68,9 @@ import { getBrowserSupabaseClient } from "@/lib/supabase/client"
 import { rpcGetRolePermissions, rpcRolePermissionsSetMatrix, type RolePermissionMatrixItem } from "@/lib/services/role-permissions"
 import { mapRpcError, type RpcErrorFriendly } from "@/lib/rpc-error-mapper"
 import { toast } from "sonner"
-import { CrmSalesSettings } from "./crm-sales-settings"
 import { LeadGradesAndSourcesSettingsCard } from "./lead-grades-and-sources-settings-card"
 import { BusinessTypesSettingsCard } from "./business-types-settings-card"
+import { CrmSalesSettings } from "./crm-sales-settings"
 import { MePermissionsContext } from "@/components/app-root"
 
 
@@ -735,8 +735,6 @@ export function SystemSettings() {
 
 // Business Rules Tab
 function BusinessRulesTab() {
-  const [publicPoolDays, setPublicPoolDays] = useState("120")
-  const [quotaLimit, setQuotaLimit] = useState("60")
   const [preventPreviousOwnerReclaim, setPreventPreviousOwnerReclaim] = useState(false)
   const [warningHours, setWarningHours] = useState("72")
   const [dangerHours, setDangerHours] = useState("168")
@@ -786,12 +784,6 @@ function BusinessRulesTab() {
         const pipelineValue = (pipelineRow?.value as any) ?? null
 
         if (pipelineValue) {
-          if (pipelineValue.lead_protection_days != null || pipelineValue.public_pool_days != null) {
-            setPublicPoolDays(String(pipelineValue.lead_protection_days ?? pipelineValue.public_pool_days))
-          }
-          if (pipelineValue.quota_limit != null) {
-            setQuotaLimit(String(pipelineValue.quota_limit))
-          }
           if (pipelineValue.warning_hours != null) {
             setWarningHours(String(pipelineValue.warning_hours))
           }
@@ -836,19 +828,13 @@ function BusinessRulesTab() {
   }, [])
 
   const handleSave = async () => {
-    const poolDays = Number.parseInt(publicPoolDays, 10)
-    const quota = Number.parseInt(quotaLimit, 10)
     const warnHours = Number.parseInt(warningHours, 10)
     const dangerHoursValue = Number.parseInt(dangerHours, 10)
     const renewalDays = Number.parseInt(renewalNotifyDaysBefore, 10)
 
     if (
-      Number.isNaN(poolDays) ||
-      Number.isNaN(quota) ||
       Number.isNaN(warnHours) ||
       Number.isNaN(dangerHoursValue) ||
-      poolDays <= 0 ||
-      quota <= 0 ||
       warnHours <= 0 ||
       dangerHoursValue <= 0 ||
       (renewalNotifyEnabled && (Number.isNaN(renewalDays) || renewalDays <= 0))
@@ -867,9 +853,6 @@ function BusinessRulesTab() {
             {
               key: "pipeline.business_rules",
               value: {
-                public_pool_days: poolDays,
-                lead_protection_days: poolDays,
-                quota_limit: quota,
                 warning_hours: warnHours,
                 danger_hours: dangerHoursValue,
                 prevent_previous_owner_reclaim: preventPreviousOwnerReclaim,
@@ -930,7 +913,6 @@ function BusinessRulesTab() {
         </TabsList>
 
         <TabsContent value="leads">
-          <CrmSalesSettings />
           <div className="space-y-6">
             <Card className="max-w-2xl">
               <CardHeader>
@@ -940,37 +922,6 @@ function BusinessRulesTab() {
               </CardHeader>
               <CardContent className="space-y-6">
                 <div className="grid gap-6">
-                  <div className="space-y-2">
-                    <Label htmlFor="poolDays">无跟进保护期 / 公海池掉落天数</Label>
-                    <div className="flex items-center gap-2">
-                      <Input
-                        id="poolDays"
-                        type="number"
-                        value={publicPoolDays}
-                        onChange={(e) => setPublicPoolDays(e.target.value)}
-                        className="w-24"
-                        disabled={isLoading || isSaving}
-                      />
-                      <span className="text-sm text-muted-foreground">天</span>
-                    </div>
-                    <p className="text-xs text-muted-foreground">从销售获得归属开始计算；超过此天数且没有任何真实跟进记录的线索将自动进入公海池</p>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="quotaLimit">每名销售有效客户名额</Label>
-                    <div className="flex items-center gap-2">
-                      <Input
-                        id="quotaLimit"
-                        type="number"
-                        value={quotaLimit}
-                        onChange={(e) => setQuotaLimit(e.target.value)}
-                        className="w-24"
-                        disabled={isLoading || isSaving}
-                      />
-                      <span className="text-sm text-muted-foreground">个</span>
-                    </div>
-                    <p className="text-xs text-muted-foreground">只统计可跟进/潜在意向且未成交的当前负责人客户</p>
-                  </div>
-                  <Separator />
                   <div className="flex items-start justify-between gap-4">
                     <div className="space-y-1">
                       <Label htmlFor="preventPreviousOwnerReclaim">禁止原负责人再次认领</Label>
@@ -1064,7 +1015,7 @@ function BusinessRulesTab() {
               </CardContent>
             </Card>
 
-            <LeadLockAndProtectionSettingsCard />
+            <CrmSalesSettings />
             <LeadGradesAndSourcesSettingsCard />
             <BusinessTypesSettingsCard />
 
@@ -1564,283 +1515,6 @@ function AnalyticsExclusionSettingsCard() {
             {isSaving ? "保存中..." : "保存排除配置"}
           </Button>
         </div>
-      </CardContent>
-    </Card>
-  )
-}
-
-function LeadLockAndProtectionSettingsCard() {
-  const [lockHours, setLockHours] = useState("24")
-  const [stageDays, setStageDays] = useState({
-    L1: "1",
-    L2: "3",
-    L3: "7",
-    L4: "14",
-    Won: "30",
-  })
-  const [gradeDays, setGradeDays] = useState({
-    S: "7",
-    A: "14",
-    B: "21",
-    C: "30",
-  })
-
-  const [isLoading, setIsLoading] = useState(true)
-  const [isSaving, setIsSaving] = useState(false)
-  const [loadError, setLoadError] = useState<string | null>(null)
-
-  useEffect(() => {
-    let isMounted = true
-
-    async function loadLockSettings() {
-      try {
-        setIsLoading(true)
-        const supabase = getBrowserSupabaseClient()
-        const { data, error } = await supabase
-          .from("settings")
-          .select("value")
-          .eq("key", "leads.lock_and_protection")
-          .maybeSingle()
-
-        if (!isMounted) return
-
-        if (error && error.code !== "PGRST116") {
-          console.error("Failed to load lead lock and protection settings", error)
-          const message = error.message ?? ""
-          if (message.includes("ERR_NO_PERMISSION:settings.read")) {
-            setLoadError("当前账号无权查看锁单与保护期配置")
-          } else {
-            setLoadError("锁单与保护期配置加载失败，请稍后重试")
-          }
-          setIsLoading(false)
-          return
-        }
-
-        const value = (data?.value as any) ?? null
-
-        if (value) {
-          if (value.first_contact_lock_hours != null) {
-            setLockHours(String(value.first_contact_lock_hours))
-          }
-
-          const stageCfg = (value.stage_protection_days as any) ?? {}
-          setStageDays((prev) => ({
-            L1: stageCfg.L1 != null ? String(stageCfg.L1) : prev.L1,
-            L2: stageCfg.L2 != null ? String(stageCfg.L2) : prev.L2,
-            L3: stageCfg.L3 != null ? String(stageCfg.L3) : prev.L3,
-            L4: stageCfg.L4 != null ? String(stageCfg.L4) : prev.L4,
-            Won: stageCfg.Won != null ? String(stageCfg.Won) : prev.Won,
-          }))
-
-          const gradeCfg = (value.grade_protection_days as any) ?? {}
-          setGradeDays((prev) => ({
-            S: gradeCfg.S != null ? String(gradeCfg.S) : prev.S,
-            A: gradeCfg.A != null ? String(gradeCfg.A) : prev.A,
-            B: gradeCfg.B != null ? String(gradeCfg.B) : prev.B,
-            C: gradeCfg.C != null ? String(gradeCfg.C) : prev.C,
-          }))
-        }
-
-        setLoadError(null)
-        setIsLoading(false)
-      } catch (error) {
-        console.error("Unexpected error while loading lead lock and protection settings", error)
-        if (isMounted) {
-          setLoadError("锁单与保护期配置加载失败，请稍后重试")
-          setIsLoading(false)
-        }
-      }
-    }
-
-    void loadLockSettings()
-
-    return () => {
-      isMounted = false
-    }
-  }, [])
-
-  const handleSave = async () => {
-    const parsedLock = Number.parseInt(lockHours, 10)
-    const parsedStage = {
-      L1: Number.parseInt(stageDays.L1, 10),
-      L2: Number.parseInt(stageDays.L2, 10),
-      L3: Number.parseInt(stageDays.L3, 10),
-      L4: Number.parseInt(stageDays.L4, 10),
-      Won: Number.parseInt(stageDays.Won, 10),
-    }
-    const parsedGrade = {
-      S: Number.parseInt(gradeDays.S, 10),
-      A: Number.parseInt(gradeDays.A, 10),
-      B: Number.parseInt(gradeDays.B, 10),
-      C: Number.parseInt(gradeDays.C, 10),
-    }
-
-    const anyNaN =
-      Number.isNaN(parsedLock) ||
-      Object.values(parsedStage).some((v) => Number.isNaN(v)) ||
-      Object.values(parsedGrade).some((v) => Number.isNaN(v))
-
-    if (anyNaN || parsedLock <= 0 || Object.values(parsedStage).some((v) => v < 0) || Object.values(parsedGrade).some((v) => v < 0)) {
-      toast.error("保存失败", {
-        description: "请填写有效数字（锁单时长需大于 0，保护期天数可为 0 或更大）",
-      })
-      return
-    }
-
-    try {
-      setIsSaving(true)
-      const supabase = getBrowserSupabaseClient()
-      const { error } = await supabase
-        .from("settings")
-        .upsert(
-          {
-            key: "leads.lock_and_protection",
-            value: {
-              first_contact_lock_hours: parsedLock,
-              stage_protection_days: parsedStage,
-              grade_protection_days: parsedGrade,
-            },
-          },
-          { onConflict: "key" },
-        )
-
-      if (error) {
-        console.error("Failed to save lead lock and protection settings", error)
-        const message = error.message ?? ""
-        if (message.includes("ERR_NO_PERMISSION:settings.pipeline.manage")) {
-          toast.error("保存失败", {
-            description: "当前账号无权修改锁单与保护期规则，请联系系统管理员开通 settings.pipeline.manage 权限",
-          })
-        } else {
-          toast.error("保存失败", { description: "保存锁单与保护期配置时出错，请稍后重试" })
-        }
-        return
-      }
-
-      toast.success("锁单与保护期规则已保存")
-    } catch (error) {
-      console.error("Unexpected error while saving lead lock and protection settings", error)
-      toast.error("保存失败", { description: "保存锁单与保护期配置时发生异常，请稍后重试或联系管理员" })
-    } finally {
-      setIsSaving(false)
-    }
-  }
-
-  return (
-    <Card className="max-w-2xl">
-      <CardHeader>
-        <CardTitle>锁单与保护期</CardTitle>
-        <CardDescription>
-          配置首次有效联系后的锁单时长，以及按阶段和客户级别计算的保护期天数。已有保护期不会被缩短，只会在配置变大时向后延长。
-        </CardDescription>
-        {loadError && <p className="mt-2 text-xs text-destructive/80">{loadError}</p>}
-      </CardHeader>
-      <CardContent className="space-y-6">
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="lockHours">首次有效联系锁单时长</Label>
-            <div className="flex items-center gap-2">
-              <Input
-                id="lockHours"
-                type="number"
-                value={lockHours}
-                onChange={(e) => setLockHours(e.target.value)}
-                className="w-24"
-                disabled={isLoading || isSaving}
-              />
-              <span className="text-sm text-muted-foreground">小时</span>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              首次有效联系后的这段时间内，系统会优先保护当前负责人，避免线索被频繁抢占或退回。
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-medium">按阶段保护期</h3>
-                <p className="text-xs text-muted-foreground">不同阶段的线索可设置不同的最短保护期天数。</p>
-              </div>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              {([
-                ["L1", "L1 询盘"],
-                ["L2", "L2 意向"],
-                ["L3", "L3 关键意向"],
-                ["L4", "L4 谈判"],
-                ["Won", "成交客户"],
-              ] as const).map(([key, label]) => (
-                <div key={key} className="space-y-1">
-                  <Label className="text-xs" htmlFor={`stage-${key}`}>
-                    {label}
-                  </Label>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      id={`stage-${key}`}
-                      type="number"
-                      value={stageDays[key as keyof typeof stageDays]}
-                      onChange={(e) =>
-                        setStageDays((prev) => ({
-                          ...prev,
-                          [key]: e.target.value,
-                        }))
-                      }
-                      className="w-24"
-                      disabled={isLoading || isSaving}
-                    />
-                    <span className="text-xs text-muted-foreground">天</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-medium">按客户级别保护期</h3>
-                <p className="text-xs text-muted-foreground">
-                  S/A/B/C 等不同客户级别可以叠加额外的保护期，系统会取阶段与级别中更长的一侧。
-                </p>
-              </div>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              {([
-                ["S", "S 级客户"],
-                ["A", "A 级客户"],
-                ["B", "B 级客户"],
-                ["C", "C 级客户"],
-              ] as const).map(([key, label]) => (
-                <div key={key} className="space-y-1">
-                  <Label className="text-xs" htmlFor={`grade-${key}`}>
-                    {label}
-                  </Label>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      id={`grade-${key}`}
-                      type="number"
-                      value={gradeDays[key as keyof typeof gradeDays]}
-                      onChange={(e) =>
-                        setGradeDays((prev) => ({
-                          ...prev,
-                          [key]: e.target.value,
-                        }))
-                      }
-                      className="w-24"
-                      disabled={isLoading || isSaving}
-                    />
-                    <span className="text-xs text-muted-foreground">天</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <Button onClick={handleSave} disabled={isSaving || isLoading}>
-          <Save className="w-4 h-4 mr-2" />
-          {isSaving ? "保存中..." : "保存锁单与保护期规则"}
-        </Button>
       </CardContent>
     </Card>
   )

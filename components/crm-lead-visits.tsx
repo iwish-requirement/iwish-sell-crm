@@ -10,12 +10,13 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Textarea } from "@/components/ui/textarea"
 import { getBrowserSupabaseClient } from "@/lib/supabase/client"
 import {
-  crmDate, downloadVisitFile, getCrmError, listVisitParticipants,
+  crmDate, downloadVisitFile, getCrmError, listVisitParticipants, protectionLabels,
   requiresMeetingEvidence, saveVisit, visitMethods, visitServices, visitTypes,
   type CrmPerson, type CrmVisit, type LeadWorkflow, type VisitData,
 } from "@/lib/services/crm-visits"
 
 const selectStyle = "w-full rounded-md border bg-background px-3 py-2 text-sm"
+const protectionChoices = ["new_intent", "key_intent", "nurture"] as const
 
 function VisitForm({ leadId, workflow, visit, contact, onSave, onCancel }: {
   leadId: string
@@ -189,6 +190,86 @@ function VisitForm({ leadId, workflow, visit, contact, onSave, onCancel }: {
         <Button type="submit" disabled={saving}>{saving ? "保存中…" : visit ? "保存修改" : "提交拜访"}</Button>
       </div>
     </form>
+  )
+}
+
+export function CrmLeadProtection({ leadId, workflow, onChange }: {
+  leadId: string
+  workflow: LeadWorkflow
+  onChange: () => void
+}) {
+  const [customerClass, setCustomerClass] = useState<string>(workflow.protectionClass)
+  const [confirmedUntil, setConfirmedUntil] = useState("")
+  const [action, setAction] = useState<"extension" | "nurture" | null>(null)
+  const [days, setDays] = useState("15")
+  const [reason, setReason] = useState("")
+  const [busy, setBusy] = useState(false)
+  async function run(name: string, args: Record<string, unknown>) {
+    setBusy(true)
+    try {
+      const { error } = await getBrowserSupabaseClient().rpc(name, args)
+      if (error) throw error
+      setAction(null)
+      setReason("")
+      toast.success("保护期记录已更新")
+      onChange()
+    } catch (error) {
+      toast.error(getCrmError(error, "处理保护期操作失败，请检查到期日和当前状态"))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="space-y-2 rounded-md bg-primary/5 px-3 py-2 text-muted-foreground">
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <Badge variant="outline">{protectionLabels[workflow.protectionClass]}</Badge>
+        {workflow.reviewRequired && <Badge variant="secondary">历史保护期待确认</Badge>}
+        {workflow.expiresOn && <span>保护期至 {workflow.expiresOn}</span>}
+        {workflow.reviewRequired && workflow.legacyProtectedUntil && <span>历史保护日期 {crmDate(new Date(workflow.legacyProtectedUntil))}</span>}
+        {workflow.protectionClass === "new_intent" && workflow.firstVisitSatisfied && <span>已完成首访</span>}
+      </div>
+      {workflow.canManageProtection && (
+        <form className="grid gap-2 sm:grid-cols-3" onSubmit={(event) => {
+          event.preventDefault()
+          void run("rpc_crm_protection_configure", {
+            p_lead_id: leadId, p_class: customerClass, p_confirmed_until: confirmedUntil || null,
+          })
+        }}>
+          <select aria-label="客户管理分类" className={selectStyle} value={customerClass} onChange={(event) => setCustomerClass(event.target.value)}>
+            {protectionChoices.map((item) => <option key={item} value={item}>{protectionLabels[item]}</option>)}
+          </select>
+          {workflow.reviewRequired && <Input aria-label="核定保护到期日" type="date" required value={confirmedUntil} onChange={(event) => setConfirmedUntil(event.target.value)} />}
+          <Button type="submit" size="sm" variant="outline" disabled={busy}>{workflow.reviewRequired ? "确认历史保护期" : "保存分类"}</Button>
+        </form>
+      )}
+      {workflow.canRequestProtection && (
+        <div className="flex flex-wrap gap-2">
+          {workflow.expiresOn && <Button type="button" size="sm" variant="outline" onClick={() => setAction("extension")}>申请延期</Button>}
+          {workflow.protectionClass === "key_intent" && <Button type="button" size="sm" variant="outline" onClick={() => setAction("nurture")}>申请转待培育</Button>}
+        </div>
+      )}
+      {action && <form className="flex flex-wrap items-center gap-2" onSubmit={(event) => {
+        event.preventDefault()
+        void run("rpc_crm_protection_request", {
+          p_lead_id: leadId, p_kind: action, p_days: action === "extension" ? Number(days) : 0, p_reason: reason,
+        })
+      }}>
+        {action === "extension" && <Input type="number" className="w-20" aria-label="延期天数" required min={1} max={30} value={days} onChange={(event) => setDays(event.target.value)} />}
+        <Input aria-label="申请原因" className="min-w-36 flex-1" required value={reason} onChange={(event) => setReason(event.target.value)} />
+        <Button size="sm" type="submit" disabled={busy}>提交申请</Button>
+        <Button size="sm" type="button" variant="ghost" onClick={() => setAction(null)}>取消</Button>
+      </form>}
+      {workflow.requests.map((request) => (
+        <div key={request.id} className="flex flex-wrap items-center gap-2 rounded-md bg-muted p-2 text-xs">
+          <span className="flex-1">{request.kind === "extension" ? "延期 " + request.days + " 天" : "转待培育"} · {request.reason}</span>
+          {request.canReview ? <>
+            <Button size="sm" variant="outline" disabled={busy} onClick={() => run("rpc_crm_protection_review", { p_request_id: request.id, p_approve: true })}>通过</Button>
+            <Button size="sm" variant="ghost" disabled={busy} onClick={() => run("rpc_crm_protection_review", { p_request_id: request.id, p_approve: false })}>驳回</Button>
+          </> : <Badge variant="secondary">待审核</Badge>}
+        </div>
+      ))}
+    </div>
   )
 }
 

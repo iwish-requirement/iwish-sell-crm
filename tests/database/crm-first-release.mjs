@@ -31,6 +31,10 @@ async function insertLead(key, assignedTo, leadTeam, name, stage, createdAt) {
 
 try {
   await loadAllocationFixture(db, async (filename) => {
+    if (filename.endsWith("_crm_customer_protection_rules.sql")) {
+      assert.deepEqual(await ruleDefinitions(), rulesBefore)
+      return
+    }
     if (!filename.endsWith("_crm_first_release.sql")) return
     rulesBefore = await ruleDefinitions()
     await db.exec("insert into public.teams(id,name) values (8101,'测试团队'), (8102,'独立团队')")
@@ -47,15 +51,16 @@ try {
     await rows("insert into public.lead_notes(lead_id,author_id,content,note_type) values($1,$2,'原线下拜访内容','visit')", [historic,owner])
     await db.exec("alter table public.leads enable trigger trg_lead_pipeline_defaults")
   })
-  assert.deepEqual(await ruleDefinitions(), rulesBefore)
   assert.deepEqual(await rows("select monthly, quarterly, yearly, weekly_reference from iwish.crm_visit_goals where profile_id=$1 order by effective_on",[junior]), [
     { monthly: 16, quarterly: null, yearly: null, weekly_reference: null },
     { monthly: 20, quarterly: 60, yearly: 240, weekly_reference: "5" },
   ])
-  assert.deepEqual(await rows("select follow_up_stage,locked_until,protected_until from public.leads where id=$1",[historic]), [{
+  assert.deepEqual(await rows("select follow_up_stage,locked_until,protected_until,crm_legacy_protected_until,crm_protection_review_required from public.leads where id=$1",[historic]), [{
     follow_up_stage: "online_communication",
     locked_until: new Date("2026-11-02T04:00:00Z"),
-    protected_until: new Date("2026-12-01T04:00:00Z"),
+    protected_until: null,
+    crm_legacy_protected_until: new Date("2026-12-01T04:00:00Z"),
+    crm_protection_review_required: true,
   }])
   assert.equal(await value("select count(*)::integer as value from public.lead_notes where lead_id=$1 and note_type='visit'",[historic]),1)
 
@@ -69,7 +74,7 @@ try {
   const tomorrow = await value("select (iwish.crm_today()+1)::text as value")
   await seedLead(lead, owner, team, "演示客户", "uncontacted", day+"T00:00:00Z")
   await seedLead(foreignLead, outsider, 8102, "外部团队客户", "uncontacted", day+"T00:00:00Z")
-  const originalDeadline = await value("select (l.protected_until at time zone 'Asia/Shanghai')::date::text as value from public.leads l where id=$1",[lead])
+  const originalDeadline = await value("select iwish.crm_protection_deadline(l)::text as value from public.leads l where id=$1",[lead])
   const data = {
     visitDate: day, method: "video", type: "first", contactName: "测试联系人", contactTitle: "采购",
     services: ["Google广告运营"], needs: "正式讨论预算", outcome: "确认后续报价", expectedMargin: "100",

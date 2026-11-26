@@ -596,6 +596,7 @@ export function PublicPool() {
   const mePermissions = React.useContext(MePermissionsContext)
   const canAssignLeads = mePermissions?.canAssignLeads ?? false
   const canClaimLeads = mePermissions?.canClaimLeads ?? false
+  const [pendingOnly, setPendingOnly] = useState(false)
   const canDeleteLeads = mePermissions?.canDeleteLeads ?? false
   const canViewPublicPool = mePermissions?.canViewPublicPool ?? false
   const canImportLeads = mePermissions?.canImportLeads ?? false
@@ -829,6 +830,7 @@ export function PublicPool() {
           )
 
           .eq("status", "pool")
+          .eq("crm_pending_assignment", pendingOnly)
           .order("updated_at", { ascending: false })
 
         if (!isMounted) {
@@ -1116,7 +1118,7 @@ export function PublicPool() {
     return () => {
       isMounted = false
     }
-  }, [reloadToken, retryLoad])
+  }, [reloadToken, retryLoad, pendingOnly])
 
   // 订阅 Supabase Realtime，监听线索状态进出公海池，实现公海池的实时刷新
   useEffect(() => {
@@ -1994,7 +1996,11 @@ const getDaysInPoolBadge = (days: number) => {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold text-foreground tracking-tight">公海池</h1>
-          <p className="text-sm text-muted-foreground mt-1 font-medium">共 <span className="text-foreground font-bold">{leads.length}</span> 条待分配线索</p>
+          {canAssignLeads && <div className="mt-2 flex gap-2">
+            <Button size="sm" variant={pendingOnly ? "ghost" : "outline"} onClick={() => { setPendingOnly(false); setSelectedLeads([]) }}>可领取公海</Button>
+            <Button size="sm" variant={pendingOnly ? "outline" : "ghost"} onClick={() => { setPendingOnly(true); setSelectedLeads([]) }}>公共待分配</Button>
+          </div>}
+          <p className="text-sm text-muted-foreground mt-1 font-medium">共 <span className="text-foreground font-bold">{leads.length}</span> 条{pendingOnly ? "待分配" : "公海"}线索</p>
         </div>
 
         <div className="flex flex-col sm:flex-row w-full sm:w-auto items-stretch sm:items-center gap-2 sm:gap-3">
@@ -2014,7 +2020,7 @@ const getDaysInPoolBadge = (days: number) => {
           )}
           <Button
             variant="outline"
-            disabled={selectedLeads.length === 0 || !canClaimLeads}
+            disabled={pendingOnly || selectedLeads.length === 0 || !canClaimLeads}
             onClick={async () => {
               if (!canClaimLeads) {
                 toast.error("没有认领线索的权限", {
@@ -2082,7 +2088,7 @@ const getDaysInPoolBadge = (days: number) => {
                         .select(
                           "name, website, customer_name, customer_phone, source, product_category, budget, stage, status, responsibility_type, source_level1, source_level2, activity_name, referral_customer_name",
                         )
-                        .eq("status", "pool")
+                        .eq("status", "pool").eq("crm_pending_assignment", pendingOnly)
 
 
 
@@ -2182,7 +2188,7 @@ const getDaysInPoolBadge = (days: number) => {
                         .select(
                           "name, website, customer_name, customer_phone, wechat, source, product_category, budget, stage, status, responsibility_type, source_level1, source_level2",
                         )
-                        .eq("status", "pool")
+                        .eq("status", "pool").eq("crm_pending_assignment", pendingOnly)
 
 
                       if (leadsError) {
@@ -2400,7 +2406,7 @@ const getDaysInPoolBadge = (days: number) => {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem
+                        {!pendingOnly && <DropdownMenuItem
                           onClick={() => {
                             if (!canClaimLeads) {
                               toast.error("没有认领线索的权限", {
@@ -2413,7 +2419,7 @@ const getDaysInPoolBadge = (days: number) => {
                           }}
                         >
                           <UserPlus className="w-4 h-4 mr-2" /> 认领到我的线索
-                        </DropdownMenuItem>
+                        </DropdownMenuItem>}
                         {canAssignLeads && (
                           <DropdownMenuItem
                             onClick={() => {

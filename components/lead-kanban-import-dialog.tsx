@@ -174,6 +174,7 @@ export function LeadKanbanImportDialog({
         ok?: boolean
         detail?: string
         importedCount?: number
+        pendingAssignmentCount?: number
         failedCount?: number
         duplicateCount?: number
         totalCount?: number
@@ -190,7 +191,9 @@ export function LeadKanbanImportDialog({
       }
 
       toast.success("导入完成", {
-        description: `共导入 ${json.importedCount ?? 0} 条线索，已直接进入线索看板`,
+        description: json.pendingAssignmentCount
+          ? `共导入 ${json.importedCount ?? 0} 条线索，其中 ${json.pendingAssignmentCount} 条进入公共待分配`
+          : `共导入 ${json.importedCount ?? 0} 条线索，已进入线索看板`,
       })
       setOpen(false)
       resetState()

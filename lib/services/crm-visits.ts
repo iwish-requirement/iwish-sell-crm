@@ -87,6 +87,7 @@ export type LeadWorkflow = {
   protectionClass: ProtectionClass
   reviewRequired: boolean
   expiresOn: string | null
+  legacyProtectedUntil?: string | null
   firstVisitSatisfied: boolean
   requests: ExtensionRequest[]
   visits: CrmVisit[]
