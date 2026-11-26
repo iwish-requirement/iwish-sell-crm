@@ -13,6 +13,18 @@ export type CrmRelease = {
 // Keep the latest version first and only describe features in that release.
 export const crmReleaseNotes: CrmRelease[] = [
   {
+    version: "2026-11-26-02",
+    title: "经营统计统一沿用排除配置",
+    changes: [
+      {
+        title: "首页、数据分析和报表按现有规则统计",
+        before: "首页回款会直接汇总付款记录，数据分析与导出可能读取不同时间的排除设置。",
+        after: "在「系统设置 → 数据分析」配置排除团队和账号。仪表盘成交和回款、成交中心汇总、数据分析及导出按适用的现有规则统计。总经理仪表盘继续使用专用团队排除设置。",
+        example: "测试团队被设为统计排除团队后，该团队所属线索的成交和回款不计入经营统计。同一笔回款按币种展示，原始合同和付款记录仍可按权限查询。",
+      },
+    ],
+  },
+  {
     version: "2026-11-26-01",
     title: "线索阶段、客户拜访和签约",
     changes: [

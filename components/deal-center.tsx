@@ -103,6 +103,7 @@ function CurrentDealCenter({ allocationCutoff }: { allocationCutoff: string | nu
   const [departmentStates, setDepartmentStates] = useState<Record<string, LeadDepartmentState>>({})
   const [departmentRefresh, setDepartmentRefresh] = useState(0)
   const [isLoading, setIsLoading] = useState(true)
+  const [reportableDealIds, setReportableDealIds] = useState<Set<string> | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [deals, setDeals] = useState<DealRow[]>([])
   useEffect(() => {
@@ -193,6 +194,7 @@ function CurrentDealCenter({ allocationCutoff }: { allocationCutoff: string | nu
 
       setIsLoading(true)
       setLoadError(null)
+      setReportableDealIds(null)
 
       try {
 
@@ -451,10 +453,22 @@ function CurrentDealCenter({ allocationCutoff }: { allocationCutoff: string | nu
           return new Date(bDate).getTime() - new Date(aDate).getTime()
         })
 
+        if (!isMounted) return
         setDeals(dealsWithOwner)
-
-
         setIsLoading(false)
+        if (dealsWithOwner.length === 0) {
+          setReportableDealIds(new Set())
+          return
+        }
+        const { data: reportable, error: summaryError } = await supabase.rpc("rpc_crm_reportable_deals", {
+          p_lead_ids: dealsWithOwner.map((deal) => deal.id),
+        })
+        if (!isMounted) return
+        if (summaryError) {
+          console.error("Failed to load reportable deals", summaryError)
+          return
+        }
+        setReportableDealIds(new Set(reportable as string[]))
       } catch (error) {
         console.error("Failed to load deals for deal center", error)
         if (!isMounted) {
@@ -631,7 +645,7 @@ function CurrentDealCenter({ allocationCutoff }: { allocationCutoff: string | nu
 
 
   const stats = useMemo(() => {
-    const signedDeals = filteredDeals.filter((deal) => !deal.awaitingSignature)
+    const signedDeals = filteredDeals.filter((deal) => !deal.awaitingSignature && reportableDealIds?.has(deal.id))
     const count = signedDeals.length
     const totalBudget = signedDeals.reduce((sum, deal) => sum + (deal.budget || 0), 0)
 
@@ -655,7 +669,7 @@ function CurrentDealCenter({ allocationCutoff }: { allocationCutoff: string | nu
         : "¥0"
 
     return { count, totalBudget, totalBudgetLabel, avgBudget, avgBudgetLabel }
-  }, [filteredDeals])
+  }, [filteredDeals, reportableDealIds])
 
   const firstPaymentDate = useMemo(() => {
     if (selectedContract?.leadId !== selectedDeal?.id || contractPayments.length === 0) {
@@ -762,7 +776,7 @@ function CurrentDealCenter({ allocationCutoff }: { allocationCutoff: string | nu
             {isLoading ? (
               <Skeleton className="h-6 w-16" />
             ) : (
-              <p className="text-2xl font-semibold text-foreground">{stats.count}</p>
+              <p className="text-2xl font-semibold text-foreground">{reportableDealIds ? stats.count : "—"}</p>
             )}
           </CardContent>
         </Card>
@@ -774,7 +788,7 @@ function CurrentDealCenter({ allocationCutoff }: { allocationCutoff: string | nu
             {isLoading ? (
               <Skeleton className="h-6 w-24" />
             ) : (
-              <p className="text-2xl font-semibold text-primary">{stats.totalBudgetLabel}</p>
+              <p className="text-2xl font-semibold text-primary">{reportableDealIds ? stats.totalBudgetLabel : "—"}</p>
             )}
           </CardContent>
         </Card>
@@ -786,7 +800,7 @@ function CurrentDealCenter({ allocationCutoff }: { allocationCutoff: string | nu
             {isLoading ? (
               <Skeleton className="h-6 w-24" />
             ) : (
-              <p className="text-2xl font-semibold text-foreground">{stats.avgBudgetLabel}</p>
+              <p className="text-2xl font-semibold text-foreground">{reportableDealIds ? stats.avgBudgetLabel : "—"}</p>
             )}
           </CardContent>
         </Card>

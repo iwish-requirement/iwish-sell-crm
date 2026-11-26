@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useContext, useMemo } from "react"
+import { useState, useEffect, useContext, useMemo, useRef } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -142,6 +142,8 @@ function getAnalyticsFollowUpStage(lead: Pick<LeadSecureRow, "stage" | "follow_u
     ? followUpStage
     : legacyStage ?? "uncontacted"
 
+  if (candidate === "payment_received") return candidate
+
   if (
     lead.status === "closed" &&
     (lead.close_result === "won" || lead.close_result === "成交" || rawLegacyStage === "Won")
@@ -150,6 +152,15 @@ function getAnalyticsFollowUpStage(lead: Pick<LeadSecureRow, "stage" | "follow_u
   }
 
   return candidate
+}
+
+async function fetchAnalyticsExclusions(client: ReturnType<typeof getBrowserSupabaseClient>) {
+  const { data, error } = await client.rpc("rpc_crm_analytics_exclusions")
+  if (error) throw error
+  if (!Array.isArray(data?.teams) || !Array.isArray(data?.profiles)) throw new Error("读取统计排除设置失败")
+  const teams = Array.from(new Set<number>(data.teams.filter((id: unknown) => typeof id === "number"))).sort((a, b) => a - b)
+  const profiles = Array.from(new Set<string>(data.profiles.filter((id: unknown) => typeof id === "string"))).sort()
+  return { teamIds: new Set(teams), profileIds: new Set(profiles), revision: JSON.stringify([teams, profiles]) }
 }
 
 export function AnalyticsDashboard() {
@@ -184,6 +195,13 @@ export function AnalyticsDashboard() {
 
 
 
+  const [reportReload, setReportReload] = useState(0)
+  const [loadedReport, setLoadedReport] = useState<{ key: string; exclusions: string } | null>(null)
+  const reportKey = JSON.stringify([leadScopeType, selectedTeam, currentProfile?.id,
+    dateRange?.from?.getTime(), dateRange?.to?.getTime(), reportReload])
+  const activeReportKey = useRef(reportKey)
+  useEffect(() => { activeReportKey.current = reportKey }, [reportKey])
+
   useEffect(() => {
     if (!canViewReports) {
       return
@@ -194,34 +212,11 @@ export function AnalyticsDashboard() {
 
     const fetchTeams = async () => {
       try {
-        const [{ data, error }, { data: exclusionRow, error: exclusionError }] = await Promise.all([
-          supabase
-            .from("teams")
-            .select("id, name")
-            .order("name", { ascending: true }),
-          supabase
-            .from("settings")
-            .select("value")
-            .eq("key", "analytics.excluded_teams")
-            .maybeSingle(),
+        const [{ data, error }, { teamIds: excludedTeamIds }] = await Promise.all([
+          supabase.from("teams").select("id, name").order("name", { ascending: true }),
+          fetchAnalyticsExclusions(supabase),
         ])
-
-        if (error) {
-          console.error("Failed to load teams for analytics", error)
-          return
-        }
-        if (exclusionError && exclusionError.code !== "PGRST116") {
-          console.error("Failed to load analytics excluded teams for analytics filter", exclusionError)
-        }
-
-        const excludedTeamIds = new Set<number>(
-          exclusionRow && (exclusionRow as any).value &&
-          Array.isArray(((exclusionRow as any).value as any).team_ids)
-            ? (((exclusionRow as any).value as any).team_ids as any[]).filter(
-                (v: any) => typeof v === "number",
-              )
-            : [],
-        )
+        if (error) throw error
 
         const dynamicTeams: TeamOption[] =
           (data ?? [])
@@ -245,7 +240,7 @@ export function AnalyticsDashboard() {
     }
 
     void fetchTeams()
-  }, [canViewReports])
+  }, [canViewReports, reportReload])
 
   useEffect(() => {
     if (!canViewReports) {
@@ -257,15 +252,18 @@ export function AnalyticsDashboard() {
     const supabase = getBrowserSupabaseClient()
 
 
+    let active = true
     const fetchAnalytics = async () => {
       setIsLoading(true)
       setError(null)
+      setLoadedReport(null)
 
       let effectiveProfile = currentProfile
 
       if (!effectiveProfile) {
         try {
           effectiveProfile = await fetchCurrentUserProfile(supabase)
+          if (!active) return
           setCurrentProfile(effectiveProfile)
         } catch (profileError) {
           console.error("Failed to load current user profile for analytics data", profileError)
@@ -310,73 +308,23 @@ export function AnalyticsDashboard() {
 
       const [
         { data, error },
-        { data: teamExclusionRow, error: teamExclusionError },
-        { data: profileExclusionRow, error: profileExclusionError },
+        { teamIds: excludedTeamIds, profileIds: excludedProfileIds, revision },
         { data: contractRows, error: contractsError },
-      ] = await Promise.all([
-        leadsQuery,
-        supabase
-          .from("settings")
-          .select("value")
-          .eq("key", "analytics.excluded_teams")
-          .maybeSingle(),
-        supabase
-          .from("settings")
-          .select("value")
-          .eq("key", "analytics.excluded_profiles")
-          .maybeSingle(),
-        contractsQuery,
-      ])
-
-
-      if (error) {
-        setError(error.message ?? "加载报表数据失败")
-        setIsLoading(false)
-        return
-      }
-
-      if (contractsError) {
-        console.error("Failed to load contracts for analytics", contractsError)
-      }
-
-      if (teamExclusionError && teamExclusionError.code !== "PGRST116") {
-        console.error("Failed to load analytics excluded teams for analytics data", teamExclusionError)
-      }
-      if (profileExclusionError && profileExclusionError.code !== "PGRST116") {
-        console.error("Failed to load analytics excluded profiles for analytics data", profileExclusionError)
-      }
-
-      const excludedTeamIds = new Set<number>(
-        teamExclusionRow && (teamExclusionRow as any).value &&
-        Array.isArray(((teamExclusionRow as any).value as any).team_ids)
-          ? (((teamExclusionRow as any).value as any).team_ids as any[]).filter(
-              (v: any) => typeof v === "number",
-            )
-          : [],
-      )
-
-      const excludedProfileIds = new Set<string>(
-        profileExclusionRow && (profileExclusionRow as any).value &&
-        Array.isArray(((profileExclusionRow as any).value as any).profile_ids)
-          ? (((profileExclusionRow as any).value as any).profile_ids as any[]).filter(
-              (v: any) => typeof v === "string",
-            )
-          : [],
-      )
+      ] = await Promise.all([leadsQuery, fetchAnalyticsExclusions(supabase), contractsQuery])
+      if (!active) return
+      if (error) throw error
+      if (contractsError) throw contractsError
 
       const leads = (data ?? []) as LeadSecureRow[]
-
       const nonExcludedLeads = leads.filter((lead) => {
-        const teamId = (lead.team_id as number | null) ?? null
-        if (teamId != null && excludedTeamIds.has(teamId)) {
-          return false
-        }
-        const ownerId = (lead.owner_id as string | null) ?? null
-        if (ownerId && excludedProfileIds.has(ownerId)) {
-          return false
-        }
-        return true
+        const attributedOwner = lead.owner_id ?? lead.created_by
+        return (lead.team_id == null || !excludedTeamIds.has(lead.team_id))
+          && (!attributedOwner || !excludedProfileIds.has(attributedOwner))
       })
+      const markReady = () => {
+        setLoadedReport({ key: reportKey, exclusions: revision })
+        setIsLoading(false)
+      }
 
       const poolCount = nonExcludedLeads.filter((lead) => lead.status === "pool").length
       setPoolLeadsCount(poolCount)
@@ -433,7 +381,11 @@ export function AnalyticsDashboard() {
         setSourceRoiData([])
         setTeamData([])
         setProductTypeData([])
-        setIsLoading(false)
+        setContractExpiringSoon(0)
+        setContractExpiredRecently(0)
+        setContractNewAmount(0)
+        setContractRenewalAmount(0)
+        markReady()
         return
       }
 
@@ -466,7 +418,7 @@ export function AnalyticsDashboard() {
           const endDateStr = row.end_date as string | null
           const signedAtStr = row.signed_at as string | null
           const isRenewal = Boolean(row.is_renewal)
-          const amount = (row.amount as number) ?? 0
+          const amount = Number(row.amount) || 0
 
           if (endDateStr) {
             const endDate = new Date(endDateStr)
@@ -512,17 +464,6 @@ export function AnalyticsDashboard() {
       setContractExpiredRecently(expiredRecently)
       setContractNewAmount(newAmount)
       setContractRenewalAmount(renewalAmount)
-
-      if (filteredLeads.length === 0) {
-        setFunnelData([])
-        setSourceVolumeData([])
-        setSourceConversionData([])
-        setSourceRoiData([])
-        setTeamData([])
-        setProductTypeData([])
-        setIsLoading(false)
-        return
-      }
 
       // 客户产品品类是自由文本，不能使用 business_types（例如 DTC/B2B）代替。
       // 对历史记录的空值单独计入“历史数据未填写”，保证仪表盘总数可追溯。
@@ -619,7 +560,7 @@ export function AnalyticsDashboard() {
         current.leads += 1
 
         const logicalStage = getLogicalStage(lead)
-        if (logicalStage === "won") {
+        if (logicalStage === "won" || logicalStage === "payment_received") {
           current.won += 1
         }
 
@@ -638,6 +579,7 @@ export function AnalyticsDashboard() {
           .gte("created_at", dateRange.from.toISOString())
           .lte("created_at", dateRange.to.toISOString())
 
+        if (!active) return
         if (notesError) {
           console.error("Failed to load notes for analytics leaderboard", notesError)
         } else {
@@ -647,7 +589,7 @@ export function AnalyticsDashboard() {
             created_at: string
             is_deleted?: boolean | null
           }[]) {
-            if (!note.author_id) continue
+            if (!note.author_id || excludedProfileIds.has(note.author_id)) continue
             if (note.is_deleted) continue
             const prev = interactionsByUserId.get(note.author_id) ?? 0
             interactionsByUserId.set(note.author_id, prev + 1)
@@ -685,16 +627,11 @@ export function AnalyticsDashboard() {
         const [
           { data: profiles, error: profilesError },
           { data: roles, error: rolesError },
-          { data: exclusionRow, error: exclusionError },
         ] = await Promise.all([
           profileQuery,
           supabase.from("roles").select("id, name"),
-          supabase
-            .from("settings")
-            .select("value")
-            .eq("key", "analytics.excluded_profiles")
-            .maybeSingle(),
         ])
+        if (!active) return
 
         if (profilesError) {
           console.error("Failed to load leaderboard profiles", profilesError)
@@ -703,15 +640,6 @@ export function AnalyticsDashboard() {
             (roles ?? [])
               .filter((r: any) => r.name === "技术维护" || r.name === "系统管理")
               .map((r: any) => r.id as string),
-          )
-
-          const excludedProfileIds = new Set<string>(
-            exclusionRow && (exclusionRow as any).value &&
-            Array.isArray(((exclusionRow as any).value as any).profile_ids)
-              ? (((exclusionRow as any).value as any).profile_ids as any[]).filter(
-                  (v: any) => typeof v === "string",
-                )
-              : [],
           )
 
           for (const row of profiles as any[]) {
@@ -747,9 +675,6 @@ export function AnalyticsDashboard() {
 
         if (rolesError) {
           console.error("Failed to load roles for leaderboard", rolesError)
-        }
-        if (exclusionError && exclusionError.code !== "PGRST116") {
-          console.error("Failed to load analytics exclusion settings for leaderboard", exclusionError)
         }
       } catch (profilesErr) {
         console.error("Failed to load leaderboard profiles/roles", profilesErr)
@@ -812,19 +737,24 @@ export function AnalyticsDashboard() {
         (a, b) => b.leads - a.leads,
       )
 
+      if (!active) return
       setFunnelData(nextFunnelData)
       setSourceVolumeData(nextSourceVolume)
       setSourceConversionData(nextSourceConversion)
       setSourceRoiData(nextSourceRoi)
       setTeamData(nextTeamData)
       setProductTypeData(nextProductTypeData)
-
-      setIsLoading(false)
-
+      markReady()
     }
 
-    void fetchAnalytics()
-  }, [dateRange, selectedTeam, leadScopeType, currentProfile, canViewReports])
+    void fetchAnalytics().catch((failure) => {
+      if (!active) return
+      console.error("Failed to load analytics", failure)
+      setError("无法读取经营报表，请刷新后重试")
+      setIsLoading(false)
+    })
+    return () => { active = false }
+  }, [dateRange, selectedTeam, leadScopeType, currentProfile, canViewReports, reportKey])
 
 
   const effectiveTeams = useMemo(() => {
@@ -858,8 +788,16 @@ export function AnalyticsDashboard() {
   }, [leadScopeType, currentProfile, selectedTeam])
 
   const handleDownloadCSV = async (dataType: string) => {
+    if (error || isLoading || loadedReport?.key !== reportKey) return
     try {
       const supabase = getBrowserSupabaseClient()
+      const { revision } = await fetchAnalyticsExclusions(supabase)
+      if (activeReportKey.current !== reportKey) return
+      if (revision !== loadedReport.exclusions) {
+        setReportReload((value) => value + 1)
+        toast.info("统计排除设置已更新，数据刷新后可重新导出")
+        return
+      }
       const filters: Record<string, any> = {
         dataType,
         date_from: dateRange?.from ? dateRange.from.toISOString() : null,
@@ -894,6 +832,7 @@ export function AnalyticsDashboard() {
       return
     }
 
+    if (activeReportKey.current !== reportKey) return
     const rows: string[][] = []
 
 
@@ -1052,7 +991,7 @@ export function AnalyticsDashboard() {
     )
   }
 
-  if (isLoading) {
+  if (isLoading || (!error && loadedReport?.key !== reportKey)) {
     return (
       <div className="space-y-6">
         <div className="flex flex-col gap-2">

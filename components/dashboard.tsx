@@ -37,6 +37,7 @@ import { DASHBOARD_REQUEST_TIMEOUT_MS, loadDashboardSection } from "@/lib/servic
 import {
   fetchDashboardActivitySnapshot,
   fetchDashboardMonthlyRevenue,
+  type DashboardReceiptTotal,
   FOLLOW_UP_STAGE_FLOW,
   type DailyActivityUserRow,
   type DashboardCustomerDetailRow,
@@ -80,11 +81,11 @@ function formatNumber(value: number): string {
   return Number.isFinite(value) ? value.toLocaleString("zh-CN") : "0"
 }
 
-function formatCurrency(value: number): string {
+function formatCurrency(value: number, currency = "CNY"): string {
   if (!Number.isFinite(value) || value <= 0) return "¥0"
   return new Intl.NumberFormat("zh-CN", {
     style: "currency",
-    currency: "CNY",
+    currency,
     maximumFractionDigits: 0,
   }).format(value)
 }
@@ -771,7 +772,7 @@ function FunnelCard({
   actions,
 }: {
   activity: RoleDashboardActivity | null
-  monthlyRevenue: number | null
+  monthlyRevenue: DashboardReceiptTotal[] | null
   allTime?: boolean
   actions?: ReactNode
 }) {
@@ -801,7 +802,11 @@ function FunnelCard({
                 <Badge variant="outline">到款阶段 {formatNumber(paymentCount)}</Badge>
               </>
             )}
-            {monthlyRevenue !== null && <Badge variant="outline">本月回款 {formatCurrency(monthlyRevenue)}</Badge>}
+            {monthlyRevenue !== null && (
+              <Badge variant="outline" className="whitespace-normal">本月回款 {monthlyRevenue.length
+                ? monthlyRevenue.map(({ currency, amount }) => formatCurrency(amount, currency)).join(" / ")
+                : formatCurrency(0)}</Badge>
+            )}
             {actions}
           </div>
         </div>

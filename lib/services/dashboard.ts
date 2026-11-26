@@ -177,20 +177,19 @@ export function getDateRange(params: DashboardActivityFilterParams): {
   }
 }
 
-export async function fetchDashboardMonthlyRevenue(signal: AbortSignal): Promise<number> {
-  const supabase = getBrowserSupabaseClient()
-  const now = new Date()
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
-  const { data, error } = await supabase
-    .from("contract_payments_secure_view")
-    .select("amount")
-    .gte("paid_at", monthStart.toISOString())
-    .lte("paid_at", now.toISOString())
+export type DashboardReceiptTotal = { currency: string; amount: number }
+
+export async function fetchDashboardMonthlyRevenue(signal: AbortSignal): Promise<DashboardReceiptTotal[]> {
+  const { data, error } = await getBrowserSupabaseClient()
+    .rpc("rpc_crm_dashboard_monthly_revenue")
     .abortSignal(signal)
 
   signal.throwIfAborted()
   if (error) throw error
-  return (data ?? []).reduce((total, payment) => total + (payment.amount ?? 0), 0)
+  return ((data ?? []) as Array<{ currency: string; amount: number | string }>).map(({ currency, amount }) => ({
+    currency,
+    amount: Number(amount),
+  }))
 }
 
 type DashboardOverviewResponse = Omit<RoleDashboardActivity, "dateLabel" | "stageFunnel" | "alerts"> & {

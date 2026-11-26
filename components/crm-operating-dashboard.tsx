@@ -132,12 +132,17 @@ export function CrmOperatingDashboard({ start, end, period }: { start: Date; end
     setExporting(true)
     try {
       const query = detail ? visitQuery(startOn, endOn, team, detail.owner || person, method, visitType) : visitQuery(startOn, endOn, team, person)
-      const [XLSX, rows] = await Promise.all([import("xlsx"), exportableVisitRows(query)])
+      const latestReport = detail ? null : getBrowserSupabaseClient().rpc("rpc_crm_visit_goal_report", {
+        p_start: startOn, p_end: endOn, p_period: period, p_team: query.p_team, p_profile: query.p_profile,
+      })
+      const [XLSX, rows, refreshed] = await Promise.all([import("xlsx"), exportableVisitRows(query), latestReport])
+      if (refreshed && (refreshed.error || !refreshed.data?.canExport)) throw refreshed.error ?? new Error("无导出权限")
       const book = XLSX.utils.book_new()
-      if (!detail) {
+      if (refreshed) {
+        const current = refreshed.data as Report
         const summary = [
           ["开始日期", "结束日期", "销售", "部门", "自己客户拜访", "陪访", "总量", "首访", "复访", "二次开发", "目标", "完成率", "剩余"],
-          ...report.people.map((person) => [
+          ...current.people.map((person) => [
             startOn, endOn, person.name, person.team ?? "", person.own, person.accompanied, person.total,
             person.first, person.repeat, person.expansion, period === "week" ? person.weekly_reference ?? "" : person.goal ?? "",
             percent(person.total, person.goal ?? 0), person.goal === null ? "" : Math.max(0, person.goal - person.total),
