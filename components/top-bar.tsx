@@ -12,6 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { getBrowserSupabaseClient } from "@/lib/supabase/client"
 import { fetchCurrentUserPublicProfile } from "@/lib/auth/profile"
+import { CrmUpdates } from "@/components/crm-updates"
 
 
 const viewLabels: Record<string, string> = {
@@ -231,13 +232,13 @@ export function TopBar() {
   return (
     <>
       <header className="h-16 border-b border-border bg-card px-4 md:px-6 flex items-center justify-between">
-        <div className="flex items-center gap-2 text-base pl-12 md:pl-0">
+        <div className="flex shrink-0 items-center gap-2 text-base pl-12 md:pl-0">
           <span className="text-muted-foreground hidden sm:inline">首页</span>
           <ChevronRight className="w-4 h-4 text-muted-foreground hidden sm:block" />
           <span className="text-foreground font-semibold">{viewLabels[activeKey]}</span>
         </div>
-        <div className="flex items-center gap-2 md:gap-4">
-          <div className="relative w-48 lg:w-64 hidden md:block">
+        <div className="flex min-w-0 items-center gap-2 lg:gap-3 xl:gap-4">
+          <div className="relative hidden min-w-0 w-32 md:block lg:w-48 xl:w-64">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input placeholder="搜索线索、客户..." className="pl-9" />
           </div>
@@ -271,6 +272,7 @@ export function TopBar() {
             <Download className="w-4 h-4" />
             任务中心
           </Button>
+          <CrmUpdates />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button className="flex items-center gap-3 focus:outline-none" suppressHydrationWarning type="button">
@@ -278,8 +280,8 @@ export function TopBar() {
                   {currentUser?.avatarUrl ? <AvatarImage src={currentUser.avatarUrl} /> : null}
                   <AvatarFallback>{(currentUser?.fullName ?? "用户").slice(0, 1)}</AvatarFallback>
                 </Avatar>
-                <div className="hidden sm:flex flex-col items-start">
-                  <span className="text-base font-semibold">
+                <div className="hidden sm:flex md:max-lg:hidden flex-col items-start">
+                  <span className="max-w-28 truncate text-base font-semibold">
                     {currentUser?.fullName ?? (isLoadingUser ? "加载中..." : "当前用户")}
                   </span>
                   <Badge variant="secondary" className="text-xs w-fit">

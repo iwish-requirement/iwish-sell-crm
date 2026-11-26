@@ -15,6 +15,7 @@ export interface DailyActivityUserRow {
   teamId: number | null
   // 在管有效线索数：open、非无效、非成交/到款终态（即占用配额的线索）
   activeLeads: number
+  quotaLimit?: number
   // 本时段新增线索的阶段分布（key 为 FOLLOW_UP_STAGE_FLOW 的 stageId），与部门对比同口径
   stageCounts: Record<string, number>
   // 附加团队（成员以主团队计入统计，附加团队明细中仅作查看）
@@ -85,6 +86,7 @@ export interface TeamActivityRow {
   // 各跟进阶段的线索数量（不含公海与无效线索），key 为 FOLLOW_UP_STAGE_FLOW 的 stageId
   stageCounts: Record<string, number>
   // 配额占用率 = 在管有效线索 / (配额上限 × 成员数)
+  quotaCapacity?: number
   quotaUsage: number | null
 }
 
@@ -130,19 +132,19 @@ export function toDateKey(date: Date): string {
 export const FOLLOW_UP_STAGE_FLOW = [
   { id: "uncontacted", label: "未建联" },
   { id: "connected", label: "已建联" },
-  { id: "online_communication", label: "线上沟通" },
-  { id: "offline_visit", label: "线下拜访" },
+  { id: "offline_visit", label: "有效拜访" },
   { id: "proposal_quotation", label: "方案及报价" },
   { id: "intent_confirmed", label: "合作意向已确认" },
-  { id: "contract_review", label: "审合同" },
-  { id: "won", label: "成交" },
-  { id: "payment_received", label: "到款" },
+  { id: "contract_review", label: "合同确认" },
+  { id: "won", label: "已签约" },
+  { id: "payment_received", label: "已到款" },
 ] as const
 
 export type FollowUpStageId = (typeof FOLLOW_UP_STAGE_FLOW)[number]["id"]
 
 export function getFollowUpStageLabel(value: string | null | undefined): string {
   const key = (value ?? "").trim()
+  if (key === "online_communication") return "有效拜访"
   return FOLLOW_UP_STAGE_FLOW.find((stage) => stage.id === key)?.label ?? (key || "未设置")
 }
 
@@ -234,20 +236,10 @@ export async function fetchDashboardActivitySnapshot(
   params: DashboardActivityFilterParams,
   signal: AbortSignal,
 ): Promise<DashboardActivitySnapshot> {
-  try {
-    return {
-      activity: await fetchRoleDashboardActivity(params, signal),
-      loadMembers: (filter, after, pageSignal) => fetchDashboardMembers(params, filter, after, pageSignal),
-      loadCustomers: (todoOnly, after, pageSignal) => fetchDashboardCustomers(params, todoOnly, after, pageSignal),
-    }
-  } catch (error) {
-    signal.throwIfAborted()
-    // PostgREST returns PGRST202 while the RPC is missing from its schema cache.
-    // Other errors stay on the normal timeout/retry path.
-    if (!error || typeof error !== "object" || !("code" in error) || error.code !== "PGRST202") throw error
-    const { fetchLegacyDashboardSnapshot } = await import("@/lib/services/dashboard-legacy")
-    signal.throwIfAborted()
-    return fetchLegacyDashboardSnapshot(params, signal)
+  return {
+    activity: await fetchRoleDashboardActivity(params, signal),
+    loadMembers: (filter, after, pageSignal) => fetchDashboardMembers(params, filter, after, pageSignal),
+    loadCustomers: (todoOnly, after, pageSignal) => fetchDashboardCustomers(params, todoOnly, after, pageSignal),
   }
 }
 
@@ -320,7 +312,7 @@ export async function fetchRoleDashboardActivity(
       id: "no-visits",
       type: "info",
       title: `${alerts.noVisits} 人今日暂无拜访记录`,
-      description: "拜访包含线下拜访和需要记录为拜访的深度客户沟通。",
+      description: "拜访包含有效拜访和需要记录为拜访的深度客户沟通。",
     })
   }
   for (const user of alerts.highOverdue) {

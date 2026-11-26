@@ -101,7 +101,6 @@ const ALL_TEAMS_OPTION: TeamOption = {
 const ANALYTICS_STAGE_ORDER = [
   "uncontacted",
   "connected",
-  "online_communication",
   "offline_visit",
   "proposal_quotation",
   "intent_confirmed",
@@ -113,13 +112,12 @@ const ANALYTICS_STAGE_ORDER = [
 const ANALYTICS_STAGE_LABELS: Record<(typeof ANALYTICS_STAGE_ORDER)[number], { stage: string; fullName: string }> = {
   uncontacted: { stage: "未建联", fullName: "未建联" },
   connected: { stage: "已建联", fullName: "已建联" },
-  online_communication: { stage: "线上沟通", fullName: "线上沟通" },
-  offline_visit: { stage: "线下拜访", fullName: "线下拜访" },
+  offline_visit: { stage: "有效拜访", fullName: "有效拜访" },
   proposal_quotation: { stage: "方案及报价", fullName: "方案及报价" },
   intent_confirmed: { stage: "合作意向已确认", fullName: "合作意向已确认" },
-  contract_review: { stage: "审合同", fullName: "审合同" },
-  won: { stage: "成交", fullName: "成交" },
-  payment_received: { stage: "到款", fullName: "到款" },
+  contract_review: { stage: "合同确认", fullName: "合同确认" },
+  won: { stage: "已签约", fullName: "已签约" },
+  payment_received: { stage: "已到款", fullName: "已到款" },
 }
 
 const ANALYTICS_LEGACY_STAGE_MAP: Record<string, (typeof ANALYTICS_STAGE_ORDER)[number]> = {
@@ -133,8 +131,9 @@ const ANALYTICS_LEGACY_STAGE_MAP: Record<string, (typeof ANALYTICS_STAGE_ORDER)[
 }
 
 function getAnalyticsFollowUpStage(lead: Pick<LeadSecureRow, "stage" | "follow_up_stage" | "status" | "close_result">) {
-  const rawFollowUpStage = (lead.follow_up_stage ?? "").trim()
+  const rawStage = (lead.follow_up_stage ?? "").trim()
   const rawLegacyStage = (lead.stage ?? "").trim()
+  const rawFollowUpStage = rawStage === "online_communication" ? "offline_visit" : rawStage
   const followUpStage = ANALYTICS_STAGE_ORDER.includes(rawFollowUpStage as (typeof ANALYTICS_STAGE_ORDER)[number])
     ? (rawFollowUpStage as (typeof ANALYTICS_STAGE_ORDER)[number])
     : null

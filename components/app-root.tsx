@@ -221,7 +221,7 @@ export function AppRoot() {
         if (!cancelled && !hasShownVersionToastRef.current && data.version && data.version !== APP_VERSION) {
           hasShownVersionToastRef.current = true
           toast.info("系统已发布新版本", {
-            description: "请刷新页面以获得最新体验。",
+            description: "刷新页面后，可从右上角的「更新内容」查看本次变化。",
             action: {
               label: "立即刷新",
               onClick: () => {

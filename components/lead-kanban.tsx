@@ -1,6 +1,7 @@
 "use client"
 
-import React, { useCallback, useState, useEffect, useMemo, useRef } from "react"
+import React, { useCallback, useState, useEffect, useEffectEvent, useMemo, useRef } from "react"
+import { usePathname } from "next/navigation"
 
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -23,6 +24,9 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { LeadHandoffProgress } from "@/components/lead-handoff-progress"
+import { CrmVisitActivity, CrmVisitDialog } from "@/components/crm-lead-visits"
+import { DealContractSubmissionDialog } from "@/components/deal-contract-submission"
+import { crmDate, getCrmError, getLeadWorkflow, substantiveFollowUpKinds, type LeadWorkflow } from "@/lib/services/crm-visits"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 
 import {
@@ -96,6 +100,7 @@ interface Lead {
   closeResult?: string | null
   closeReason?: string | null
   interactions: Interaction[]
+  visitStageChanges?: Record<string, string>
 }
 
 
@@ -105,14 +110,38 @@ interface Lead {
 
 
 interface Interaction {
-  id: number
+  id: string
   type: "call" | "wechat" | "visit" | "stage_change" | "won" | "lost" | "system"
   content: string
-  date: string
+  at: string
   user: string
   avatar?: string
   authorId?: string
+  connectionConfirmed?: boolean | null
+  stageChange?: string
 }
+
+type StageEvent = {
+  id: string
+  previous_stage: string
+  next_stage: string
+  reason: string | null
+  created_at: string
+  actor_name: string
+  note_id: string | null
+  visit_id: string | null
+}
+
+type FollowUpDraft = {
+  action: "connection" | "followup"
+  channel: "call" | "wechat"
+  confirmed: "" | "yes" | "no"
+  content: string
+  substantiveKind: string
+  noteId?: string
+}
+const emptyFollowUp: FollowUpDraft = { action: "followup", channel: "call", confirmed: "", content: "", substantiveKind: "" }
+const manualStageTargets = new Set(["proposal_quotation", "intent_confirmed", "contract_review"])
 
 interface SalesRep {
   id: string
@@ -278,19 +307,17 @@ const CUSTOMER_ATTRIBUTE_OPTIONS = [
 const FOLLOW_UP_STAGE_OPTIONS = [
   { id: "uncontacted", label: "未建联" },
   { id: "connected", label: "已建联" },
-  { id: "online_communication", label: "线上沟通" },
-  { id: "offline_visit", label: "线下拜访" },
+  { id: "offline_visit", label: "有效拜访" },
   { id: "proposal_quotation", label: "方案及报价" },
   { id: "intent_confirmed", label: "合作意向已确认" },
-  { id: "contract_review", label: "审合同" },
-  { id: "won", label: "成交" },
-  { id: "payment_received", label: "到款" },
+  { id: "contract_review", label: "合同确认" },
+  { id: "won", label: "已签约" },
+  { id: "payment_received", label: "已到款" },
 ] as const
 
 const FOLLOW_UP_STAGE_COLORS = [
   "bg-slate-400",
   "bg-blue-400",
-  "bg-sky-500",
   "bg-indigo-500",
   "bg-amber-500",
   "bg-orange-600",
@@ -429,7 +456,7 @@ function LeadCard({
       if (lead.closeResult === "won" || lead.closeResult === "成交") {
         return (
           <Badge variant="outline" className="text-sm border-emerald-500/60 text-emerald-700">
-            成交
+            {lead.followUpStage === "contract_review" ? "待签约" : "成交"}
           </Badge>
         )
       }
@@ -656,13 +683,17 @@ function InteractionItem({ interaction }: { interaction: Interaction }) {
       </div>
 
       <div className="flex-1 pb-6">
-        <div className="flex items-center gap-2 mb-1.5">
+        <div className="flex flex-wrap items-center gap-2 mb-1.5">
           <Badge variant="outline" className="text-sm gap-1 font-semibold border-primary/20 bg-primary/5">
             {getIcon(interaction.type)}
             {getTypeLabel(interaction.type)}
           </Badge>
-          <span className="text-sm text-muted-foreground">{interaction.date}</span>
+          <span className="text-sm text-muted-foreground">{interaction.at ? crmDate(new Date(interaction.at)) : ""}</span>
           <span className="text-sm font-semibold text-foreground/80">· {interaction.user}</span>
+          {interaction.connectionConfirmed != null && <Badge variant="secondary">
+            {interaction.connectionConfirmed ? "已建立双向联系" : "未建立双向联系"}
+          </Badge>}
+          {interaction.stageChange && <Badge variant="secondary">{interaction.stageChange}</Badge>}
         </div>
         <p className="text-sm text-foreground leading-relaxed bg-muted/30 p-2.5 rounded-md border border-muted/50">{interaction.content}</p>
       </div>
@@ -723,6 +754,9 @@ function LeadRiskBadge({
 
 
 export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean }) {
+  const pathname = usePathname() ?? ""
+  const routedLeadId = /^\/leads\/([a-f0-9-]+)$/i.exec(pathname)?.[1]
+  const openedLeadRoute = useRef<string | null>(null)
   const [leads, setLeads] = useState<Lead[]>([])
   const [dialogOpen, setDialogOpen] = useState(false)
   const [newLead, setNewLead] = useState({
@@ -764,21 +798,30 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
   const leadScopeType = mePermissions?.leadScopeType ?? "self"
   const [currentProfile, setCurrentProfile] = useState<UserProfile | null>(null)
 
-  const [followUp, setFollowUp] = useState({
-    content: "",
-    type: "",
-    nextDate: "",
-  })
+  const [followUp, setFollowUp] = useState<FollowUpDraft>(emptyFollowUp)
+  const [crmWorkflowRevision, setCrmWorkflowRevision] = useState(0)
+  const [workflowState, setWorkflowState] = useState<{ leadId: string; workflow?: LeadWorkflow; error?: string } | null>(null)
+  const [creatingVisitFor, setCreatingVisitFor] = useState<string | null>(null)
+  const activeLeadId = sheetOpen && selectedLead?.status !== "pool" && typeof selectedLead?.id === "string" ? selectedLead.id : null
+  const workflow = workflowState?.leadId === activeLeadId ? workflowState?.workflow : undefined
+  const workflowError = workflowState?.leadId === activeLeadId ? workflowState?.error : undefined
 
-  // 下一步行动卡片的日期快捷修改
-  const [isEditingNextAction, setIsEditingNextAction] = useState(false)
-  const [nextActionDate, setNextActionDate] = useState("")
-  const [isSavingNextAction, setIsSavingNextAction] = useState(false)
+  useEffect(() => {
+    if (!activeLeadId) return
+    let active = true
+    void getLeadWorkflow(activeLeadId).then((data) => {
+      if (active) setWorkflowState({ leadId: activeLeadId, workflow: data })
+    }).catch((error) => {
+      if (active) setWorkflowState({ leadId: activeLeadId, error: getCrmError(error, "客户拜访和保护期加载失败") })
+    })
+    return () => { active = false }
+  }, [activeLeadId, crmWorkflowRevision])
 
   const [advanceDialogOpen, setAdvanceDialogOpen] = useState(false)
   const [upgradeReason, setUpgradeReason] = useState("")
 
   const [closeDialogOpen, setCloseDialogOpen] = useState(false)
+  const [signingContractOpen, setSigningContractOpen] = useState(false)
   const [closeResult, setCloseResult] = useState<"won" | "lost" | "">("")
   const [closeReason, setCloseReason] = useState("")
 
@@ -829,7 +872,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
   const [searchQuery, setSearchQuery] = useState("")
   const [stageFilter, setStageFilter] = useState<string>("all")
   // 线索页默认只看在谈线索；已成交/已关闭通过筛选回看（成交明细另有成交中心）
-  const [statusFilter, setStatusFilter] = useState<"open" | "won" | "lost" | "all">("open")
+  const [statusFilter, setStatusFilter] = useState<"open" | "won" | "lost" | "all">(routedLeadId ? "all" : "open")
   const [sourceLevel1Filter, setSourceLevel1Filter] = useState<string>("all")
   const [sourceLevel2Filter, setSourceLevel2Filter] = useState<string>("all")
   const [ownerFilter, setOwnerFilter] = useState<string>("all")
@@ -1228,7 +1271,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                 lastContactAt: (row.last_contact_at as string | null) ?? null,
                 stage: row.stage ?? "L1",
                 customerAttribute: (row.customer_attribute as "followable" | "potential_intent" | "invalid" | null) ?? "followable",
-                followUpStage: (row.follow_up_stage as string | null) ?? "uncontacted",
+                followUpStage: row.follow_up_stage === "online_communication" ? "offline_visit" : (row.follow_up_stage as string | null) ?? "uncontacted",
                 ownershipStartedAt: (row.ownership_started_at as string | null) ?? null,
                 status: (row.status as string | null) === "closed" ? "closed" : "open",
                 nextContactAt: row.next_contact_at ?? null,
@@ -1459,6 +1502,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
         ...prev,
         ...fresh,
         interactions: prev.interactions,
+        visitStageChanges: prev.visitStageChanges,
       }
     })
   }, [leads])
@@ -2064,12 +2108,14 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       setIsLoadingInteractionsLeadId(leadId)
 
       const supabase = getBrowserSupabaseClient()
-      const { data, error } = await supabase
-        .from("lead_notes")
-        .select("id, content, note_type, created_at, author_id")
-        .eq("lead_id", leadId)
-        .eq("is_deleted", false)
-        .order("created_at", { ascending: false })
+      const [{ data, error }, stageEvents] = await Promise.all([
+        supabase.from("lead_notes")
+          .select("id, content, note_type, created_at, author_id, crm_connection_confirmed")
+          .eq("lead_id", leadId)
+          .eq("is_deleted", false)
+          .order("created_at", { ascending: false }),
+        supabase.rpc("rpc_crm_lead_stage_events", { p_lead_id: leadId }),
+      ])
 
       if (error) {
         console.error("Failed to load lead notes", error)
@@ -2079,27 +2125,39 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
         return
       }
 
-      const noteInteractions: Interaction[] =
-        data?.map((row: any, index: number) => {
-          const authorId = (row.author_id as string | null) ?? null
-          const authorRep = authorId ? salesReps.find((rep) => rep.id === authorId) : undefined
-          const authorName = authorRep?.name || "未知成员"
-          const avatarUrl = authorRep?.avatarUrl ?? undefined
-
-          return {
-            id: index + 1,
-            type:
-              row.note_type === "call" || row.note_type === "wechat" || row.note_type === "visit" || row.note_type === "stage_change" || row.note_type === "won" || row.note_type === "lost"
-                ? (row.note_type as Interaction["type"])
-                : "call",
-            content: row.content ?? "",
-            date: row.created_at ? new Date(row.created_at).toISOString().split("T")[0] : "",
-            user: authorName,
-            avatar: avatarUrl,
-            authorId: authorId ?? undefined,
-          }
-        }) ?? []
-
+      if (stageEvents.error) console.error("Failed to load lead stages", stageEvents.error)
+      const visitStageChanges: Record<string, string> = {}
+      const noteStageChanges = new Map<string, string>()
+      const stageInteractions: Interaction[] = []
+      const noteIds = new Set((data ?? []).map((note) => note.id))
+      for (const event of (stageEvents.data ?? []) as StageEvent[]) {
+        const stageChange = getFollowUpStageLabel(event.previous_stage) + " → " + getFollowUpStageLabel(event.next_stage)
+        if (event.visit_id) {
+          visitStageChanges[event.visit_id] = stageChange
+        } else if (event.note_id && noteIds.has(event.note_id)) {
+          noteStageChanges.set(event.note_id, stageChange)
+        } else {
+          stageInteractions.push({
+            id: event.id, type: "stage_change", content: event.reason ?? "",
+            at: event.created_at, user: event.actor_name, stageChange,
+          })
+        }
+      }
+      const noteTypes = new Set(["call", "wechat", "visit", "stage_change", "won", "lost"])
+      const noteInteractions: Interaction[] = (data ?? []).map((row) => {
+        const authorRep = salesReps.find((rep) => rep.id === row.author_id)
+        return {
+          id: row.id,
+          type: noteTypes.has(row.note_type) ? row.note_type as Interaction["type"] : "system",
+          content: row.content ?? "",
+          at: row.created_at,
+          user: authorRep?.name ?? (row.author_id === currentProfile?.id ? "当前用户" : "历史成员"),
+          avatar: authorRep?.avatarUrl ?? undefined,
+          authorId: row.author_id ?? undefined,
+          connectionConfirmed: row.crm_connection_confirmed,
+          stageChange: noteStageChanges.get(row.id),
+        }
+      })
 
       let transferInteractions: Interaction[] = []
       try {
@@ -2123,10 +2181,10 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                 .join("，")
 
               return {
-                id: 100000 + index,
-                type: "visit",
+                id: String(row.id ?? "transfer-" + index),
+                type: "system",
                 content,
-                date: row.created_at ? new Date(row.created_at).toISOString().split("T")[0] : "",
+                at: String(row.created_at ?? ""),
                 user: String(row.actor_name ?? "系统"),
                 authorId: (row.actor_id as string | null) ?? undefined,
               }
@@ -2136,17 +2194,17 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
         console.error("Failed to load lead transfer activities", activityErr)
       }
 
-      const interactionsFromDb: Interaction[] = [...noteInteractions, ...transferInteractions]
+      const interactionsFromDb = [...noteInteractions, ...stageInteractions, ...transferInteractions]
 
       setLeads((prevLeads) =>
         prevLeads.map((lead) =>
-          lead.id === leadId ? { ...lead, interactions: interactionsFromDb } : lead,
+          lead.id === leadId ? { ...lead, interactions: interactionsFromDb, visitStageChanges } : lead,
         ),
       )
 
       setSelectedLead((prevSelected) =>
         prevSelected && prevSelected.id === leadId
-          ? { ...prevSelected, interactions: interactionsFromDb }
+          ? { ...prevSelected, interactions: interactionsFromDb, visitStageChanges }
           : prevSelected,
       )
     } catch (err) {
@@ -2160,7 +2218,9 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
   }
 
   const handleLeadClick = (lead: Lead) => {
-    setSelectedLead({ ...lead, interactions: [] })
+    setCreatingVisitFor(null)
+    setFollowUp({ ...emptyFollowUp, action: lead.followUpStage === "uncontacted" ? "connection" : "followup" })
+    setSelectedLead({ ...lead, interactions: [], visitStageChanges: undefined })
 
     const budgetDigits = lead.budget.replace(/[^\d.-]/g, "")
 
@@ -2191,6 +2251,22 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     setSheetOpen(true)
     void loadLeadInteractions(lead.id)
   }
+
+  const openRoutedLead = useEffectEvent(handleLeadClick)
+  useEffect(() => {
+    if (!routedLeadId) {
+      openedLeadRoute.current = null
+      return
+    }
+    if (openedLeadRoute.current === routedLeadId) return
+    const lead = leads.find((item) => String(item.id) === routedLeadId)
+    if (lead) {
+      openedLeadRoute.current = routedLeadId
+      openRoutedLead(lead)
+    } else if (statusFilter === "open") {
+      setStatusFilter("all")
+    }
+  }, [leads, routedLeadId, statusFilter])
 
 
   const handleReturnToPool = async () => {
@@ -2339,158 +2415,51 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     }
   }
 
-  const handleSaveNextActionDate = async () => {
-    if (!selectedLead || !nextActionDate) {
-      return
-    }
-    const todayStr = new Date().toLocaleDateString("en-CA")
-    if (nextActionDate < todayStr) {
-      toast.error("下次跟进日期不能早于今天")
-      return
-    }
+  const refreshVisitProjection = async (leadId: string | number) => {
+    const { data } = await getBrowserSupabaseClient().from("leads_secure_view")
+      .select("follow_up_stage,protected_until,last_contact_at").eq("id", leadId).maybeSingle()
+    if (!data) return
+    const update = (lead: Lead) => lead.id === leadId ? {
+      ...lead,
+      followUpStage: data.follow_up_stage === "online_communication" ? "offline_visit" : data.follow_up_stage ?? lead.followUpStage,
+      protectedUntil: data.protected_until,
+      lastContactAt: data.last_contact_at,
+      lastInteraction: data.last_contact_at
+        ? Math.max(0, Math.floor((Date.now() - new Date(data.last_contact_at).getTime()) / 86400000))
+        : lead.lastInteraction,
+    } : lead
+    setLeads((current) => current.map(update))
+    setSelectedLead((current) => current ? update(current) : current)
+  }
 
-    try {
-      setIsSavingNextAction(true)
-      await updateLead(selectedLead.id as string, { next_contact_at: nextActionDate })
-      setLeads((prev) =>
-        prev.map((l) => (l.id === selectedLead.id ? { ...l, nextContactAt: nextActionDate } : l)),
-      )
-      setSelectedLead({ ...selectedLead, nextContactAt: nextActionDate })
-      toast.success("下次跟进日期已更新")
-      setIsEditingNextAction(false)
-    } catch (err) {
-      const friendly = mapRpcError(err as any, {
-        title: "更新下次跟进日期失败",
-        description: "请稍后重试",
-      })
-      toast.error(friendly.title, { description: friendly.description })
-    } finally {
-      setIsSavingNextAction(false)
-    }
+  const refreshCustomerActivity = (leadId: string) => {
+    setCrmWorkflowRevision((revision) => revision + 1)
+    void refreshVisitProjection(leadId)
+    void loadLeadInteractions(leadId)
   }
 
   const handleLogFollowUp = async () => {
-    if (!selectedLead || !followUp.content || !followUp.type) {
-      return
-    }
-
-    const todayStr = new Date().toLocaleDateString("en-CA")
-    if (followUp.nextDate && followUp.nextDate < todayStr) {
-      toast.error("下次跟进日期不能早于今天", {
-        description: "请选择今天或未来的日期",
-      })
-      return
-    }
-
+    const leadId = activeLeadId
+    const content = followUp.content.trim()
+    if (!leadId || !content || isLoggingFollowUp || (followUp.action === "connection" && !followUp.confirmed)) return
+    const noteId = followUp.noteId ?? crypto.randomUUID()
+    setFollowUp((current) => ({ ...current, noteId }))
+    setIsLoggingFollowUp(true)
     try {
-      setIsLoggingFollowUp(true)
-
-      const supabase = getBrowserSupabaseClient()
-      const profile = await fetchCurrentUserProfile(supabase)
-
-      if (!profile) {
-        toast.error("无法获取当前用户信息", {
-          description: "请重新登录后再试",
-        })
-        return
-      }
-
-      const authorRep = salesReps.find((rep) => rep.id === profile.id)
-      const authorName = authorRep?.name ?? "当前用户"
-      const avatarUrl = authorRep?.avatarUrl ?? undefined
-
-
-      const { error } = await supabase.from("lead_notes").insert({
-        lead_id: selectedLead.id,
-        author_id: profile.id,
-        content: followUp.content,
-        note_type: followUp.type,
+      const { error } = await getBrowserSupabaseClient().rpc("rpc_crm_record_contact", {
+        p_lead_id: leadId,
+        p_note_id: noteId,
+        p_channel: followUp.channel,
+        p_content: content,
+        p_connection_confirmed: followUp.action === "connection" ? followUp.confirmed === "yes" : null,
+        p_substantive_kind: followUp.action === "followup" ? followUp.substantiveKind || null : null,
       })
-
-      if (error) {
-        const message = error.message ?? "保存跟进记录失败"
-        let friendly = "保存跟进记录失败，请稍后重试"
-
-        if (message.includes("lead_notes.create")) {
-          friendly = "没有创建跟进记录的权限，请联系管理员调整权限"
-        }
-
-        toast.error("保存跟进记录失败", {
-          description: friendly,
-        })
-        return
-      }
-
-      // 更新线索的最后跟进时间与下次跟进日期（如有权限）
-      const followUpPatch: Record<string, unknown> = {
-        last_contact_at: new Date().toISOString(),
-      }
-      if (followUp.nextDate) {
-        followUpPatch.next_contact_at = followUp.nextDate
-      }
-
-      try {
-        const { error: updateError } = await supabase.rpc("rpc_lead_update", {
-          p_lead_id: selectedLead.id,
-          patch: followUpPatch,
-        })
-
-        if (updateError) {
-          const friendly = mapRpcError(updateError, {
-            title: "更新线索状态失败",
-            description: "已记录跟进，但无法更新最后跟进时间，请稍后重试",
-          })
-          toast.error(friendly.title, {
-            description: friendly.description,
-          })
-        }
-      } catch (updateErr) {
-        console.error("Failed to update lead after follow-up", updateErr)
-        toast.error("更新线索状态失败", {
-          description: "已记录跟进，但无法更新最后跟进时间，请联系管理员",
-        })
-      }
-
-      const newInteraction: Interaction = {
-        id: selectedLead.interactions.length + 1,
-        type: followUp.type as "call" | "wechat" | "visit",
-        content: followUp.content,
-        date: new Date().toISOString().split("T")[0],
-        user: authorName,
-        avatar: avatarUrl,
-        authorId: profile.id,
-      }
-
-
-      setLeads(
-        leads.map((l) =>
-          l.id === selectedLead.id
-            ? {
-                ...l,
-                interactions: [newInteraction, ...l.interactions],
-                lastInteraction: 0,
-                lastContactAt: new Date().toISOString(),
-                nextContactAt: followUp.nextDate || l.nextContactAt,
-              }
-            : l,
-        ),
-      )
-      setSelectedLead({
-        ...selectedLead,
-        interactions: [newInteraction, ...selectedLead.interactions],
-        lastInteraction: 0,
-        lastContactAt: new Date().toISOString(),
-        nextContactAt: followUp.nextDate || selectedLead.nextContactAt,
-      })
-      setFollowUp({ content: "", type: "", nextDate: "" })
-      toast.success("跟进记录已保存", {
-        description: followUp.nextDate ? `下次跟进日期：${followUp.nextDate}` : undefined,
-      })
-    } catch (err) {
-      console.error("Failed to log follow up", err)
-      toast.error("保存跟进记录失败", {
-        description: "请稍后重试或联系管理员",
-      })
+      if (error) throw error
+      setFollowUp((current) => current.noteId === noteId ? { ...emptyFollowUp, channel: current.channel } : current)
+      refreshCustomerActivity(leadId)
+      toast.success("客户动作已保存")
+    } catch (error) {
+      toast.error(getCrmError(error, "保存客户动作失败，请稍后重试"))
     } finally {
       setIsLoggingFollowUp(false)
     }
@@ -2770,9 +2739,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       }
     }
 
-    const pipelineChanged =
-      editLead.customerAttribute !== selectedLead.customerAttribute ||
-      editLead.followUpStage !== selectedLead.followUpStage
+    const pipelineChanged = editLead.customerAttribute !== selectedLead.customerAttribute
 
     if (Object.keys(patch).length === 0 && !pipelineChanged) {
       setIsEditing(false)
@@ -2791,8 +2758,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
         const { error: pipelineError } = await getBrowserSupabaseClient().rpc("rpc_lead_pipeline_update", {
           p_lead_id: selectedLead.id,
           p_customer_attribute: editLead.customerAttribute,
-          p_follow_up_stage: editLead.followUpStage,
-          p_reason: "编辑客户属性与跟进阶段",
+          p_reason: "编辑客户属性",
         })
         if (pipelineError) {
           throw pipelineError
@@ -2844,7 +2810,6 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                 businessTypes: updatedBusinessTypes,
                 businessCategories: updatedBusinessCategories,
                 customerAttribute: editLead.customerAttribute,
-                followUpStage: editLead.followUpStage,
               }
             : l,
         ),
@@ -2868,7 +2833,6 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
               businessTypes: updatedBusinessTypes,
               businessCategories: updatedBusinessCategories,
               customerAttribute: editLead.customerAttribute,
-              followUpStage: editLead.followUpStage,
             }
           : prev,
       )
@@ -2903,10 +2867,8 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     }
 
     const nextStage = getNextStage()
-    if (!nextStage) {
-      toast.info("无法推进阶段", {
-        description: "当前已是最后阶段",
-      })
+    if (!nextStage || !manualStageTargets.has(nextStage.id)) {
+      toast.info("请通过对应的业务动作更新阶段")
       setAdvanceDialogOpen(false)
       setUpgradeReason("")
       return
@@ -2920,7 +2882,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
       const nextStageMeta = getFollowUpStageMeta(nextStage.id)
       setLeads(leads.map((l) => (l.id === selectedLead.id ? { ...l, followUpStage: nextStage.id } : l)))
       setSelectedLead({ ...selectedLead, followUpStage: nextStage.id })
-      void loadLeadInteractions(selectedLead.id)
+      refreshCustomerActivity(String(selectedLead.id))
       toast.success("阶段推进成功", {
         description: `${selectedLead.company} 已推进至 ${nextStageMeta.label}`,
       })
@@ -2938,11 +2900,22 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
   const getNextStage = () => {
     const currentIndex = FOLLOW_UP_STAGE_OPTIONS.findIndex((s) => s.id === selectedLead?.followUpStage)
-    if (currentIndex < FOLLOW_UP_STAGE_OPTIONS.length - 1) {
+    if (currentIndex >= 0 && currentIndex < FOLLOW_UP_STAGE_OPTIONS.length - 1) {
       return FOLLOW_UP_STAGE_OPTIONS[currentIndex + 1]
     }
     return null
   }
+
+  const nextStage = getNextStage()
+  const manualNextStage = nextStage && manualStageTargets.has(nextStage.id) ? nextStage : null
+  const timeline = [
+    ...(selectedLead?.interactions ?? []).map((note) => ({
+      kind: "note" as const, note, day: note.at ? crmDate(new Date(note.at)) : "", at: note.at,
+    })),
+    ...(workflow?.visits ?? []).map((visit) => ({
+      kind: "visit" as const, visit, day: visit.data.visitDate, at: visit.createdAt,
+    })),
+  ].sort((a, b) => b.day.localeCompare(a.day) || Date.parse(b.at) - Date.parse(a.at))
 
   const normalizedTagKeywords = tagFilter
     .split(",")
@@ -4026,7 +3999,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                                     : "border-slate-300 text-slate-500"
                                 }`}
                               >
-                                {lead.closeResult === "won" ? "已成交" : "已关闭"}
+                                {lead.closeResult === "won" ? lead.followUpStage === "contract_review" ? "待签约" : "已成交" : "已关闭"}
                               </Badge>
                             )}
                           </div>
@@ -4290,7 +4263,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                     {selectedLead.status === "closed" && (
                       <span className="text-[11px] text-muted-foreground">
                         {selectedLead.closeResult === "won" || isTerminalFollowUpStage(selectedLead.followUpStage)
-                          ? "已成交"
+                          ? selectedLead.followUpStage === "contract_review" ? "待签约" : "已成交"
                           : "已关闭（未成交）"}
                       </span>
                     )}
@@ -4344,7 +4317,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                     <span>
                       关闭结果：
                       <span className="font-medium text-foreground">
-                        {selectedLead.closeResult === "won" ? "成交" : "丢单"}
+                        {selectedLead.closeResult === "won" ? selectedLead.followUpStage === "contract_review" ? "待签约" : "成交" : "丢单"}
                       </span>
                     </span>
                     {selectedLead.closeReason && (
@@ -4355,8 +4328,6 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                     )}
                   </div>
                 )}
-
-                {/* 锁单与保护期状态 */}
 
                 {selectedLead && selectedLead.firstContactAt && (
 
@@ -4391,125 +4362,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                   </div>
                 )}
 
-                {/* 下一步行动模块：仅在在谈线索时展示，成交/丢单不再提示下一步行动 */}
-                {selectedLead && selectedLead.status === "open" && (
-                  <div className="space-y-2 rounded-md border border-primary/20 bg-primary/5 px-3 py-3 text-sm text-muted-foreground">
-
-
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="inline-flex items-center gap-1 font-medium text-primary">
-                        <Clock className="w-3 h-3" />
-                        下一步行动
-                      </p>
-                      <div className="flex items-center gap-2">
-                        {selectedLead.nextContactAt && (
-                          (() => {
-                            const todayStr = new Date().toLocaleDateString("en-CA")
-                            const dateStr = selectedLead.nextContactAt.slice(0, 10)
-                            const isOverdue = dateStr < todayStr
-                            return (
-                              <span
-                                className={`rounded-full px-2 py-0.5 text-[11px] ${
-                                  isOverdue
-                                    ? "bg-red-500/10 text-red-600"
-                                    : "bg-emerald-500/10 text-emerald-700"
-                                }`}
-                              >
-                                {isOverdue ? "下次跟进已逾期" : "下次跟进已安排"}
-                              </span>
-                            )
-                          })()
-                        )}
-                        {!isEditingNextAction && (
-                          <button
-                            type="button"
-                            className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
-                            onClick={() => {
-                              setNextActionDate(
-                                selectedLead.nextContactAt ? selectedLead.nextContactAt.slice(0, 10) : "",
-                              )
-                              setIsEditingNextAction(true)
-                            }}
-                          >
-                            <Pencil className="w-3 h-3" />
-                            修改
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                    <div className="space-y-1">
-                      {isEditingNextAction ? (
-                        <div className="flex items-center gap-2">
-                          <Input
-                            type="date"
-                            min={new Date().toLocaleDateString("en-CA")}
-                            value={nextActionDate}
-                            onChange={(e) => setNextActionDate(e.target.value)}
-                            className="h-8 text-sm"
-                          />
-                          <Button
-                            size="sm"
-                            onClick={handleSaveNextActionDate}
-                            disabled={isSavingNextAction || !nextActionDate}
-                          >
-                            {isSavingNextAction ? "保存中..." : "保存"}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => setIsEditingNextAction(false)}
-                          >
-                            取消
-                          </Button>
-                        </div>
-                      ) : selectedLead.nextContactAt ? (
-                        <p className="text-sm">
-                          下次跟进日期：
-
-                          <span className="font-medium text-foreground">
-                            {new Date(selectedLead.nextContactAt).toLocaleDateString("zh-CN")}
-                          </span>
-                        </p>
-                      ) : (
-                        <p className="text-sm">
-                          当前尚未设置下一步行动，
-
-                          <span className="font-medium text-foreground">建议补充一个下次跟进日期</span>
-                          ，避免线索长时间无人触达。
-                        </p>
-                      )}
-                      {selectedLead.lastContactAt && (
-                        <p className="text-xs text-muted-foreground">
-
-                          最近一次跟进：
-                          {new Date(selectedLead.lastContactAt).toLocaleString("zh-CN", { hour12: false })}
-                        </p>
-                      )}
-                    </div>
-                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pt-1">
-                      {!selectedLead.nextContactAt && (
-                        <p className="text-xs text-muted-foreground">
-
-                          在下方「记录跟进」时选择下次跟进日期，即可自动生成下一步行动。
-                        </p>
-                      )}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full sm:w-auto"
-                        onClick={() => {
-                          const el = document.getElementById("lead-followup-section")
-                          if (el) {
-                            el.scrollIntoView({ behavior: "smooth", block: "start" })
-                          }
-                        }}
-                      >
-                        立即记录一次跟进
-                      </Button>
-                    </div>
-                  </div>
-                )}
-
+                {workflowError && <p role="alert" className="text-sm text-muted-foreground">{workflowError}</p>}
                 {/* Key Info Grid */}
 
                 <div className="grid grid-cols-2 gap-x-6 gap-y-5 py-4 border-y border-muted/30">
@@ -4929,122 +4782,128 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                   )}
                 </div>
 
-                {/* Log Follow-up Section：仅在在谈线索时允许新增跟进，成交/丢单仅保留历史记录 */}
-                {selectedLead?.status === "open" && (
+                {(selectedLead.status === "open" || workflow?.canSubmit) && (
                   <div id="lead-followup-section" className="space-y-3">
-
-                  <div className="flex items-center justify-between gap-3">
                     <div>
                       <h4 className="text-sm font-semibold text-foreground">记录客户动作</h4>
-                      <p className="text-xs text-muted-foreground">建联、拜访和普通跟进都会沉淀到仪表盘过程数据。</p>
+                      <p className="text-xs text-muted-foreground">记录建联、有效拜访或跟进。</p>
                     </div>
-                  </div>
-                  <div className="grid grid-cols-3 gap-2">
-                    <Button
-                      type="button"
-                      variant={followUp.type === "call" ? "default" : "outline"}
-                      size="sm"
-                      className="gap-1.5"
-                      onClick={() => setFollowUp((prev) => ({ ...prev, type: "call" }))}
-                    >
-                      <Phone className="h-3.5 w-3.5" />
-                      建联
-                    </Button>
-                    <Button
-                      type="button"
-                      variant={followUp.type === "visit" ? "default" : "outline"}
-                      size="sm"
-                      className="gap-1.5"
-                      onClick={() => setFollowUp((prev) => ({ ...prev, type: "visit" }))}
-                    >
-                      <MapPin className="h-3.5 w-3.5" />
-                      拜访
-                    </Button>
-                    <Button
-                      type="button"
-                      variant={followUp.type === "wechat" ? "default" : "outline"}
-                      size="sm"
-                      className="gap-1.5"
-                      onClick={() => setFollowUp((prev) => ({ ...prev, type: "wechat" }))}
-                    >
-                      <MessageCircle className="h-3.5 w-3.5" />
-                      跟进
-                    </Button>
-                  </div>
-
-                  <Textarea
-                    placeholder="输入动作内容，例如：已电话建联，客户确认下周安排拜访..."
-                    value={followUp.content}
-                    onChange={(e) => setFollowUp({ ...followUp, content: e.target.value })}
-                    className="min-h-[80px]"
-                  />
-                  <div className="flex gap-3">
-                    <div className="flex-1">
-                      <Select
-                        value={followUp.type}
-                        onValueChange={(value) => setFollowUp({ ...followUp, type: value })}
+                    <div className={selectedLead.status === "open" ? "grid grid-cols-3 gap-2" : "flex"}>
+                      {selectedLead.status === "open" && <Button
+                        type="button" size="sm" className="gap-1.5"
+                        variant={followUp.action === "connection" ? "default" : "outline"}
+                        disabled={isLoggingFollowUp}
+                        onClick={() => setFollowUp((prev) => ({ ...prev, action: "connection" }))}
                       >
-                        <SelectTrigger>
-                          <SelectValue placeholder="互动类型" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="call">电话</SelectItem>
-                          <SelectItem value="wechat">微信</SelectItem>
-                          <SelectItem value="visit">拜访</SelectItem>
-                        </SelectContent>
-                      </Select>
+                        <Phone className="h-3.5 w-3.5" />
+                        建联
+                      </Button>}
+                      <Button type="button" variant="outline" size="sm" className="gap-1.5"
+                        disabled={!workflow?.canSubmit}
+                        onClick={() => setCreatingVisitFor(activeLeadId)}
+                      >
+                        <MapPin className="h-3.5 w-3.5" />
+                        拜访
+                      </Button>
+                      {selectedLead.status === "open" && <Button
+                        type="button" size="sm" className="gap-1.5"
+                        variant={followUp.action === "followup" ? "default" : "outline"}
+                        disabled={isLoggingFollowUp}
+                        onClick={() => setFollowUp((prev) => ({ ...prev, action: "followup" }))}
+                      >
+                        <MessageCircle className="h-3.5 w-3.5" />
+                        跟进
+                      </Button>}
                     </div>
-                    <div className="flex-1">
-                      <Input
-                        type="date"
-                        placeholder="下次跟进日期"
-                        min={new Date().toLocaleDateString("en-CA")}
-                        value={followUp.nextDate}
-                        onChange={(e) => setFollowUp({ ...followUp, nextDate: e.target.value })}
+
+                    {selectedLead.status === "open" && <>
+                      <Textarea
+                        aria-label="客户动作内容"
+                        placeholder={followUp.action === "connection" ? "记录本次联系情况" : "记录本次跟进内容"}
+                        value={followUp.content}
+                        disabled={isLoggingFollowUp}
+                        onChange={(event) => setFollowUp((prev) => ({ ...prev, content: event.target.value }))}
+                        className="min-h-[80px]"
                       />
-                    </div>
+                      <div className="flex gap-3">
+                        <div className="flex-1">
+                          <Select value={followUp.channel} disabled={isLoggingFollowUp}
+                            onValueChange={(value: FollowUpDraft["channel"]) => setFollowUp((prev) => ({ ...prev, channel: value }))}>
+                            <SelectTrigger aria-label="沟通渠道"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="call">电话</SelectItem>
+                              <SelectItem value="wechat">微信</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="flex-1">
+                          {followUp.action === "connection" ? (
+                            <Select value={followUp.confirmed} disabled={isLoggingFollowUp}
+                              onValueChange={(value: FollowUpDraft["confirmed"]) => setFollowUp((prev) => ({ ...prev, confirmed: value }))}>
+                              <SelectTrigger aria-label="建联结果"><SelectValue placeholder="选择建联结果" /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="yes">已建立双向联系</SelectItem>
+                                <SelectItem value="no">未建立双向联系</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            <Select value={followUp.substantiveKind || "ordinary"} disabled={isLoggingFollowUp}
+                              onValueChange={(value) => setFollowUp((prev) => ({ ...prev, substantiveKind: value === "ordinary" ? "" : value }))}>
+                              <SelectTrigger aria-label="跟进结果类型"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="ordinary">普通跟进</SelectItem>
+                                {Object.entries(substantiveFollowUpKinds).map(([key, label]) =>
+                                  <SelectItem key={key} value={key}>{label}</SelectItem>)}
+                              </SelectContent>
+                            </Select>
+                          )}
+                        </div>
+                      </div>
+                      <Button onClick={handleLogFollowUp} className="w-full"
+                        disabled={!followUp.content.trim() || isLoggingFollowUp || (followUp.action === "connection" && !followUp.confirmed)}>
+                        {followUp.action === "connection" ? "保存建联记录" : "保存跟进记录"}
+                      </Button>
+                    </>}
                   </div>
-                  <Button
-                    onClick={handleLogFollowUp}
-                    disabled={!followUp.content || !followUp.type || isLoggingFollowUp}
-                    className="w-full"
-                  >
-                    保存跟进记录
-                  </Button>
-                </div>
                 )}
 
                 {selectedLead.id && <LeadHandoffProgress leadId={String(selectedLead.id)} />}
 
-                {/* Interaction Timeline */}
-
                 <div className="space-y-3">
                   <h4 className="text-sm font-semibold text-foreground">互动记录</h4>
                   <div className="space-y-0">
-                    {isLoadingInteractionsLeadId === selectedLead.id && (
-                      <p className="text-sm text-muted-foreground text-center py-4">正在加载跟进记录...</p>
+                    {(isLoadingInteractionsLeadId === selectedLead.id || (activeLeadId && !workflow && !workflowError)) && (
+                      <p className="text-sm text-muted-foreground text-center py-4">正在加载互动记录...</p>
                     )}
-                    {isLoadingInteractionsLeadId !== selectedLead.id &&
-                      selectedLead.interactions.map((interaction) => (
-                        <InteractionItem key={interaction.id} interaction={interaction} />
-                      ))}
-                    {isLoadingInteractionsLeadId !== selectedLead.id &&
-                      selectedLead.interactions.length === 0 && (
-                        <p className="text-sm text-muted-foreground text-center py-4">暂无互动记录</p>
-                      )}
+                    {timeline.map((entry) => entry.kind === "note" ? (
+                      <InteractionItem key={entry.note.id} interaction={entry.note} />
+                    ) : activeLeadId && workflow && (
+                      <div key={entry.visit.id} className="flex gap-3">
+                        <div className="flex flex-col items-center">
+                          <span className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10 text-primary"><MapPin className="h-4 w-4" /></span>
+                          <div className="w-px h-full bg-border mt-2" />
+                        </div>
+                        <div className="min-w-0 flex-1 pb-6">
+                          <CrmVisitActivity visit={entry.visit} leadId={activeLeadId} contact={selectedLead.contact} workflow={workflow}
+                            stageChange={selectedLead.visitStageChanges?.[entry.visit.id]}
+                            onChanged={() => refreshCustomerActivity(activeLeadId)} />
+                        </div>
+                      </div>
+                    ))}
+                    {isLoadingInteractionsLeadId !== selectedLead.id && (!activeLeadId || workflow || workflowError) && timeline.length === 0 && (
+                      <p className="text-sm text-muted-foreground text-center py-4">暂无互动记录</p>
+                    )}
                   </div>
                 </div>
               </div>
 
               <div className="border-t p-6 mt-auto flex flex-col gap-2">
-                <Button
-                  className="w-full"
-                  onClick={() => setAdvanceDialogOpen(true)}
-                  disabled={!selectedLead || selectedLead.status === "closed" || isAdvancingStage}
-                >
-                  推进阶段
-                  <ArrowRight className="w-4 h-4 ml-2" />
-                </Button>
+                {selectedLead.status === "open" && manualNextStage && (
+                  <Button className="w-full" onClick={() => setAdvanceDialogOpen(true)} disabled={isAdvancingStage}>
+                    推进阶段
+                    <ArrowRight className="w-4 h-4 ml-2" />
+                  </Button>
+                )}
                 {selectedLead?.status === "closed" && (
                   <p className="text-xs text-muted-foreground text-center">
                     已关闭线索无法继续推进阶段，如需调整请联系管理员。
@@ -5058,7 +4917,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                     setCloseReason("")
                     setCloseDialogOpen(true)
                   }}
-                  disabled={!selectedLead}
+                  disabled={selectedLead.status !== "open"}
                 >
                   标记成交 / 丢单
                 </Button>
@@ -5067,6 +4926,25 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
           )}
         </SheetContent>
       </Sheet>
+
+      {activeLeadId && creatingVisitFor === activeLeadId && selectedLead && workflow && (
+        <CrmVisitDialog leadId={activeLeadId} workflow={workflow} contact={selectedLead.contact} visit={null}
+          onClose={() => setCreatingVisitFor(null)}
+          onSaved={() => { setCreatingVisitFor(null); refreshCustomerActivity(activeLeadId) }} />
+      )}
+
+      {selectedLead && typeof selectedLead.id === "string" && signingContractOpen && (
+        <DealContractSubmissionDialog leadId={selectedLead.id} companyName={selectedLead.company}
+          salesperson={salesReps.find((rep) => rep.id === selectedLead.ownerId)?.name ?? null}
+          open={signingContractOpen} onOpenChange={setSigningContractOpen}
+          onConfirmed={() => {
+            setSigningContractOpen(false)
+            setSheetOpen(false)
+            setSelectedLead(null)
+            retryLoad()
+          }}
+        />
+      )}
 
       <Dialog open={transferDialogOpen} onOpenChange={setTransferDialogOpen}>
         <DialogContent>
@@ -5214,7 +5092,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
             <DialogTitle>推进线索阶段</DialogTitle>
             <DialogDescription>
               将 {selectedLead?.company} 从 {getFollowUpStageLabel(selectedLead?.followUpStage)} 推进至{" "}
-              {getNextStage()?.label}
+              {manualNextStage?.label}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -5259,21 +5137,24 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                   <SelectValue placeholder="选择关闭结果" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="won">成交</SelectItem>
+                  <SelectItem value="won" disabled={selectedLead?.followUpStage !== "contract_review"}>成交</SelectItem>
                   <SelectItem value="lost">丢单</SelectItem>
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="close-reason">成交或丢单动作说明 *</Label>
+            {selectedLead?.followUpStage !== "contract_review" && (
+              <p className="text-sm text-muted-foreground">进入「合同确认」后，可提交签约合同资料。</p>
+            )}
+            {closeResult === "lost" && <div className="space-y-2">
+              <Label htmlFor="close-reason">丢单原因 *</Label>
               <Textarea
                 id="close-reason"
-                placeholder="请输入成交或丢单的原因，便于后续复盘..."
+                placeholder="请输入丢单原因"
                 value={closeReason}
                 onChange={(e) => setCloseReason(e.target.value)}
                 className="min-h-[100px]"
               />
-            </div>
+            </div>}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCloseDialogOpen(false)}>
@@ -5281,8 +5162,15 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
             </Button>
             <Button
               onClick={async () => {
-                if (!selectedLead || !closeResult || !closeReason.trim()) {
+                if (!selectedLead || !closeResult || (closeResult === "lost" && !closeReason.trim())) {
                   toast.error("请完善关闭结果与原因")
+                  return
+                }
+
+                if (closeResult === "won") {
+                  if (selectedLead.followUpStage !== "contract_review") return
+                  setCloseDialogOpen(false)
+                  setSigningContractOpen(true)
                   return
                 }
 
@@ -5297,9 +5185,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                   setIsClosingLead(true)
                   await closeLeadWithAction(selectedLead.id, closeResult, closeReason.trim())
 
-                  toast.success("线索已关闭", {
-                    description: closeResult === "won" ? "已标记为成交" : "已标记为丢单",
-                  })
+                  toast.success("线索已关闭", { description: "已标记为丢单" })
 
                   setCloseDialogOpen(false)
                   setSheetOpen(false)
@@ -5320,9 +5206,9 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                   setIsClosingLead(false)
                 }
               }}
-              disabled={!closeResult || !closeReason.trim() || isClosingLead}
+              disabled={!closeResult || (closeResult === "lost" && !closeReason.trim()) || isClosingLead}
             >
-              确认关闭
+              {closeResult === "won" ? "填写签约合同" : "确认关闭"}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -19,6 +19,8 @@ import {
   type DealContractData, type DealContractField,
 } from "@/lib/services/deal-contract-fields"
 import { formatDealDate } from "@/lib/services/deal-date"
+import { CrmFinanceReceipt } from "@/components/crm-finance-receipt"
+import { crmDate } from "@/lib/services/crm-visits"
 import { DepartmentHandoffResults } from "@/components/department-handoff-results"
 import {
   downloadDealContractAttachment, loadDealContractSubmission, saveDealContractSubmission,
@@ -31,11 +33,12 @@ type Props = {
   salesperson: string | null
   open: boolean
   onOpenChange: (open: boolean) => void
+  onConfirmed?: () => void
   children?: ReactNode
   requiredAfter?: string
 }
 
-export function DealContractSubmissionDialog({ leadId, companyName, salesperson, open, onOpenChange, children, requiredAfter }: Props) {
+export function DealContractSubmissionDialog({ leadId, companyName, salesperson, open, onOpenChange, onConfirmed, children, requiredAfter }: Props) {
   const [loaded, setLoaded] = useState<Loaded | null>(null)
   const [error, setError] = useState(false)
   const [attempt, setAttempt] = useState(0)
@@ -72,6 +75,7 @@ export function DealContractSubmissionDialog({ leadId, companyName, salesperson,
   const editable = canEdit && !saving
   const cutoff = requiredAfter ?? loaded?.departmentAllocation?.requiredAfter
   const submittedAt = loaded?.record?.submitted_at
+  const awaitingSignature = loaded?.awaitingSignature ?? false
   const needsConfirmation = cutoff && (!submittedAt || Date.parse(submittedAt) < Date.parse(cutoff))
 
   function update(field: DealContractField, value: string) {
@@ -121,13 +125,16 @@ export function DealContractSubmissionDialog({ leadId, companyName, salesperson,
       const record = await saveDealContractSubmission(
         leadId, payload, attachments, files, removedPaths, loaded.record?.version ?? 0, confirm,
       )
-      setLoaded({ ...loaded, data: record.draft, record })
+      setLoaded({ ...loaded, data: record.draft, record, awaitingSignature: !confirm && awaitingSignature })
       setFiles([])
       setRemovedPaths([])
-      toast.success(confirm ? "合同资料已确认提交" : "草稿已保存")
+      toast.success(confirm ? awaitingSignature ? "合同已关联，线索已更新为已签约" : "合同资料已确认提交" : "草稿已保存")
+      if (confirm) onConfirmed?.()
     } catch (cause) {
       const code = cause && typeof cause === "object" && "code" in cause ? cause.code : null
-      toast.error(code === "40001" ? "这份资料已有更新，请重新打开后再保存" : "合同资料保存失败，请重试")
+      const message = cause && typeof cause === "object" && "message" in cause ? String(cause.message) : ""
+      toast.error(message.includes("ERR_CRM_CONTRACT_SIGNED_DATE") ? "请填写合同编号及不晚于今天的实际签约日期"
+        : code === "40001" ? "这份资料已有更新，请重新打开后再保存" : "合同资料保存失败，请重试")
     } finally {
       setSaving(false)
     }
@@ -187,6 +194,7 @@ export function DealContractSubmissionDialog({ leadId, companyName, salesperson,
     } else {
       control = <div className="flex items-center gap-2">
         <Input id={id} type={kind === "amount" ? "text" : kind} inputMode={kind === "amount" ? "decimal" : undefined}
+          max={key === "signedOn" && awaitingSignature ? crmDate() : undefined}
           value={value} aria-required={key !== "shortName"}
           placeholder={key === "shortName" ? "选填，例如品牌名" : key === "actualPayment" ? "填写到账时间，尚未到账请写明「未到账」" : undefined}
           onChange={(event) => update(key, event.target.value)} />
@@ -205,7 +213,7 @@ export function DealContractSubmissionDialog({ leadId, companyName, salesperson,
       <DialogContent className="flex max-h-[90dvh] flex-col sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>合同资料提交</DialogTitle>
-          <DialogDescription>{companyName}</DialogDescription>
+          <DialogDescription>{companyName}{awaitingSignature && " · 确认提交后，合同自动关联到线索并更新为「已签约」。"}</DialogDescription>
         </DialogHeader>
         {error && <div className="space-y-2" role="alert">
           <p className="text-sm text-destructive">合同资料加载失败。</p>
@@ -299,6 +307,11 @@ export function DealContractSubmissionDialog({ leadId, companyName, salesperson,
               <DealContractReturnedFields title="财务确认"
                 status={DEAL_FINANCE_FIELDS.some(([key]) => returned[key]) ? undefined : "财务确认后回传"}
                 fields={DEAL_FINANCE_FIELDS.map(([key, label]) => [label, key === "receivedOn" ? formatDealDate(returned[key]) : returned[key]])} />
+              {submittedAt && <CrmFinanceReceipt
+                leadId={leadId} currency={returned.currency ?? data?.currency}
+                receivedOn={returned.receivedOn} receivedAmount={returned.receivedAmount}
+                onConfirmed={() => setAttempt((item) => item + 1)}
+              />}
               {children}
             </div>
             {canEdit && <DialogFooter className="shrink-0 border-t pt-3 sm:items-center">
@@ -306,7 +319,9 @@ export function DealContractSubmissionDialog({ leadId, companyName, salesperson,
                 待完善 {errors.length} 项，含{errors.slice(0, 3).join("、")}{errors.length > 3 ? "等" : ""}
               </p>}
               <Button type="button" variant="outline" disabled={saving || bonusTermsTooLong} onClick={() => void save(false)}>保存草稿</Button>
-              <Button type="button" disabled={saving || bonusTermsTooLong || errors.length > 0} onClick={() => void save(true)}>确认提交</Button>
+              <Button type="button" disabled={saving || bonusTermsTooLong || errors.length > 0} onClick={() => void save(true)}>
+                {awaitingSignature ? "确认签约并提交" : "确认提交"}
+              </Button>
             </DialogFooter>}
           </>
         )}

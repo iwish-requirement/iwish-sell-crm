@@ -30,7 +30,7 @@ export async function loadDealContractSubmission(leadId: string, salesperson: st
       .select("lead_id,draft,draft_attachments,submitted,submitted_attachments,submitted_at,finance,finance_confirmed_at,version")
       .eq("lead_id", leadId).maybeSingle(),
     client.from("leads_secure_view")
-      .select("name,website,product_category,customer_name,customer_phone,customer_email,address")
+      .select("name,website,product_category,customer_name,customer_phone,customer_email,address,follow_up_stage")
       .eq("id", leadId).single(),
     client.rpc("rpc_deal_contract_submission_can_edit", { p_lead_id: leadId }),
     fetchContractByLeadId(leadId),
@@ -73,6 +73,7 @@ export async function loadDealContractSubmission(leadId: string, salesperson: st
     record,
     data,
     canEdit: access.data === true,
+    awaitingSignature: lead.data.follow_up_stage === "contract_review",
     allocation: allocation.data as DealContractAllocation | null,
     allocationUnavailable: Boolean(allocation.error),
     departmentAllocation,

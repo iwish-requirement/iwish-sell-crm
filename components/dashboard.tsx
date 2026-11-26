@@ -23,6 +23,7 @@ import {
 } from "recharts"
 
 import { MePermissionsContext } from "@/components/app-root"
+import { CrmOperatingDashboard, CrmOperatingReportDialog } from "@/components/crm-operating-dashboard"
 import { FollowUpFunnel } from "@/components/follow-up-funnel"
 import { ChartSkeleton } from "@/components/skeleton-loaders"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -51,7 +52,7 @@ import {
 import { getBrowserSupabaseClient } from "@/lib/supabase/client"
 
 type RoleDashboardMode = "sales" | "manager" | "director"
-type TimeRangePreset = "all" | "today" | "yesterday" | "week" | "month" | "quarter" | "custom"
+type TimeRangePreset = "all" | "today" | "yesterday" | "week" | "month" | "quarter" | "year" | "custom"
 
 interface SalesKpiDefinition {
   key: keyof RoleDashboardActivity["totals"]
@@ -135,6 +136,7 @@ function getPresetRange(preset: TimeRangePreset): DashboardDateRange {
     const start = new Date(today.getFullYear(), Math.floor(today.getMonth() / 3) * 3, 1)
     return { start, end: addDays(today, 1) }
   }
+  if (preset === "year") return { start: new Date(today.getFullYear(), 0, 1), end: addDays(today, 1) }
   return { start: today, end: addDays(today, 1) }
 }
 
@@ -200,6 +202,7 @@ function TimeRangeControls({
     { key: "week", label: "本周" },
     { key: "month", label: "本月" },
     { key: "quarter", label: "本季" },
+    { key: "year", label: "本年" },
     { key: "all", label: "全部" },
     { key: "custom", label: "自定义" },
   ]
@@ -270,7 +273,8 @@ function quotaCellClass(ratio: number): string {
 
 function MemberRow({ row, quotaLimit }: { row: DailyActivityUserRow; quotaLimit: number }) {
   const actionTotal = row.newLeads + row.contactActions + row.visits + row.followUps
-  const quotaRatio = quotaLimit > 0 ? row.activeLeads / quotaLimit : 0
+  const limit = row.quotaLimit ?? quotaLimit
+  const quotaRatio = limit > 0 ? row.activeLeads / limit : 0
   return (
     <TableRow>
       <TableCell>
@@ -285,7 +289,7 @@ function MemberRow({ row, quotaLimit }: { row: DailyActivityUserRow; quotaLimit:
         </div>
       </TableCell>
       <TableCell className={`text-right tabular-nums ${quotaCellClass(quotaRatio)}`}>
-        {row.activeLeads}/{quotaLimit}
+        {row.activeLeads}/{limit}
       </TableCell>
       <TableCell className="text-right font-medium">{row.newLeads}</TableCell>
       <TableCell className="text-right font-medium">{row.contactActions}</TableCell>
@@ -410,9 +414,9 @@ function DepartmentMemberTable({
                   <span className="ml-2 text-xs tabular-nums text-muted-foreground">
                     {department.memberCount} 人 · 在管 {department.activeLeads}
                     {department.memberCount > 0 && department.quotaUsage !== null &&
-                      `/${quotaLimit * department.memberCount} · 名额占用 ${Math.round(department.quotaUsage * 100)}%`}
+                      `/${department.quotaCapacity ?? quotaLimit * department.memberCount} · 名额占用 ${Math.round(department.quotaUsage * 100)}%`}
                     {" · 本时段新增 "}{department.newLeads}
-                    {" · 线下拜访 "}{department.stageCounts.offline_visit ?? 0}
+                    {" · 有效拜访 "}{department.stageCounts.offline_visit ?? 0}
                     {" · 方案及报价 "}{department.stageCounts.proposal_quotation ?? 0}
                     {" · 成交 "}{department.stageCounts.won ?? 0}
                     {" · 逾期 "}{department.overdueLeads}
@@ -428,7 +432,8 @@ function DepartmentMemberTable({
               </TableRow>
             ) : users.map((member) => {
               const isAdditional = member.isAdditional
-              const quotaRatio = quotaLimit > 0 ? member.activeLeads / quotaLimit : 0
+              const limit = member.quotaLimit ?? quotaLimit
+              const quotaRatio = limit > 0 ? member.activeLeads / limit : 0
               const primaryTeamName = isAdditional
                 ? teamNameById.get(member.teamId) ?? "主团队"
                 : null
@@ -455,7 +460,7 @@ function DepartmentMemberTable({
                     </div>
                   </TableCell>
                   <TableCell className={`text-right tabular-nums ${quotaCellClass(quotaRatio)}`}>
-                    {member.activeLeads}/{quotaLimit}
+                    {member.activeLeads}/{limit}
                   </TableCell>
                   <TableCell className="text-right font-medium tabular-nums">{member.newLeads}</TableCell>
                   {FOLLOW_UP_STAGE_FLOW.map((stage) => (
@@ -763,10 +768,12 @@ function FunnelCard({
   activity,
   monthlyRevenue,
   allTime = false,
+  actions,
 }: {
   activity: RoleDashboardActivity | null
   monthlyRevenue: number | null
   allTime?: boolean
+  actions?: ReactNode
 }) {
   const bands = activity?.stageFunnel ?? []
   const total = bands.reduce((sum, band) => sum + band.count, 0)
@@ -795,6 +802,7 @@ function FunnelCard({
               </>
             )}
             {monthlyRevenue !== null && <Badge variant="outline">本月回款 {formatCurrency(monthlyRevenue)}</Badge>}
+            {actions}
           </div>
         </div>
       </CardHeader>
@@ -994,9 +1002,9 @@ export function Dashboard() {
   }, [scopeType, mePermissions, dateRange, timePreset])
   const activitySection = useDashboardSection(permissionsReady || permissionWaitExpired ? loadActivity : null)
   const revenueSection = useDashboardSection(fetchDashboardMonthlyRevenue)
+  const monthlyRevenue = revenueSection.result.status === "ready" ? revenueSection.result.data : null
   const overview = activitySection.result.status === "ready" ? activitySection.result.data : null
   const activity = overview?.activity ?? null
-  const monthlyRevenue = revenueSection.result.status === "ready" ? revenueSection.result.data : null
 
   useEffect(() => {
     let isMounted = true
@@ -1022,7 +1030,10 @@ export function Dashboard() {
     }
   }, [mode])
 
-  const funnel = <FunnelCard activity={activity} monthlyRevenue={monthlyRevenue} allTime={timePreset === "all"} />
+  const funnel = <FunnelCard activity={activity} monthlyRevenue={monthlyRevenue} allTime={timePreset === "all"}
+    actions={permissionsReady && <CrmOperatingReportDialog>
+      <CrmOperatingDashboard start={dateRange.start} end={dateRange.end} period={timePreset} />
+    </CrmOperatingReportDialog>} />
 
   return (
     <div className="space-y-6">
@@ -1066,23 +1077,22 @@ export function Dashboard() {
       <DashboardLoadNotice label="销售过程数据" status={activitySection.result.status} retry={activitySection.retry} />
       <DashboardLoadNotice label="本月回款" status={revenueSection.result.status} retry={revenueSection.retry} />
 
+      {(activity || monthlyRevenue !== null || permissionsReady) && (
+        <div className={mode === "director" && activity ? "grid grid-cols-1 gap-6 xl:grid-cols-2" : undefined}>
+          {funnel}
+          {mode === "director" && activity && <TeamTable teams={activity.teams} />}
+        </div>
+      )}
+
       {!overview || !activity ? (
-        <>
-          {monthlyRevenue !== null && funnel}
-          {activitySection.result.status === "loading" && <ChartSkeleton />}
-        </>
+        activitySection.result.status === "loading" && <ChartSkeleton />
       ) : mode === "director" ? (
         <>
-          <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-            {funnel}
-            <TeamTable teams={activity?.teams ?? []} />
-          </div>
           <TrendChart activity={activity} />
           <DashboardMemberDetails snapshot={overview} byDepartment />
         </>
       ) : mode === "manager" ? (
         <>
-          {funnel}
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.45fr_0.55fr]">
             <DashboardMemberDetails snapshot={overview} />
             <AlertsPanel alerts={activity?.alerts ?? []} />
@@ -1091,7 +1101,6 @@ export function Dashboard() {
         </>
       ) : (
         <>
-          {funnel}
           <KpiGrid activity={activity} />
           <DashboardCustomerDetails loadCustomers={overview.loadCustomers} todoOnly />
         </>

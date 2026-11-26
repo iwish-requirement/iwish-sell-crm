@@ -45,6 +45,7 @@ interface DealRow {
   createdAt: string
   closedAt: string | null
   closeResult: string
+  awaitingSignature: boolean
   closeReason: string | null
   ownerId: string | null
   teamId: number | null
@@ -313,6 +314,7 @@ function CurrentDealCenter({ allocationCutoff }: { allocationCutoff: string | nu
             createdAt: row.created_at,
             closedAt: null,
             closeResult,
+            awaitingSignature: row.follow_up_stage === "contract_review",
             closeReason,
             ownerId: (row.owner_id as string | null) ?? null,
             teamId: (row.team_id as number | null) ?? null,
@@ -629,8 +631,9 @@ function CurrentDealCenter({ allocationCutoff }: { allocationCutoff: string | nu
 
 
   const stats = useMemo(() => {
-    const count = filteredDeals.length
-    const totalBudget = filteredDeals.reduce((sum, deal) => sum + (deal.budget || 0), 0)
+    const signedDeals = filteredDeals.filter((deal) => !deal.awaitingSignature)
+    const count = signedDeals.length
+    const totalBudget = signedDeals.reduce((sum, deal) => sum + (deal.budget || 0), 0)
 
     const totalBudgetLabel =
       totalBudget && totalBudget > 0
@@ -978,7 +981,7 @@ function CurrentDealCenter({ allocationCutoff }: { allocationCutoff: string | nu
                   <div className="space-y-1">
                     <p className="text-xs text-muted-foreground">成交结果</p>
                     <p className="font-semibold text-foreground">
-                      {selectedDeal.closeResult === "won" || selectedDeal.closeResult === "成交" ? "成交" : "关闭"}
+                      {selectedDeal.awaitingSignature ? "待签约" : selectedDeal.closeResult === "won" || selectedDeal.closeResult === "成交" ? "成交" : "关闭"}
                     </p>
                   </div>
                   <div className="space-y-1">
@@ -998,11 +1001,11 @@ function CurrentDealCenter({ allocationCutoff }: { allocationCutoff: string | nu
 
                 <div className="flex flex-wrap gap-2 border-t pt-4">
                   <Button type="button" onClick={() => setIsSubmissionOpen(true)}>合同资料提交</Button>
-                  <Button type="button" variant="outline" disabled={isCreatingAddon} onClick={() => void createAddonContract(selectedDeal)}>
+                  <Button type="button" variant="outline" disabled={isCreatingAddon || selectedDeal.awaitingSignature} onClick={() => void createAddonContract(selectedDeal)}>
                     {isCreatingAddon ? "正在建追加合同…" : "追加合同"}
                   </Button>
                 </div>
-                <p className="text-xs text-muted-foreground">老客户再签合同（二次开发 / 加服务）点「追加合同」：会建一条挂在本客户下的成交，单独填合同编号、服务板块和金额，再分配部门。</p>
+                <p className="text-xs text-muted-foreground">老客户再签合同（二次开发 / 加服务）可点「追加合同」，填写编号、服务板块和金额，确认签约后再分配部门。</p>
 
 
 
@@ -1015,6 +1018,11 @@ function CurrentDealCenter({ allocationCutoff }: { allocationCutoff: string | nu
       {selectedDeal && (
         <DealContractSubmissionDialog key={selectedDeal.id}
           leadId={selectedDeal.id} companyName={selectedDeal.companyName} salesperson={selectedDeal.ownerName}
+          onConfirmed={() => {
+            setSelectedDeal((current) => current ? { ...current, awaitingSignature: false } : current)
+            setDealsRefresh((value) => value + 1)
+            setDepartmentRefresh((value) => value + 1)
+          }}
           open={isSubmissionOpen} onOpenChange={open => {
             setIsSubmissionOpen(open)
             if (!open && allocationCutoff) setDepartmentRefresh(value => value + 1)

@@ -68,6 +68,7 @@ import { getBrowserSupabaseClient } from "@/lib/supabase/client"
 import { rpcGetRolePermissions, rpcRolePermissionsSetMatrix, type RolePermissionMatrixItem } from "@/lib/services/role-permissions"
 import { mapRpcError, type RpcErrorFriendly } from "@/lib/rpc-error-mapper"
 import { toast } from "sonner"
+import { CrmSalesSettings } from "./crm-sales-settings"
 import { LeadGradesAndSourcesSettingsCard } from "./lead-grades-and-sources-settings-card"
 import { BusinessTypesSettingsCard } from "./business-types-settings-card"
 import { MePermissionsContext } from "@/components/app-root"
@@ -929,6 +930,7 @@ function BusinessRulesTab() {
         </TabsList>
 
         <TabsContent value="leads">
+          <CrmSalesSettings />
           <div className="space-y-6">
             <Card className="max-w-2xl">
               <CardHeader>
