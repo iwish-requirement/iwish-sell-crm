@@ -127,9 +127,48 @@ try {
   assert.equal((await value('select public.rpc_crm_visit_details($1,$2) as value',[day,tomorrow])).length,1)
   assert.equal(summaries.people.find((p) => p.id===owner).total,1)
   assert.equal(summaries.people.find((p) => p.id===companion).total,1)
-  const dashboard = await value("select public.rpc_sales_dashboard('overview',$1::date::timestamp at time zone 'Asia/Shanghai'," +
+  const homepage = () => value("select public.rpc_sales_dashboard('overview',$1::date::timestamp at time zone 'Asia/Shanghai'," +
     "$2::date::timestamp at time zone 'Asia/Shanghai',$1::date::timestamp at time zone 'Asia/Shanghai','Asia/Shanghai') as value",[day,tomorrow])
-  assert.equal(dashboard.totals.visits,1)
+  const visitDetails = (profile = null, teamFilter = null) =>
+    value("select public.rpc_crm_visit_details($1,$2,$3,$4) as value", [day, tomorrow, profile, teamFilter])
+  const dashboardEvents = () => rows("select author_id from public.rpc_crm_dashboard_visit_events($1,$2) order by author_id", [day,tomorrow])
+  const setExclusions = async (key, ids) => {
+    await actor(null)
+    const field = key === "analytics.excluded_profiles" ? "profile_ids" : "team_ids"
+    await rows("insert into public.settings(key,value) values ($1,$2) on conflict(key) do update set value=excluded.value",
+      [key, json({ [field]: ids })])
+    await actor(admin)
+  }
+
+  assert.equal((await homepage()).totals.visits,1)
+  assert.deepEqual(await dashboardEvents(), [{author_id: owner}, {author_id: companion}])
+  await setExclusions("analytics.excluded_profiles", [companion])
+  assert.equal((await report()).teamVisits,1)
+  assert.equal((await report()).people.some((p) => p.id === companion),false)
+  assert.equal((await visitDetails())[0].seller,"演示 02")
+  assert.deepEqual(await visitDetails(companion),[])
+  assert.deepEqual(await dashboardEvents(),[{author_id: owner}])
+  assert.equal((await homepage()).totals.visits,1)
+  await actor(companion)
+  assert.deepEqual((await report()).people,[])
+  assert.deepEqual(await visitDetails(companion),[])
+  await setExclusions("analytics.excluded_profiles",[owner])
+  assert.equal((await report()).teamVisits,0)
+  assert.deepEqual(await visitDetails(),[])
+  assert.equal((await homepage()).totals.visits,0)
+  assert.equal((await value("select public.rpc_crm_lead_workflow($1) as value",[lead])).visits.length,2)
+  await setExclusions("analytics.excluded_profiles",[])
+  for (const key of ["analytics.excluded_teams", "gm_dashboard.excluded_teams"]) {
+    await setExclusions(key,[team])
+    assert.equal((await report()).teamVisits,0)
+    assert.equal((await report()).people.some((p) => p.team_id === team),false)
+    assert.deepEqual(await visitDetails(null,team),[])
+    assert.deepEqual(await dashboardEvents(),[])
+    assert.equal((await homepage()).totals.visits,0)
+    await setExclusions(key,[])
+  }
+  assert.equal((await report()).teamVisits,1)
+  assert.equal((await visitDetails()).length,1)
   assert.equal(await value("select follow_up_stage as value from public.leads where id=$1",[lead]),"offline_visit")
   await rows("select public.rpc_crm_visit_invalidate($1,'重复内容')",[visitA])
   assert.equal((await report()).teamVisits,1)
@@ -198,7 +237,7 @@ try {
   await saveContract(addOn,{...contract,contractNumber:"CRM-ADDON-02"},addonDraftVersion,true)
   assert.equal(await stageOf(addOn),"won")
   assert.equal(await stageOf(signatureLead),"won")
-  console.log("Passed scope isolation, structured visits, goals, linked contract signing, add-on confirmation and first receipt.")
+  console.log("Passed reporting exclusions, scope isolation, structured visits, goals, linked contract signing, add-on confirmation and first receipt.")
 } catch (error) {
   console.error(error.message, error.where ?? '', error.query?.slice(0,250) ?? '')
   process.exitCode = 1
