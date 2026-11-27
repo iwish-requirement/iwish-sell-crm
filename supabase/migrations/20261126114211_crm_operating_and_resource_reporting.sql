@@ -457,6 +457,10 @@ grant execute on function public.rpc_crm_save_lead_quota(uuid,integer),public.rp
   public.rpc_crm_operating_visit_details(date,date,uuid,integer,text,text,integer,boolean) to authenticated;
 
 -- The existing homepage keeps its operating exclusions and displays the configured quota.
+-- Keep the SQL-standard function body as a single statement for the migration CLI.
+do $migration$
+begin
+  execute $dashboard$
 create or replace function public.rpc_sales_dashboard(
   p_part text,
   p_range_start timestamptz,
@@ -716,3 +720,6 @@ select case p_part
   when 'customers' then coalesce((select jsonb_agg(c order by c."isOverdue" desc, c."sortAt" desc, c.id desc) from page_customers c), '[]'::jsonb)
 end;
 end;
+  $dashboard$;
+end;
+$migration$;
