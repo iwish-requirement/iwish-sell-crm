@@ -1,5 +1,22 @@
 -- Activate classification-based protection on top of the existing visits and contract workflow.
 
+create table iwish.crm_protection_terms (
+  effective_at timestamptz primary key,
+  new_intent_days integer not null check (new_intent_days > 0),
+  key_intent_days integer not null check (key_intent_days > 0),
+  nurture_days integer not null check (nurture_days > 0)
+);
+alter table iwish.crm_protection_terms enable row level security;
+revoke all on iwish.crm_protection_terms from public, anon, authenticated;
+
+insert into iwish.crm_protection_terms values ('-infinity',15,45,90);
+
+create function iwish.crm_protection_terms_at(p_at timestamptz) returns iwish.crm_protection_terms
+language sql stable set search_path = '' as $$
+  select t from iwish.crm_protection_terms t where t.effective_at <= p_at
+  order by t.effective_at desc limit 1;
+$$;
+
 create table iwish.crm_protection_requests (
   id uuid primary key default gen_random_uuid(),
   lead_id uuid not null references public.leads(id) on delete cascade,
@@ -55,14 +72,20 @@ language sql stable security definer set search_path = '' as $$
 $$;
 
 -- Earlier visits remain in the timeline but cannot renew a new ownership cycle.
-create function iwish.crm_protection_visit_date(p_lead public.leads) returns date
+create function iwish.crm_protection_latest_visit(p_lead public.leads) returns iwish.crm_visits
 language sql stable set search_path = '' as $$
-  select max(v.visited_on)
+  select v
   from iwish.crm_visits v
   where v.lead_id=p_lead.id and v.invalidated_at is null
     and v.owner_id is not distinct from p_lead.owner_id
     and v.created_at >= coalesce(p_lead.ownership_started_at,p_lead.created_at)
-    and v.visited_on >= (coalesce(p_lead.ownership_started_at,p_lead.created_at) at time zone 'Asia/Shanghai')::date;
+    and v.visited_on >= (coalesce(p_lead.ownership_started_at,p_lead.created_at) at time zone 'Asia/Shanghai')::date
+  order by v.visited_on desc,v.created_at desc,v.id limit 1;
+$$;
+
+create function iwish.crm_protection_visit_date(p_lead public.leads) returns date
+language sql stable set search_path = '' as $$
+  select (iwish.crm_protection_latest_visit(p_lead)).visited_on;
 $$;
 
 -- A verified first visit starts the key-intent period without overwriting the classification decision.
@@ -77,29 +100,29 @@ create function iwish.crm_protection_deadline(p_lead public.leads) returns date
 language plpgsql stable set search_path = '' as $$
 declare
   v_base date;
-  v_visit date;
+  v_ownership_at timestamptz := coalesce(p_lead.ownership_started_at,p_lead.created_at);
+  v_visit iwish.crm_visits;
+  v_followup_at timestamptz;
 begin
   if p_lead.status <> 'open' or p_lead.owner_id is null or coalesce(p_lead.is_deleted,false)
     or p_lead.customer_attribute = 'invalid' or p_lead.follow_up_stage in ('won','payment_received')
     or p_lead.crm_protection_review_required then
     return null;
   end if;
-  v_visit := iwish.crm_protection_visit_date(p_lead);
-  case p_lead.crm_protection_class
-    when 'new_intent' then
-      v_base := case when v_visit is not null then v_visit + 45
-        else (coalesce(p_lead.ownership_started_at,p_lead.created_at) at time zone 'Asia/Shanghai')::date + 15 end;
-    when 'key_intent' then
-      v_base := v_visit + 45;
-    when 'nurture' then
-      select max((n.created_at at time zone 'Asia/Shanghai')::date) + 90 into v_base
-      from public.lead_notes n
-      where n.lead_id = p_lead.id and n.crm_substantive_kind is not null and not n.is_deleted
-        and n.created_at >= coalesce(p_lead.ownership_started_at,p_lead.created_at);
-  end case;
+  -- Recompute with the terms in effect at the triggering action, including when an action is invalidated.
+  if p_lead.crm_protection_class='nurture' then
+    select max(n.created_at) into v_followup_at from public.lead_notes n
+    where n.lead_id=p_lead.id and n.crm_substantive_kind is not null and not n.is_deleted
+      and n.created_at>=v_ownership_at;
+    v_base := (v_followup_at at time zone 'Asia/Shanghai')::date
+      + (iwish.crm_protection_terms_at(v_followup_at)).nurture_days;
+  else
+    v_visit := iwish.crm_protection_latest_visit(p_lead);
+    v_base := v_visit.visited_on + (iwish.crm_protection_terms_at(v_visit.created_at)).key_intent_days;
+  end if;
   return coalesce(
     greatest(v_base,p_lead.crm_protection_confirmed_until,p_lead.crm_protection_extension_until),
-    (coalesce(p_lead.ownership_started_at,p_lead.created_at) at time zone 'Asia/Shanghai')::date + 15
+    (v_ownership_at at time zone 'Asia/Shanghai')::date + (iwish.crm_protection_terms_at(v_ownership_at)).new_intent_days
   );
 end;
 $$;
@@ -436,6 +459,7 @@ end;
 $$;
 
 revoke all on function iwish.crm_extension_review_access(uuid),iwish.crm_effective_protection_class(public.leads),
+  iwish.crm_protection_terms_at(timestamptz),iwish.crm_protection_latest_visit(public.leads),
   iwish.crm_protection_visit_date(public.leads),iwish.crm_protection_deadline(public.leads),iwish.crm_project_protection(public.leads),
   iwish.crm_refresh_protection(uuid),iwish.crm_recompute_after_note() from public,anon,authenticated;
 revoke all on function public.rpc_crm_protection_configure(uuid,text,date),public.rpc_crm_protection_request(uuid,text,integer,text),

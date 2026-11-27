@@ -121,6 +121,7 @@ export function getCrmError(error: unknown, fallback: string) {
   if (message.includes("ERR_CRM_PROTECTION_APPROVAL")) return "此操作需要销售管理审核。"
   if (message.includes("ERR_CRM_VISIT_EXISTS")) return "这条拜访已由其他操作更新，请刷新后重试。"
   if (message.includes("ERR_CRM_CONFLICT")) return "记录已更新，请刷新后重试。"
+  if (message.includes("ERR_CRM_PROTECTION_TERMS")) return "请输入有效的保护天数，三个天数都需为正整数。"
   if (message.includes("ERR_CRM_PAID_REQUIRES_FINANCE")) return "请由财务确认首笔到账。"
   if (message.includes("ERR_CRM_VISIT_REQUIRED")) return "请先提交一条有效拜访记录。"
   if (message.includes("42501") || message.includes("ERR_NO_PERMISSION")) return "当前账号无权操作该记录。"

@@ -58,6 +58,7 @@ const actionLabels: Record<string, string> = {
   update_user_permissions: "用户覆盖权限变更",
   create_setting: "新增业务设置",
   update_setting: "更新业务设置",
+  crm_protection_terms_save: "修改客户保护期天数",
   delete_setting: "删除业务设置",
   update_profile_org: "调整成员组织",
 }
@@ -78,7 +79,8 @@ function getTargetCategory(targetType: string): TargetFilter {
     targetType === "permissions" ||
     targetType === "field_policies" ||
     targetType === "custom_scope_sets" ||
-    targetType === "settings"
+    targetType === "settings" ||
+    targetType === "setting"
   ) {
     return "permission"
   }

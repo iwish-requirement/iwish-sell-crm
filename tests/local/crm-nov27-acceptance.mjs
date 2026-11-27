@@ -71,6 +71,7 @@ const browserRpc = new Set([
   "rpc_crm_dashboard_next_actions", "rpc_crm_dashboard_quotas",
   "rpc_crm_operating_dashboard", "rpc_crm_operating_visit_details", "rpc_crm_visit_details", "rpc_crm_resource_details", "rpc_crm_sales_settings",
   "rpc_crm_save_visit_goal", "rpc_crm_save_lead_quota", "rpc_crm_protection_admin", "rpc_crm_restore_release",
+  "rpc_crm_save_protection_terms",
   "rpc_crm_can_confirm_finance",
 ])
 const browserTables = new Set([

@@ -310,7 +310,62 @@ try {
   await saveContract(addOn,{...contract,contractNumber:"CRM-ADDON-02"},addonDraftVersion,true)
   assert.equal(await stageOf(addOn),"won")
   assert.equal(await stageOf(signatureLead),"won")
-  console.log("Passed visits, quota, protection, linked contract signing, add-on confirmation and finance promotion.")
+
+  const [initialLead, keyLead, nurtureLead, newLead, firstVisit, nextVisit] = [101,102,103,104,105,106].map(id)
+  await actor(null)
+  const actualDay = await value("select (now() at time zone 'Asia/Shanghai')::date::text as value")
+  for (const key of [initialLead,keyLead,nurtureLead]) {
+    await insertLead(key,owner,team,"保护期配置验证","uncontacted",actualDay+"T00:00:00+08:00")
+  }
+  const config = async () => (await value("select public.rpc_crm_sales_settings() as value")).protectionTerms
+  const saveTerms = (days, effectiveAt = null) => value("select public.rpc_crm_save_protection_terms($1,$2,$3,$4) as value",[...days,effectiveAt])
+  const recordVisit = (key, visitId, type) => rows("select public.rpc_crm_visit_save($1,$2,$3,$4::uuid[],null)",
+    [key,visitId,json({...data,visitDate:actualDay,nextContactOn:actualDay,method:"onsite",type}),[owner]])
+  const followUp = () => rows("insert into public.lead_notes(lead_id,author_id,content,note_type,crm_substantive_kind) " +
+    "values($1,$2,'客户已确认项目需求','wechat','demand')",[nurtureLead,owner])
+  const deadlineAfter = (days) => value("select ($1::date+$2::integer)::text as value",[actualDay,days])
+  const deadline = async (key) => (await value("select public.rpc_crm_lead_workflow($1) as value",[key])).expiresOn
+
+  await actor(admin)
+  assert.deepEqual(await config(),{newIntentDays:15,keyIntentDays:45,nurtureDays:90,effectiveAt:null})
+  await rows("select public.rpc_crm_protection_configure($1,'nurture')",[nurtureLead])
+  await actor(owner)
+  await recordVisit(keyLead,firstVisit,"first")
+  await followUp()
+  assert.equal(await deadline(initialLead),await deadlineAfter(15))
+  assert.equal(await deadline(keyLead),await deadlineAfter(45))
+  assert.equal(await deadline(nurtureLead),await deadlineAfter(90))
+  await assert.rejects(() => saveTerms([5,10,20]),/ERR_NO_PERMISSION:settings.pipeline.manage/)
+
+  await actor(admin)
+  await assert.rejects(() => saveTerms([0,10,20]),/ERR_CRM_PROTECTION_TERMS/)
+  const settingsChanged = await saveTerms([5,10,20])
+  assert.ok(settingsChanged.effectiveAt)
+  assert.deepEqual(await config(),settingsChanged)
+  assert.deepEqual(await saveTerms([5,10,20]),settingsChanged)
+  await assert.rejects(() => saveTerms([6,11,21]),/ERR_CRM_CONFLICT/)
+  assert.equal(await value("select count(*)::integer as value from public.audit_logs where action='crm_protection_terms_save'"),1)
+  for (const [key,days] of [[initialLead,15],[keyLead,45],[nurtureLead,90]]) {
+    assert.equal(await deadline(key),await deadlineAfter(days))
+    assert.equal(await value("select ((protected_until at time zone 'Asia/Shanghai')::date-1)::text as value from public.leads where id=$1",[key]),
+      await deadlineAfter(days))
+  }
+
+  await actor(null)
+  await insertLead(newLead,owner,team,"配置变更后新增","uncontacted",actualDay+"T00:00:00+08:00")
+  await rows("update public.leads set status='pool' where id=$1",[initialLead])
+  await actor(owner)
+  assert.equal(await deadline(newLead),await deadlineAfter(5))
+  await rows("select public.rpc_lead_claim_from_pool($1,'验证领取后使用新保护期')",[initialLead])
+  assert.equal(await deadline(initialLead),await deadlineAfter(5))
+  await recordVisit(keyLead,nextVisit,"repeat_2")
+  await followUp()
+  assert.equal(await deadline(keyLead),await deadlineAfter(10))
+  assert.equal(await deadline(nurtureLead),await deadlineAfter(20))
+  await actor(admin)
+  await rows("select public.rpc_crm_visit_invalidate($1,'撤销新一轮的无效拜访')",[nextVisit])
+  assert.equal(await deadline(keyLead),await deadlineAfter(45))
+  console.log("Passed visits, quota, protection defaults and reconfiguration, linked contract signing, add-on confirmation and finance promotion.")
 } catch (error) {
   console.error(error.stack, error.where ?? '', error.query?.slice(0,250) ?? '')
   process.exitCode = 1

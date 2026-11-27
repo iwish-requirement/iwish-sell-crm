@@ -10,7 +10,8 @@ import { getBrowserSupabaseClient } from "@/lib/supabase/client"
 import { crmDate, getCrmError } from "@/lib/services/crm-visits"
 
 type Goal = { profile_id: string; effective_on: string; monthly: number | null; quarterly: number | null; yearly: number | null; weekly_reference: string | null }
-type SalesSettings = { people: { id: string; name: string; quota: number }[]; goals: Goal[] }
+type ProtectionTerms = { newIntentDays: number; keyIntentDays: number; nurtureDays: number; effectiveAt: string | null }
+type SalesSettings = { people: { id: string; name: string; quota: number }[]; goals: Goal[]; protectionTerms?: ProtectionTerms }
 type PoolSettings = { enabled: boolean; earliest: string; preventPreviousOwnerReclaim: boolean }
 type Notice = { id: string; lead_id: string; customer: string; deadline: string; offset_days: number; read_at: string | null }
 
@@ -73,6 +74,9 @@ export function CrmSalesSettings() {
       const { data, error } = await getBrowserSupabaseClient().rpc(name, args)
       if (error) throw error
       if (name === "rpc_crm_protection_admin") setPool(data as PoolSettings)
+      if (name === "rpc_crm_save_protection_terms") {
+        setSettings((current) => current && { ...current, protectionTerms: data as ProtectionTerms })
+      }
       toast.success("销售规则已更新")
       setReload((n) => n + 1)
     } catch (error) {
@@ -100,16 +104,44 @@ export function CrmSalesSettings() {
 
   if (failed) return <p className="text-sm text-muted-foreground">当前账号无法读取拜访目标和公海流转配置。</p>
   if (!settings || !pool) return <p role="status" className="text-sm">正在加载销售配置…</p>
+  const terms = settings.protectionTerms
   return <Card className="max-w-2xl">
     <CardHeader>
       <CardTitle>客户保护、公海与拜访目标</CardTitle>
       <CardDescription>统一管理客户保护期、认领、个人持有上限和拜访目标。</CardDescription>
     </CardHeader>
     <CardContent className="space-y-4">
-      <div className="space-y-1 text-sm">
-        <p>新增意向 15 天 · 重点意向 45 天 · 待培育 90 天</p>
-        <p className="text-muted-foreground">到期前 7 天、3 天和到期当天发 CRM 站内提醒。下一次跟进日期以当前负责人有效拜访中提交的安排为准。</p>
-      </div>
+      {terms ? <form key={terms.effectiveAt ?? "default"} className="space-y-3" onSubmit={(event) => {
+        event.preventDefault()
+        const values = new FormData(event.currentTarget)
+        void run("rpc_crm_save_protection_terms", {
+          p_new_intent_days: Number(values.get("newIntentDays")),
+          p_key_intent_days: Number(values.get("keyIntentDays")),
+          p_nurture_days: Number(values.get("nurtureDays")),
+          p_previous_effective_at: terms.effectiveAt,
+        })
+      }}>
+        <h3 className="text-sm font-medium">保护期天数</h3>
+        <div className="grid gap-2 sm:grid-cols-3">
+          <label className="space-y-1 text-xs">新增意向（天）
+            <Input name="newIntentDays" type="number" min={1} step={1} required disabled={busy} defaultValue={terms.newIntentDays} />
+          </label>
+          <label className="space-y-1 text-xs">重点意向（天）
+            <Input name="keyIntentDays" type="number" min={1} step={1} required disabled={busy} defaultValue={terms.keyIntentDays} />
+          </label>
+          <label className="space-y-1 text-xs">待培育（天）
+            <Input name="nurtureDays" type="number" min={1} step={1} required disabled={busy} defaultValue={terms.nurtureDays} />
+          </label>
+        </div>
+        <p className="text-xs text-muted-foreground">按自然日计算。保存后，现有到期日继续有效，下次重新计时才采用新天数。</p>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button type="submit" disabled={busy}>保存保护期天数</Button>
+          {terms.effectiveAt && <span className="text-xs text-muted-foreground">
+            生效时间 {new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Shanghai" }).format(new Date(terms.effectiveAt))}
+          </span>}
+        </div>
+      </form> : <p className="text-sm text-muted-foreground">保护期天数配置暂不可用。</p>}
+      <p className="text-sm text-muted-foreground">到期前 7 天、3 天和到期当天发 CRM 站内提醒。下一次跟进日期以当前负责人有效拜访中提交的安排为准。</p>
       <select aria-label="选择销售" className="w-full rounded-md border bg-background px-3 py-2 text-sm" value={profile} onChange={(event) => {
         const person = settings.people.find((item) => item.id === event.target.value)
         setProfile(person?.id ?? "")

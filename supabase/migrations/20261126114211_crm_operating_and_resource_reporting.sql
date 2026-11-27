@@ -55,16 +55,58 @@ $$;
 
 create or replace function public.rpc_crm_sales_settings() returns jsonb
 language plpgsql stable security definer set search_path = '' as $$
+declare v_terms iwish.crm_protection_terms;
 begin
   if not iwish.is_active_user(auth.uid()) or not iwish.has_permission(auth.uid(),'settings.pipeline.manage') then
     raise exception 'ERR_NO_PERMISSION:settings.pipeline.manage';
   end if;
+  v_terms := iwish.crm_protection_terms_at(statement_timestamp());
   return jsonb_build_object('people',coalesce((
     select jsonb_agg(jsonb_build_object('id',p.id,'name',p.full_name,'quota',iwish.crm_quota_limit(p.id)) order by p.full_name)
     from public.profiles p where iwish.is_active_user(p.id) and iwish.has_permission(p.id,'lead_notes.create')
-  ),'[]'),'goals',coalesce((select jsonb_agg(to_jsonb(g) order by g.effective_on desc) from iwish.crm_visit_goals g),'[]'));
+  ),'[]'),'goals',coalesce((select jsonb_agg(to_jsonb(g) order by g.effective_on desc) from iwish.crm_visit_goals g),'[]'),
+  'protectionTerms',jsonb_build_object('newIntentDays',v_terms.new_intent_days,'keyIntentDays',v_terms.key_intent_days,
+    'nurtureDays',v_terms.nurture_days,'effectiveAt',nullif(v_terms.effective_at,'-infinity')));
 end;
 $$;
+
+create function public.rpc_crm_save_protection_terms(
+  p_new_intent_days integer,p_key_intent_days integer,p_nurture_days integer,p_previous_effective_at timestamptz
+) returns jsonb
+language plpgsql security definer set search_path = '' as $$
+declare
+  v_before iwish.crm_protection_terms;
+  v_after iwish.crm_protection_terms;
+begin
+  if not iwish.is_active_user(auth.uid()) or not iwish.has_permission(auth.uid(),'settings.pipeline.manage') then
+    raise exception 'ERR_NO_PERMISSION:settings.pipeline.manage';
+  end if;
+  if least(coalesce(p_new_intent_days,0),coalesce(p_key_intent_days,0),coalesce(p_nurture_days,0))<1
+    or greatest(p_new_intent_days,p_key_intent_days,p_nurture_days)>date '9999-12-30'-iwish.crm_today() then
+    raise exception 'ERR_CRM_PROTECTION_TERMS';
+  end if;
+  perform pg_advisory_xact_lock(hashtextextended('iwish.crm.protection.terms',0));
+  v_before := iwish.crm_protection_terms_at(clock_timestamp());
+  if (v_before.new_intent_days,v_before.key_intent_days,v_before.nurture_days)
+    is distinct from (p_new_intent_days,p_key_intent_days,p_nurture_days) then
+    if nullif(v_before.effective_at,'-infinity') is distinct from p_previous_effective_at then
+      raise exception 'ERR_CRM_CONFLICT';
+    end if;
+    insert into iwish.crm_protection_terms
+    values (clock_timestamp(),p_new_intent_days,p_key_intent_days,p_nurture_days)
+    returning * into v_after;
+    perform iwish.audit(auth.uid(),'crm_protection_terms_save','setting','crm.protection_terms',
+      to_jsonb(v_before),to_jsonb(v_after),'修改客户保护天数');
+  else
+    v_after := v_before;
+  end if;
+  return jsonb_build_object('newIntentDays',v_after.new_intent_days,'keyIntentDays',v_after.key_intent_days,
+    'nurtureDays',v_after.nurture_days,'effectiveAt',nullif(v_after.effective_at,'-infinity'));
+end;
+$$;
+
+revoke all on function public.rpc_crm_save_protection_terms(integer,integer,integer,timestamptz) from public,anon,authenticated;
+grant execute on function public.rpc_crm_save_protection_terms(integer,integer,integer,timestamptz) to authenticated;
 
 create function public.rpc_crm_save_lead_quota(p_profile uuid,p_quota integer) returns void
 language plpgsql security definer set search_path = '' as $$
