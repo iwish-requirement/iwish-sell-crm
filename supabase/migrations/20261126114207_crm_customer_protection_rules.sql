@@ -62,11 +62,12 @@ begin
   update public.leads
   set crm_legacy_protected_until = protected_until,
       crm_protection_review_required = status='open' and owner_id is not null
-        and not coalesce(is_deleted,false) and customer_attribute is distinct from 'invalid'
+        and customer_attribute is distinct from 'invalid'
         and coalesce(follow_up_stage,'uncontacted') not in ('won','payment_received'),
       protected_until = null
-  where protected_until is not null or (status='open' and owner_id is not null and not coalesce(is_deleted,false)
-    and customer_attribute is distinct from 'invalid' and coalesce(follow_up_stage,'uncontacted') not in ('won','payment_received'));
+  where not coalesce(is_deleted,false)
+    and (protected_until is not null or (status='open' and owner_id is not null
+      and customer_attribute is distinct from 'invalid' and coalesce(follow_up_stage,'uncontacted') not in ('won','payment_received')));
 
   if v_timestamp_trigger='O' then
     alter table public.leads enable trigger trg_leads_updated_at;

@@ -6,8 +6,8 @@ const require = createRequire(import.meta.url)
 const { PGlite } = require(process.env.CRM_PGLITE_MODULE ?? "@electric-sql/pglite")
 const db = new PGlite()
 const id = (key) => "00000000-0000-4000-8000-" + String(key).padStart(12, "0")
-const [admin, owner, companion, outsider, lead, historic, won, visitA, visitB, foreignLead, junior] =
-  [1, 2, 3, 4, 11, 12, 13, 16, 17, 18, 28].map(id)
+const [admin, owner, companion, outsider, lead, historic, archived, won, visitA, visitB, foreignLead, junior] =
+  [1, 2, 3, 4, 11, 12, 14, 13, 16, 17, 18, 28].map(id)
 const rows = async (sql, args) => (await db.query(sql, args)).rows
 const value = async (sql, args) => (await rows(sql, args))[0]?.value
 const rejects = (sql, args, code) => assert.rejects(() => rows(sql, args), (error) => error.message.includes(code))
@@ -17,6 +17,8 @@ const legacyRules = ["iwish.trg_lead_pipeline_defaults()", "iwish.rpc_auto_retur
 const ruleDefinitions = () => rows("select pg_get_functiondef(sig::regprocedure) as definition from unnest($1::text[]) as t(sig)", [legacyRules])
 let rulesBefore
 let historicalUpdatedAt
+let archivedBefore
+const archivedState = () => rows("select owner_id,team_id,updated_at,protected_until,is_deleted from public.leads where id=$1", [archived])
 
 
 async function actor(user, role = "authenticated") {
@@ -35,6 +37,7 @@ try {
     if (filename.endsWith("_crm_customer_protection_rules.sql")) {
       assert.deepEqual(await ruleDefinitions(), rulesBefore)
       historicalUpdatedAt = await value("select updated_at::text as value from public.leads where id=$1",[historic])
+      archivedBefore = await archivedState()
       return
     }
     if (!filename.endsWith("_crm_first_release.sql")) return
@@ -51,6 +54,8 @@ try {
     await insertLead(historic, owner, team, "历史客户", "online_communication", "2026-11-01T04:00:00Z")
     await rows("update public.leads set locked_until='2026-11-02T04:00:00Z', protected_until='2026-12-01T04:00:00Z' where id=$1", [historic])
     await rows("insert into public.lead_notes(lead_id,author_id,content,note_type) values($1,$2,'原线下拜访内容','visit')", [historic,owner])
+    await insertLead(archived, owner, team, "已删除历史客户", "online_communication", "2026-11-01T04:00:00Z")
+    await rows("update public.leads set protected_until='2026-12-01T04:00:00Z',is_deleted=true where id=$1", [archived])
     await db.exec("alter table public.leads enable trigger trg_lead_pipeline_defaults")
   })
   assert.deepEqual(await rows("select monthly, quarterly, yearly, weekly_reference from iwish.crm_visit_goals where profile_id=$1 order by effective_on",[junior]), [
@@ -66,6 +71,8 @@ try {
   }])
   assert.equal(await value("select count(*)::integer as value from public.lead_notes where lead_id=$1 and note_type='visit'",[historic]),1)
   assert.equal(await value("select updated_at::text as value from public.leads where id=$1",[historic]),historicalUpdatedAt)
+  assert.deepEqual(await archivedState(), archivedBefore)
+  await rejects("update public.leads set protected_until=null where id=$1", [archived], "ERR_DELETED_LEAD_IMMUTABLE")
   assert.equal(await value("select tgenabled::text as value from pg_trigger where tgrelid='public.leads'::regclass and tgname='trg_leads_updated_at'"),"O")
 
   async function seedLead(...args) {
