@@ -16,6 +16,7 @@ const team = 8101
 const legacyRules = ["iwish.trg_lead_pipeline_defaults()", "iwish.rpc_auto_return_leads_to_pool()", "iwish.enforce_lead_quota(uuid,uuid)"]
 const ruleDefinitions = () => rows("select pg_get_functiondef(sig::regprocedure) as definition from unnest($1::text[]) as t(sig)", [legacyRules])
 let rulesBefore
+let historicalUpdatedAt
 
 
 async function actor(user, role = "authenticated") {
@@ -33,6 +34,7 @@ try {
   await loadAllocationFixture(db, async (filename) => {
     if (filename.endsWith("_crm_customer_protection_rules.sql")) {
       assert.deepEqual(await ruleDefinitions(), rulesBefore)
+      historicalUpdatedAt = await value("select updated_at::text as value from public.leads where id=$1",[historic])
       return
     }
     if (!filename.endsWith("_crm_first_release.sql")) return
@@ -63,6 +65,8 @@ try {
     crm_protection_review_required: true,
   }])
   assert.equal(await value("select count(*)::integer as value from public.lead_notes where lead_id=$1 and note_type='visit'",[historic]),1)
+  assert.equal(await value("select updated_at::text as value from public.leads where id=$1",[historic]),historicalUpdatedAt)
+  assert.equal(await value("select tgenabled::text as value from pg_trigger where tgrelid='public.leads'::regclass and tgname='trg_leads_updated_at'"),"O")
 
   async function seedLead(...args) {
     await rows("select set_config('request.jwt.claim.sub',$1,false)", [admin])

@@ -49,14 +49,32 @@ alter table public.leads
 
 -- Preserve the legacy timestamps and leave existing ownership untouched.
 -- Unverified customers remain on the management review list until confirmed.
-update public.leads
-set crm_legacy_protected_until = protected_until,
-    crm_protection_review_required = status='open' and owner_id is not null
-      and not coalesce(is_deleted,false) and customer_attribute is distinct from 'invalid'
-      and coalesce(follow_up_stage,'uncontacted') not in ('won','payment_received'),
-    protected_until = null
-where protected_until is not null or (status='open' and owner_id is not null and not coalesce(is_deleted,false)
-  and customer_attribute is distinct from 'invalid' and coalesce(follow_up_stage,'uncontacted') not in ('won','payment_received'));
+do $$
+declare v_timestamp_trigger "char";
+begin
+  -- The dashboard uses updated_at for activity. A migration is not a sales action.
+  select tgenabled into v_timestamp_trigger from pg_trigger
+  where tgrelid='public.leads'::regclass and tgname='trg_leads_updated_at';
+  if v_timestamp_trigger in ('O','A') then
+    alter table public.leads disable trigger trg_leads_updated_at;
+  end if;
+
+  update public.leads
+  set crm_legacy_protected_until = protected_until,
+      crm_protection_review_required = status='open' and owner_id is not null
+        and not coalesce(is_deleted,false) and customer_attribute is distinct from 'invalid'
+        and coalesce(follow_up_stage,'uncontacted') not in ('won','payment_received'),
+      protected_until = null
+  where protected_until is not null or (status='open' and owner_id is not null and not coalesce(is_deleted,false)
+    and customer_attribute is distinct from 'invalid' and coalesce(follow_up_stage,'uncontacted') not in ('won','payment_received'));
+
+  if v_timestamp_trigger='O' then
+    alter table public.leads enable trigger trg_leads_updated_at;
+  elsif v_timestamp_trigger='A' then
+    alter table public.leads enable always trigger trg_leads_updated_at;
+  end if;
+end;
+$$;
 
 create index crm_lead_protection_due on public.leads(protected_until,id)
   where status='open' and owner_id is not null and not crm_protection_review_required and protected_until is not null;
