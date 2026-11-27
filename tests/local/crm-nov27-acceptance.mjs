@@ -58,7 +58,7 @@ const as = (actor, action) => db.transaction(async (tx) => {
 })
 
 const browserRpc = new Set([
-  "rpc_me_permissions", "rpc_get_pipeline_business_rules", "rpc_recent_activities", "rpc_sales_dashboard",
+  "rpc_me_permissions", "rpc_get_role_permissions", "rpc_get_pipeline_business_rules", "rpc_recent_activities", "rpc_sales_dashboard",
   "rpc_crm_record_contact", "rpc_crm_lead_stage_events", "rpc_lead_advance_with_action", "rpc_lead_close_with_action",
   "rpc_lead_assign", "rpc_lead_claim_from_pool", "rpc_leads_export_request", "rpc_leads_export_mark_complete",
   "rpc_deal_history_list", "rpc_deal_contract_submission_can_edit", "rpc_deal_contract_allocation_result",
