@@ -97,6 +97,19 @@ export function crmDate(date = new Date()) {
   return new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Shanghai" }).format(date)
 }
 
+export async function fetchCrmNextActions(leadIds: string[], signal?: AbortSignal) {
+  const supabase = getBrowserSupabaseClient()
+  const actions = new Map<string, { next_contact_at: string; last_visit_at: string }>()
+  for (let offset = 0; offset < leadIds.length; offset += 1000) {
+    let query = supabase.rpc("rpc_crm_dashboard_next_actions", { p_lead_ids: leadIds.slice(offset, offset + 1000) })
+    if (signal) query = query.abortSignal(signal)
+    const { data, error } = await query
+    if (error) throw error
+    for (const action of data ?? []) actions.set(action.lead_id, action)
+  }
+  return actions
+}
+
 export function requiresMeetingEvidence(method: string) {
   return method === "video" || method === "phone"
 }

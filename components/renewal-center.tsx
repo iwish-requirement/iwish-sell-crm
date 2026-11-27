@@ -6,16 +6,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Checkbox } from "@/components/ui/checkbox"
 import { AlertCircle, Clock, RefreshCcw } from "lucide-react"
-import { toast } from "sonner"
 
 import { MePermissionsContext } from "@/components/app-root"
 import type { RenewalContractListItem } from "@/lib/services/contracts"
 import { fetchRenewalContracts } from "@/lib/services/contracts"
-import { getBrowserSupabaseClient } from "@/lib/supabase/client"
 
 
 const TIME_FILTER_OPTIONS = [
@@ -52,13 +47,6 @@ export function RenewalCenter() {
   const [isLoading, setIsLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [items, setItems] = useState<RenewalContractListItem[]>([])
-  const [selectedIds, setSelectedIds] = useState<string[]>([])
-  const [bulkNextDate, setBulkNextDate] = useState("")
-  const [isApplyingBulk, setIsApplyingBulk] = useState(false)
-
-
-
-
   useEffect(() => {
     let isMounted = true
 
@@ -86,7 +74,6 @@ export function RenewalCenter() {
           if (!isMounted) return
           setItems(data)
           setIsLoading(false)
-          setSelectedIds([])
         })
         .catch((error) => {
           console.error("Failed to load renewal contracts", error)
@@ -114,81 +101,7 @@ export function RenewalCenter() {
     return { total, expiring, expired, customerCount }
   }, [items])
 
-  const allSelectableIds = useMemo(() => items.map((item) => item.contractId), [items])
-  const isAllSelected = allSelectableIds.length > 0 && selectedIds.length === allSelectableIds.length
-  const hasSelection = selectedIds.length > 0
-
   const hasNoPermission = loadError === "no-permission"
-
-  const toggleSelectAll = () => {
-    if (isAllSelected) {
-      setSelectedIds([])
-    } else {
-      setSelectedIds(allSelectableIds)
-    }
-  }
-
-  const toggleSelectOne = (contractId: string) => {
-    setSelectedIds((prev) =>
-      prev.includes(contractId) ? prev.filter((id) => id !== contractId) : [...prev, contractId],
-    )
-  }
-
-  const handleBulkSetNextContact = async () => {
-    if (!bulkNextDate || selectedIds.length === 0) {
-      return
-    }
-
-    setIsApplyingBulk(true)
-
-    const supabase = getBrowserSupabaseClient()
-    const selectedItems = items.filter((item) => selectedIds.includes(item.contractId) && item.leadId)
-    const uniqueLeadIds = Array.from(
-      new Set(selectedItems.map((item) => item.leadId).filter((id): id is string => Boolean(id))),
-    )
-
-    let successCount = 0
-    let failedCount = 0
-
-    const results = await Promise.all(
-      uniqueLeadIds.map(async (leadId) => {
-        const { error } = await supabase.rpc("rpc_lead_update", {
-          p_lead_id: leadId,
-          patch: { next_contact_at: bulkNextDate },
-        })
-
-        if (error) {
-          console.error("Failed to set next_contact_at for lead from renewal center", error)
-          return false
-        }
-
-        return true
-      }),
-    )
-
-    results.forEach((ok) => {
-      if (ok) successCount += 1
-      else failedCount += 1
-    })
-
-    if (successCount > 0) {
-      toast.success("已批量设置下次跟进日期", {
-        description: `成功更新 ${successCount} 条线索的下次跟进日期`,
-      })
-    }
-
-    if (failedCount > 0) {
-      toast.error("部分线索更新失败", {
-        description: `有 ${failedCount} 条线索未能更新，请稍后重试或联系管理员`,
-      })
-    }
-
-    setIsApplyingBulk(false)
-  }
-
-
-
-
 
   return (
     <div className="space-y-4">
@@ -299,45 +212,10 @@ export function RenewalCenter() {
             <p className="text-sm text-muted-foreground">当前时间窗口内暂无需要续费关注的合同。</p>
           ) : (
             <div className="space-y-3">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                <p className="text-xs text-muted-foreground">
-                  已选择 <span className="font-semibold">{selectedIds.length}</span> 条合同
-                </p>
-                <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full sm:w-auto">
-                  <Input
-                    type="date"
-                    value={bulkNextDate}
-                    onChange={(e) => setBulkNextDate(e.target.value)}
-                    className="h-9 w-full sm:w-[160px] text-sm"
-                  />
-                  <Button
-                    size="default"
-                    className="w-full sm:w-auto h-9"
-                    disabled={!hasSelection || !bulkNextDate || isApplyingBulk}
-                    onClick={async () => {
-                      await handleBulkSetNextContact()
-                    }}
-                  >
-                    批量设置下次跟进日期
-                  </Button>
-
-                </div>
-
-              </div>
-
               <div className="w-full overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="w-8">
-                        <Checkbox
-                          aria-label="全选续费合同"
-                          checked={isAllSelected}
-                          onCheckedChange={() => {
-                            toggleSelectAll()
-                          }}
-                        />
-                      </TableHead>
                       <TableHead className="whitespace-nowrap text-xs font-semibold">到期日期</TableHead>
                       <TableHead className="whitespace-nowrap text-xs font-semibold">服务周期</TableHead>
                       <TableHead className="whitespace-nowrap text-xs font-semibold">客户 / 合同</TableHead>
@@ -350,13 +228,6 @@ export function RenewalCenter() {
                   <TableBody>
                     {items.map((item) => (
                       <TableRow key={item.contractId} className="text-sm">
-                        <TableCell className="w-8">
-                          <Checkbox
-                            aria-label="选择续费合同"
-                            checked={selectedIds.includes(item.contractId)}
-                            onCheckedChange={() => toggleSelectOne(item.contractId)}
-                          />
-                        </TableCell>
                         <TableCell className="whitespace-nowrap">
                           {item.endDate ? new Date(item.endDate).toLocaleDateString("zh-CN") : "--"}
                         </TableCell>

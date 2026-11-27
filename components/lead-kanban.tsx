@@ -26,7 +26,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { LeadHandoffProgress } from "@/components/lead-handoff-progress"
 import { CrmLeadProtection, CrmVisitActivity, CrmVisitDialog } from "@/components/crm-lead-visits"
 import { DealContractSubmissionDialog } from "@/components/deal-contract-submission"
-import { crmDate, getCrmError, getLeadWorkflow, substantiveFollowUpKinds, type LeadWorkflow } from "@/lib/services/crm-visits"
+import { crmDate, fetchCrmNextActions, getCrmError, getLeadWorkflow, substantiveFollowUpKinds, type LeadWorkflow } from "@/lib/services/crm-visits"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 
 import {
@@ -424,7 +424,7 @@ const PAGE_SIZE = 10
 const TABLE_PAGE_SIZE = 25
 const LEAD_QUERY_PAGE_SIZE = 1000
 const LEAD_SELECT_COLUMNS =
-  "id, team_id, owner_id, created_by, name, website, source, stage, status, close_result, close_reason, last_contact_at, created_at, updated_at, customer_name, product_category, customer_phone, customer_email, address, budget, internal_score, blacklist_reason, next_contact_at, wechat, customer_grade, source_level1, source_level2, tags, first_contact_at, locked_by, locked_until, protected_until, business_categories, business_types, responsibility_type, dev_method_key, referral_customer_name, referral_type_key, activity_name, source_department_key, source_locked_at, customer_attribute, follow_up_stage, ownership_started_at"
+  "id, team_id, owner_id, created_by, name, website, source, stage, status, close_result, close_reason, last_contact_at, created_at, updated_at, customer_name, product_category, customer_phone, customer_email, address, budget, internal_score, blacklist_reason, wechat, customer_grade, source_level1, source_level2, tags, first_contact_at, locked_by, locked_until, protected_until, business_categories, business_types, responsibility_type, dev_method_key, referral_customer_name, referral_type_key, activity_name, source_department_key, source_locked_at, customer_attribute, follow_up_stage, ownership_started_at"
 
 
 
@@ -438,14 +438,12 @@ function parseBudgetLabel(budget: string): number | null {
 function LeadCard({
   lead,
   onClick,
-  riskConfig,
   sourceLevel1Label,
   sourceLevel2Label,
   ownerLabel,
 }: {
   lead: Lead
   onClick: () => void
-  riskConfig: { warningHours: number; dangerHours: number }
   sourceLevel1Label: string | null
   sourceLevel2Label: string | null
   ownerLabel: string | null
@@ -468,37 +466,6 @@ function LeadCard({
     }
     return null
   }
-
-  const getRiskBadge = (lead: Lead) => {
-    // 已成交或已丢单的线索不再参与风险/需跟进提示
-    if (lead.status === "closed" || isTerminalFollowUpStage(lead.followUpStage)) return null
-
-    const lastContactAt = lead.lastContactAt ? new Date(lead.lastContactAt) : lead.createdAt ? new Date(lead.createdAt) : null
-    if (!lastContactAt) {
-      return (
-        <Badge variant="destructive" className="text-xs">
-          风险
-        </Badge>
-      )
-    }
-
-    const diffHours = (Date.now() - lastContactAt.getTime()) / (1000 * 60 * 60)
-    const { warningHours, dangerHours } = riskConfig
-
-    if (diffHours >= dangerHours)
-      return (
-        <Badge variant="destructive" className="text-xs">
-          风险
-        </Badge>
-      )
-    if (diffHours >= warningHours)
-      return <Badge className="bg-amber-100 text-amber-700 text-xs hover:bg-amber-100 font-medium">需跟进</Badge>
-    return null
-  }
-
-
-
-
 
   const lastContactLabel = lead.lastInteraction === 0 ? "今天" : `${lead.lastInteraction}天前`
   const lastContactDateLabel = lead.lastContactAt
@@ -542,7 +509,7 @@ function LeadCard({
 
           <div className="flex flex-col items-end gap-1.5">
             {getStatusBadge()}
-            {getRiskBadge(lead)}
+            <LeadFollowUpBadge lead={lead} />
           </div>
         </div>
 
@@ -714,44 +681,23 @@ function getLeadTitle(lead: Lead): string {
   return company || website || "未命名线索"
 }
 
-function getLeadRiskState(
-  lead: Lead,
-  riskConfig: { warningHours: number; dangerHours: number },
-): "normal" | "warning" | "danger" {
-  if (lead.status === "closed" || isTerminalFollowUpStage(lead.followUpStage)) return "normal"
-
-  const now = Date.now()
-  const nextContactAt = lead.nextContactAt ? new Date(lead.nextContactAt) : null
-  if (nextContactAt && nextContactAt.getTime() < now) {
-    return "danger"
+function getLeadFollowUpState(lead: Lead, today: string) {
+  if (lead.status !== "open" || lead.customerAttribute === "invalid" || isTerminalFollowUpStage(lead.followUpStage) || !lead.nextContactAt) {
+    return null
   }
-
-  const lastContactAt = lead.lastContactAt ? new Date(lead.lastContactAt) : lead.createdAt ? new Date(lead.createdAt) : null
-  if (!lastContactAt || Number.isNaN(lastContactAt.getTime())) return "danger"
-
-  const diffHours = (now - lastContactAt.getTime()) / (1000 * 60 * 60)
-  if (diffHours >= riskConfig.dangerHours) return "danger"
-  if (diffHours >= riskConfig.warningHours) return "warning"
-  return "normal"
+  const next = crmDate(new Date(lead.nextContactAt))
+  if (next < today) return "overdue"
+  if (next === today) return "today"
+  return "scheduled"
 }
 
-function LeadRiskBadge({
-  lead,
-  riskConfig,
-}: {
-  lead: Lead
-  riskConfig: { warningHours: number; dangerHours: number }
-}) {
-  const state = getLeadRiskState(lead, riskConfig)
-  if (state === "danger") {
-    return <Badge variant="destructive">风险</Badge>
-  }
-  if (state === "warning") {
-    return <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-100">需跟进</Badge>
-  }
-  return <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100">正常</Badge>
+function LeadFollowUpBadge({ lead }: { lead: Lead }) {
+  const state = getLeadFollowUpState(lead, crmDate())
+  if (state === "overdue") return <Badge variant="destructive">已逾期</Badge>
+  if (state === "today") return <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-100">今日待跟进</Badge>
+  if (state === "scheduled") return <Badge variant="outline">已安排</Badge>
+  return null
 }
-
 
 export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean }) {
   const pathname = usePathname() ?? ""
@@ -1078,7 +1024,6 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
   const retryLoad = useCallback(() => setReloadToken((t) => t + 1), [])
 
   const [isCreating, setIsCreating] = useState(false)
-  const riskConfigRef = useRef({ warningHours: 72, dangerHours: 168 })
   const quotaLimitRef = useRef(60)
 
   const [isReassigning, setIsReassigning] = useState(false)
@@ -1176,18 +1121,13 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
         const [
           { data, error },
-          { data: businessRulesRpcResult, error: businessRulesError },
+          { data: quota, error: quotaError },
         ] = await Promise.all([
           loadLeadRows(),
-          Promise.all([supabase.rpc("rpc_get_pipeline_business_rules"), supabase.rpc("rpc_crm_my_quota")])
-            .then(([rules, quota]) => ({ ...rules, data: { ...(rules.data ?? {}), quota_limit: quota.data ?? 60 } })),
+          supabase.rpc("rpc_crm_my_quota"),
         ])
 
-        if (businessRulesError) {
-          console.error("Failed to load pipeline business rules via RPC for lead kanban", businessRulesError)
-        }
-
-
+        if (quotaError) console.error("Failed to load lead quota", quotaError)
 
         if (!isMounted) {
           return
@@ -1207,24 +1147,9 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
 
         const rows = (data ?? []) as any[]
 
-        const businessRulesValue = (businessRulesRpcResult as any) ?? null
-        if (businessRulesValue && typeof businessRulesValue === "object") {
-          const rawWarning = (businessRulesValue as any).warning_hours
-          const rawDanger = (businessRulesValue as any).danger_hours
-          const rawQuota = (businessRulesValue as any).quota_limit
-
-
-          if (typeof rawWarning === "number" && Number.isFinite(rawWarning) && rawWarning > 0) {
-            riskConfigRef.current.warningHours = rawWarning
-          }
-          if (typeof rawDanger === "number" && Number.isFinite(rawDanger) && rawDanger > 0) {
-            riskConfigRef.current.dangerHours = rawDanger
-          }
-          if (typeof rawQuota === "number" && Number.isFinite(rawQuota) && rawQuota > 0) {
-            quotaLimitRef.current = rawQuota
-          }
-        }
-
+        if (typeof quota === "number" && quota > 0) quotaLimitRef.current = quota
+        const nextActions = await fetchCrmNextActions(rows.filter((row) => row.status === "open").map((row) => row.id))
+        if (!isMounted) return
 
         const mapped: Lead[] =
           rows.map((row: any) => {
@@ -1275,7 +1200,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                 followUpStage: (row.follow_up_stage as string | null) ?? "uncontacted",
                 ownershipStartedAt: (row.ownership_started_at as string | null) ?? null,
                 status: (row.status as string | null) === "closed" ? "closed" : "open",
-                nextContactAt: row.next_contact_at ?? null,
+                nextContactAt: nextActions.get(row.id)?.next_contact_at ?? null,
                 ownerId: (row.owner_id as string | null) ?? null,
                 teamId: (row.team_id as number | null) ?? null,
                 grade: (row.customer_grade as string | null) ?? null,
@@ -2336,14 +2261,21 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
   }
 
   const refreshVisitProjection = async (leadId: string | number) => {
-    const { data } = await getBrowserSupabaseClient().from("leads_secure_view")
-      .select("follow_up_stage,protected_until,last_contact_at").eq("id", leadId).maybeSingle()
+    const [{ data }, nextActions] = await Promise.all([
+      getBrowserSupabaseClient().from("leads_secure_view")
+        .select("follow_up_stage,protected_until,last_contact_at").eq("id", leadId).maybeSingle(),
+      fetchCrmNextActions([String(leadId)]).catch((error) => {
+        console.error("Failed to refresh lead follow-up", error)
+        return null
+      }),
+    ])
     if (!data) return
-    const update = (lead: Lead) => lead.id === leadId ? {
+    const update = (lead: Lead) => String(lead.id) === String(leadId) ? {
       ...lead,
       followUpStage: data.follow_up_stage ?? lead.followUpStage,
       protectedUntil: data.protected_until,
       lastContactAt: data.last_contact_at,
+      nextContactAt: nextActions ? nextActions.get(String(leadId))?.next_contact_at ?? null : lead.nextContactAt,
       lastInteraction: data.last_contact_at
         ? Math.max(0, Math.floor((Date.now() - new Date(data.last_contact_at).getTime()) / 86400000))
         : lead.lastInteraction,
@@ -2930,7 +2862,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
     }
 
     if (sortOption === "risk") {
-      return b.lastInteraction - a.lastInteraction
+      return (a.nextContactAt ?? "9999").localeCompare(b.nextContactAt ?? "9999")
     }
 
     if (sortOption === "budget_desc" || sortOption === "budget_asc") {
@@ -3586,7 +3518,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="recent">按最近跟进</SelectItem>
-                    <SelectItem value="risk">按风险高优先</SelectItem>
+                    <SelectItem value="risk">按跟进日期优先</SelectItem>
                     <SelectItem value="budget_desc">预算从高到低</SelectItem>
                     <SelectItem value="budget_asc">预算从低到高</SelectItem>
                   </SelectContent>
@@ -3765,30 +3697,15 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
         </div>
       )}
 
-      {/* Risk Alert（仅统计未成交线索） */}
-
       {(() => {
-        const activeLeadsForRisk = filteredLeads.filter((lead) => lead.status === "open" && !isTerminalFollowUpStage(lead.followUpStage))
-        const { warningHours, dangerHours } = riskConfigRef.current
-
-
-
-        const nowMs = Date.now()
-
-        const urgentCount = activeLeadsForRisk.filter((lead) => {
-          const lastContactAt = lead.lastContactAt ? new Date(lead.lastContactAt) : lead.createdAt ? new Date(lead.createdAt) : null
-          if (!lastContactAt) return true
-          const diffHours = (nowMs - lastContactAt.getTime()) / (1000 * 60 * 60)
-          return diffHours >= dangerHours
-        }).length
-
-        const warningCount = activeLeadsForRisk.filter((lead) => {
-          const lastContactAt = lead.lastContactAt ? new Date(lead.lastContactAt) : lead.createdAt ? new Date(lead.createdAt) : null
-          if (!lastContactAt) return false
-          const diffHours = (nowMs - lastContactAt.getTime()) / (1000 * 60 * 60)
-          return diffHours >= warningHours && diffHours < dangerHours
-        }).length
-
+        const today = crmDate()
+        let urgentCount = 0
+        let warningCount = 0
+        for (const lead of filteredLeads) {
+          const state = getLeadFollowUpState(lead, today)
+          if (state === "overdue") urgentCount++
+          if (state === "today") warningCount++
+        }
 
         if (urgentCount === 0 && warningCount === 0) {
           return (
@@ -3797,8 +3714,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                 <AlertTriangle className="w-5 h-5 text-emerald-600" />
               </div>
               <div>
-                <p className="text-base font-bold text-emerald-900">当前暂无需要跟进的风险线索</p>
-                <p className="text-sm text-emerald-700/80 mt-0.5">请继续保持积极跟进，确保业务稳步推进</p>
+                <p className="text-base font-bold text-emerald-900">当前没有逾期或今日待跟进的线索</p>
               </div>
             </div>
           )
@@ -3811,10 +3727,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
             </div>
             <div>
               <p className="text-base font-bold text-red-900">
-                {urgentCount} 条线索急需跟进
-              </p>
-              <p className="text-sm text-red-700/80 mt-0.5 leading-relaxed">
-                超过红色风险阈值的在谈线索已达 <span className="font-bold underline">{urgentCount}</span> 条，建议立即处理；另有 <span className="font-semibold">{warningCount}</span> 条线索处于预警区间。
+                {urgentCount} 条跟进已逾期 · {warningCount} 条今日待跟进
               </p>
             </div>
           </div>
@@ -3858,7 +3771,7 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                   <TableHead>负责人</TableHead>
                   <TableHead>最近跟进</TableHead>
                   <TableHead>下次跟进</TableHead>
-                  <TableHead>风险</TableHead>
+                  <TableHead>跟进状态</TableHead>
                   <TableHead>创建时间</TableHead>
                   <TableHead className="text-right">操作</TableHead>
                 </TableRow>
@@ -3932,9 +3845,9 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                         <TableCell>{lead.grade ? <Badge variant="outline">{lead.grade}</Badge> : "-"}</TableCell>
                         <TableCell>{ownerRep?.name ?? "-"}</TableCell>
                         <TableCell>{formatDateLabel(lead.lastContactAt || lead.createdAt)}</TableCell>
-                        <TableCell>{formatDateLabel(lead.nextContactAt)}</TableCell>
+                        <TableCell>{lead.nextContactAt ? crmDate(new Date(lead.nextContactAt)) : "—"}</TableCell>
                         <TableCell>
-                          <LeadRiskBadge lead={lead} riskConfig={riskConfigRef.current} />
+                          <LeadFollowUpBadge lead={lead} />
                         </TableCell>
                         <TableCell>{formatDateLabel(lead.createdAt)}</TableCell>
                         <TableCell className="text-right">
@@ -3987,7 +3900,6 @@ export function LeadKanban({ isPublicPool = false }: { isPublicPool?: boolean })
                         key={lead.id}
                         lead={lead}
                         onClick={() => handleLeadClick(lead)}
-                        riskConfig={riskConfigRef.current}
                         sourceLevel1Label={resolveSourceLevel1Label(lead.sourceLevel1)}
                         sourceLevel2Label={resolveSourceLevel2Label(lead.sourceLevel1, lead.sourceLevel2)}
                         ownerLabel={ownerLabel}

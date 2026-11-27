@@ -182,9 +182,18 @@ language sql security definer set search_path = '' as $$
   where id=p_id and profile_id=auth.uid() and iwish.is_active_user(auth.uid());
 $$;
 
-create function public.rpc_crm_protection_admin(p_enabled boolean default null) returns jsonb
+update public.settings
+set value=value - array['warning_hours','danger_hours','lead_protection_days','public_pool_days','quota_limit']
+where key='pipeline.business_rules'
+  and value ?| array['warning_hours','danger_hours','lead_protection_days','public_pool_days','quota_limit'];
+
+update public.permissions set is_enabled=false where key='leads.quota.override';
+
+create function public.rpc_crm_protection_admin(
+  p_enabled boolean default null,p_prevent_previous_owner_reclaim boolean default null
+) returns jsonb
 language plpgsql security definer set search_path = '' as $$
-declare v_enabled boolean;
+declare v_enabled boolean; v_prevent_reclaim boolean;
 begin
   if not iwish.is_active_user(auth.uid()) or not iwish.has_permission(auth.uid(),'settings.pipeline.manage') then
     raise exception 'ERR_NO_PERMISSION:settings.pipeline.manage';
@@ -192,8 +201,16 @@ begin
   if p_enabled is not null then
     update public.settings set value=jsonb_build_object('enabled',p_enabled) where key='crm.protection_release';
   end if;
+  if p_prevent_previous_owner_reclaim is not null then
+    insert into public.settings(key,value)
+    values ('pipeline.business_rules',jsonb_build_object('prevent_previous_owner_reclaim',p_prevent_previous_owner_reclaim))
+    on conflict (key) do update set value=public.settings.value || excluded.value;
+  end if;
   select value->>'enabled'='true' into v_enabled from public.settings where key='crm.protection_release';
-  return jsonb_build_object('enabled',v_enabled,'earliest','2026-12-16');
+  select value->>'prevent_previous_owner_reclaim'='true' into v_prevent_reclaim
+  from public.settings where key='pipeline.business_rules';
+  return jsonb_build_object('enabled',v_enabled,'earliest','2026-12-16',
+    'preventPreviousOwnerReclaim',coalesce(v_prevent_reclaim,false));
 end;
 $$;
 
@@ -227,10 +244,10 @@ $$;
 revoke all on function iwish.crm_quota_limit(uuid), iwish.crm_quota_full(uuid,uuid),
   iwish.crm_protected_owner_guard(), iwish.crm_run_protection() from public,anon,authenticated;
 revoke all on function public.rpc_crm_run_protection(),public.rpc_crm_protection_notices(),public.rpc_crm_protection_notice_read(uuid),
-  public.rpc_crm_protection_admin(boolean),public.rpc_crm_restore_release(uuid,text) from public,anon,authenticated;
+  public.rpc_crm_protection_admin(boolean,boolean),public.rpc_crm_restore_release(uuid,text) from public,anon,authenticated;
 grant execute on function public.rpc_crm_run_protection() to service_role;
 grant execute on function public.rpc_crm_protection_notices(),public.rpc_crm_protection_notice_read(uuid),
-  public.rpc_crm_protection_admin(boolean),public.rpc_crm_restore_release(uuid,text) to authenticated;
+  public.rpc_crm_protection_admin(boolean,boolean),public.rpc_crm_restore_release(uuid,text) to authenticated;
 
 create or replace view public.public_pool_secure_view
 with (security_barrier = true) as

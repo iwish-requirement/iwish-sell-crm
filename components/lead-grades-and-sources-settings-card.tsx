@@ -966,7 +966,7 @@ export function LeadGradesAndSourcesSettingsCard() {
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-sm font-medium">客户级别</h3>
-              <p className="text-xs text-muted-foreground">用于线索与客户 360 视图的 S/A/B/C 分层与保护期计算。</p>
+              <p className="text-xs text-muted-foreground">用于线索与客户 360 视图的 S/A/B/C 分级。</p>
             </div>
             <div className="flex items-center gap-2">
               <Badge variant="outline" className="text-xs">

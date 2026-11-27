@@ -34,6 +34,7 @@ type LegacyDashboardActivity = RoleDashboardActivity & {
 import { getBrowserSupabaseClient } from "@/lib/supabase/client"
 import { createDashboardCache } from "@/lib/services/dashboard-cache"
 import type { LeadSecureRow } from "@/lib/services/leads"
+import { crmDate, fetchCrmNextActions } from "@/lib/services/crm-visits"
 
 function isTerminalFollowUpStage(value: string | null | undefined): boolean {
   const key = (value ?? "").trim()
@@ -90,7 +91,7 @@ const referenceCache = createDashboardCache<DashboardReferenceData>(60_000)
 
 type DashboardReferenceData = {
   settingsRows: { key: string; value: unknown }[]
-  businessRulesRpcResult: unknown
+  quotas: { profile_id: string; quota: number }[]
   membershipRows: { profile_id: string; team_id: number }[]
   profileRows: { id: string; full_name: string | null; avatar_url: string | null; team_id: number | null }[]
   teamRows: { id: number; name: string | null; is_active: boolean }[]
@@ -115,13 +116,13 @@ async function fetchDashboardReferenceData(
 
   const [
     { data: settingsRows, error: settingsError },
-    { data: businessRulesRpcResult, error: businessRulesError },
+    { data: quotas, error: quotaError },
     { data: membershipRows, error: membershipError },
     { data: profileRows, error: profilesError },
     { data: teamRows, error: teamsError },
   ] = await Promise.all([
     supabase.from("settings").select("key, value").in("key", SETTINGS_KEYS).abortSignal(signal),
-    supabase.rpc("rpc_get_pipeline_business_rules").abortSignal(signal),
+    supabase.rpc("rpc_crm_dashboard_quotas").abortSignal(signal),
     supabase.from("profile_team_memberships").select("profile_id, team_id").abortSignal(signal),
     profilesQuery.abortSignal(signal),
     supabase.from("teams").select("id, name, is_active").abortSignal(signal),
@@ -130,12 +131,12 @@ async function fetchDashboardReferenceData(
 
   const result = {
     settingsRows: settingsRows ?? [],
-    businessRulesRpcResult,
+    quotas: quotas ?? [],
     membershipRows: membershipRows ?? [],
     profileRows: profileRows ?? [],
     teamRows: teamRows ?? [],
   }
-  const errors = [settingsError, businessRulesError, membershipError, profilesError, teamsError].filter(Boolean)
+  const errors = [settingsError, quotaError, membershipError, profilesError, teamsError].filter(Boolean)
   if (errors.length > 0) {
     console.error("Failed to load some role dashboard reference data", errors)
   } else {
@@ -151,7 +152,7 @@ async function fetchDashboardLeads(
   let query = getBrowserSupabaseClient()
     .from("leads_secure_view")
     .select(
-      "id, team_id, owner_id, created_by, name, customer_name, stage, follow_up_stage, customer_attribute, status, close_result, last_contact_at, next_contact_at, created_at, updated_at, customer_grade",
+      "id, team_id, owner_id, created_by, name, customer_name, stage, follow_up_stage, customer_attribute, status, close_result, last_contact_at, created_at, updated_at, customer_grade",
     )
     .neq("status", "pool")
     .limit(5000)
@@ -170,10 +171,11 @@ async function fetchLegacyRoleDashboardActivity(
   cacheKey: string | null,
 ): Promise<LegacyDashboardActivity> {
   const supabase = getBrowserSupabaseClient()
-  const now = new Date()
+  const today = crmDate()
+  const todayStart = new Date(today + "T00:00:00+08:00")
   const { rangeStart, rangeEnd, trendStart, dateLabel: autoLabel } = getDateRange(params)
   const dateLabel = params.allTime ? "全部" : autoLabel
-  const [{ settingsRows, businessRulesRpcResult, membershipRows, profileRows, teamRows }, leadRows] = await Promise.all([
+  const [{ settingsRows, quotas, membershipRows, profileRows, teamRows }, leadRows] = await Promise.all([
     fetchDashboardReferenceData(params, signal, cacheKey),
     fetchDashboardLeads(params, signal),
   ])
@@ -205,19 +207,8 @@ async function fetchLegacyRoleDashboardActivity(
     membershipsByProfile.set(profileId, list)
   }
 
-  let dangerHours = 168
-  let quotaLimit = 60
-  const businessRulesValue = (businessRulesRpcResult as any) ?? null
-  if (businessRulesValue && typeof businessRulesValue === "object") {
-    const rawDanger = (businessRulesValue as any).danger_hours
-    const rawQuota = (businessRulesValue as any).quota_limit
-    if (typeof rawDanger === "number" && Number.isFinite(rawDanger) && rawDanger > 0) {
-      dangerHours = rawDanger
-    }
-    if (typeof rawQuota === "number" && Number.isFinite(rawQuota) && rawQuota > 0) {
-      quotaLimit = rawQuota
-    }
-  }
+  const quotaLimit = 60
+  const quotaByProfile = new Map(quotas.map(({ profile_id, quota }) => [profile_id, quota]))
 
   const teamNameById = new Map<number, string>()
   for (const row of teamRows) {
@@ -259,6 +250,7 @@ async function fetchLegacyRoleDashboardActivity(
       qualifiedLeads: 0,
       wonLeads: 0,
       overdueLeads: 0,
+      quotaLimit: quotaByProfile.get(id) ?? quotaLimit,
     })
   }
 
@@ -288,6 +280,7 @@ async function fetchLegacyRoleDashboardActivity(
   const customerDetailsById = new Map<string, DashboardCustomerDetailRow>()
 
   const leadIds = leads.map((lead) => lead.id).filter(Boolean)
+  const nextActions = await fetchCrmNextActions(leads.filter((lead) => lead.status === "open").map((lead) => lead.id), signal)
   const leadById = new Map<string, LeadSecureRow>()
   for (const lead of leads) {
     leadById.set(lead.id, lead)
@@ -295,9 +288,8 @@ async function fetchLegacyRoleDashboardActivity(
 
   const addCustomerDetail = (lead: LeadSecureRow): DashboardCustomerDetailRow | null => {
     const ownerKey = getLeadOwnerKey(lead)
-    const createdAt = lead.created_at ? new Date(lead.created_at) : null
-    const nextContactAt = lead.next_contact_at ? new Date(lead.next_contact_at) : null
-    const lastContactAt = lead.last_contact_at ? new Date(lead.last_contact_at) : createdAt
+    const next = nextActions.get(lead.id)?.next_contact_at ?? null
+    const nextContactAt = next ? new Date(next) : null
     const status = lead.status ?? "open"
     const ownerName = ownerKey ? usersById.get(ownerKey)?.name ?? ownerKey.slice(0, 8) : "未分配"
     const existing = customerDetailsById.get(lead.id)
@@ -314,19 +306,13 @@ async function fetchLegacyRoleDashboardActivity(
       grade: lead.customer_grade ?? null,
       createdAt: lead.created_at ?? null,
       lastContactAt: lead.last_contact_at ?? null,
-      nextContactAt: lead.next_contact_at ?? null,
+      nextContactAt: next,
       contactActions: 0,
       visits: 0,
       followUps: 0,
       isQualified: isQualifiedLead(lead),
       isWon: isWonLead(lead),
-      isOverdue:
-        status === "open" &&
-        Boolean(
-          (nextContactAt && nextContactAt < now) ||
-            (!nextContactAt &&
-              (!lastContactAt || (now.getTime() - lastContactAt.getTime()) / (1000 * 60 * 60) >= dangerHours)),
-        ),
+      isOverdue: status === "open" && nextContactAt !== null && nextContactAt < todayStart,
     }
     customerDetailsById.set(lead.id, detail)
     return detail
@@ -337,8 +323,8 @@ async function fetchLegacyRoleDashboardActivity(
     const user = ownerKey ? usersById.get(ownerKey) : null
     const createdAt = lead.created_at ? new Date(lead.created_at) : null
     const updatedAt = lead.updated_at ? new Date(lead.updated_at) : null
-    const nextContactAt = lead.next_contact_at ? new Date(lead.next_contact_at) : null
-    const lastContactAt = lead.last_contact_at ? new Date(lead.last_contact_at) : createdAt
+    const next = nextActions.get(lead.id)?.next_contact_at ?? null
+    const nextContactAt = next ? new Date(next) : null
     const status = lead.status ?? "open"
     const followUpStage = (lead.follow_up_stage ?? "").trim()
     const isInvalid = (lead.customer_attribute ?? "") === "invalid"
@@ -400,13 +386,10 @@ async function fetchLegacyRoleDashboardActivity(
     if (status === "open" && !isInvalid && !terminal) {
       user && (user.activeLeads += 1)
       const isDueInRange = nextContactAt && nextContactAt >= rangeStart && nextContactAt < rangeEnd
-      const isNextContactOverdue = nextContactAt && nextContactAt < now
-      const isRiskByAge =
-        !nextContactAt &&
-        (!lastContactAt || (now.getTime() - lastContactAt.getTime()) / (1000 * 60 * 60) >= dangerHours)
+      const isNextContactOverdue = nextContactAt && nextContactAt < todayStart
 
       if (isDueInRange) pendingInRange += 1
-      if (isNextContactOverdue || isRiskByAge) {
+      if (isNextContactOverdue) {
         overdueLeads += 1
         user && (user.overdueLeads += 1)
       }
@@ -560,7 +543,7 @@ async function fetchLegacyRoleDashboardActivity(
       const stock =
         teamStockById.get(teamId) ??
         { activeLeads: 0, wonLeads: 0, paymentReceived: 0, stageCounts: {} as Record<string, number> }
-      const effectiveMembers = Math.max(members.length, 1)
+      const capacity = members.reduce((sum, member) => sum + (member.quotaLimit ?? quotaLimit), 0) || quotaLimit
       return {
         teamId,
         teamName: teamNameById.get(teamId) ?? `团队 ${teamId}`,
@@ -574,7 +557,8 @@ async function fetchLegacyRoleDashboardActivity(
         paymentReceived: stock.paymentReceived,
         overdueLeads: members.reduce((sum, user) => sum + user.overdueLeads, 0),
         stageCounts: stock.stageCounts,
-        quotaUsage: quotaLimit > 0 ? stock.activeLeads / (quotaLimit * effectiveMembers) : null,
+        quotaCapacity: capacity,
+        quotaUsage: stock.activeLeads / capacity,
       }
     })
     .sort((a, b) => b.wonLeads - a.wonLeads || b.activeLeads - a.activeLeads)

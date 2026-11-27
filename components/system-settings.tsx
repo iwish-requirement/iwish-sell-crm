@@ -735,12 +735,8 @@ export function SystemSettings() {
 
 // Business Rules Tab
 function BusinessRulesTab() {
-  const [preventPreviousOwnerReclaim, setPreventPreviousOwnerReclaim] = useState(false)
-  const [warningHours, setWarningHours] = useState("72")
-  const [dangerHours, setDangerHours] = useState("168")
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
-  const [roleSaveError, setRoleSaveError] = useState<RpcErrorFriendly | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [businessSubTab, setBusinessSubTab] = useState("leads")
 
@@ -751,13 +747,13 @@ function BusinessRulesTab() {
   useEffect(() => {
     let isMounted = true
 
-    async function loadBusinessRules() {
+    async function loadRenewalReminder() {
       try {
         const supabase = getBrowserSupabaseClient()
         const { data, error } = await supabase
           .from("settings")
           .select("key, value")
-          .in("key", ["pipeline.business_rules", "wecom.notifications"])
+          .eq("key", "wecom.notifications").maybeSingle()
 
 
         if (!isMounted) {
@@ -768,34 +764,15 @@ function BusinessRulesTab() {
           console.error("Failed to load business rules settings", error)
           const message = error.message ?? ""
           if (message.includes("ERR_NO_PERMISSION:settings.read")) {
-            setLoadError("当前账号无权查看业务规则配置")
+            setLoadError("当前账号无权查看合同续费提醒")
           } else {
-            setLoadError("业务规则配置加载失败，请稍后重试")
+            setLoadError("合同续费提醒加载失败，请稍后重试")
           }
           setIsLoading(false)
           return
         }
 
-        const rows = (data ?? []) as any[]
-
-        const pipelineRow = rows.find((row) => row.key === "pipeline.business_rules") as any
-        const wecomRow = rows.find((row) => row.key === "wecom.notifications") as any
-
-        const pipelineValue = (pipelineRow?.value as any) ?? null
-
-        if (pipelineValue) {
-          if (pipelineValue.warning_hours != null) {
-            setWarningHours(String(pipelineValue.warning_hours))
-          }
-          if (pipelineValue.danger_hours != null) {
-            setDangerHours(String(pipelineValue.danger_hours))
-          }
-          if (typeof pipelineValue.prevent_previous_owner_reclaim === "boolean") {
-            setPreventPreviousOwnerReclaim(pipelineValue.prevent_previous_owner_reclaim)
-          }
-        }
-
-        const wecomValue = (wecomRow?.value as any) ?? null
+        const wecomValue = data?.value
         if (wecomValue && typeof wecomValue === "object") {
           const renewalCfg = (wecomValue as any).renewal_upcoming as any
           if (renewalCfg && typeof renewalCfg === "object") {
@@ -814,13 +791,13 @@ function BusinessRulesTab() {
       } catch (error) {
         console.error("Unexpected error while loading business rules settings", error)
         if (isMounted) {
-          setLoadError("业务规则配置加载失败，请稍后重试")
+          setLoadError("合同续费提醒加载失败，请稍后重试")
           setIsLoading(false)
         }
       }
     }
 
-    loadBusinessRules()
+    loadRenewalReminder()
 
     return () => {
       isMounted = false
@@ -828,17 +805,8 @@ function BusinessRulesTab() {
   }, [])
 
   const handleSave = async () => {
-    const warnHours = Number.parseInt(warningHours, 10)
-    const dangerHoursValue = Number.parseInt(dangerHours, 10)
-    const renewalDays = Number.parseInt(renewalNotifyDaysBefore, 10)
-
-    if (
-      Number.isNaN(warnHours) ||
-      Number.isNaN(dangerHoursValue) ||
-      warnHours <= 0 ||
-      dangerHoursValue <= 0 ||
-      (renewalNotifyEnabled && (Number.isNaN(renewalDays) || renewalDays <= 0))
-    ) {
+    const renewalDays = Number(renewalNotifyDaysBefore)
+    if (renewalNotifyEnabled && (!Number.isSafeInteger(renewalDays) || renewalDays <= 0)) {
       toast.error("保存失败", { description: "请填写大于 0 的有效数字" })
       return
     }
@@ -848,47 +816,33 @@ function BusinessRulesTab() {
       const supabase = getBrowserSupabaseClient()
       const { error } = await supabase
         .from("settings")
-        .upsert(
-          [
-            {
-              key: "pipeline.business_rules",
-              value: {
-                warning_hours: warnHours,
-                danger_hours: dangerHoursValue,
-                prevent_previous_owner_reclaim: preventPreviousOwnerReclaim,
-              },
+        .upsert({
+          key: "wecom.notifications",
+          value: {
+            renewal_upcoming: {
+              enabled: renewalNotifyEnabled,
+              days_before: Number.isSafeInteger(renewalDays) && renewalDays > 0 ? renewalDays : 30,
             },
-            {
-              key: "wecom.notifications",
-              value: {
-                renewal_upcoming: {
-                  enabled: renewalNotifyEnabled,
-                  days_before: renewalDays > 0 ? renewalDays : 30,
-                },
-              },
-            },
-          ],
-          { onConflict: "key" },
-        )
-
+          },
+        }, { onConflict: "key" })
 
       if (error) {
         console.error("Failed to save business rules settings", error)
         const message = error.message ?? ""
         if (message.includes("ERR_NO_PERMISSION:settings.pipeline.manage")) {
           toast.error("保存失败", {
-            description: "当前账号无权修改业务规则，请联系系统管理员开通 settings.pipeline.manage 权限",
+            description: "当前账号无权修改合同续费提醒，请联系系统管理员开通 settings.pipeline.manage 权限",
           })
         } else {
-          toast.error("保存失败", { description: "保存业务规则配置时出错，请稍后重试" })
+          toast.error("保存失败", { description: "保存合同续费提醒时出错，请稍后重试" })
         }
         return
       }
 
-      toast.success("业务规则已保存")
+      toast.success("合同续费提醒已保存")
     } catch (error) {
       console.error("Unexpected error while saving business rules settings", error)
-      toast.error("保存失败", { description: "保存业务规则配置时发生异常，请稍后重试或联系管理员" })
+      toast.error("保存失败", { description: "保存合同续费提醒时发生异常，请稍后重试或联系管理员" })
     } finally {
       setIsSaving(false)
     }
@@ -902,10 +856,6 @@ function BusinessRulesTab() {
             <Globe className="w-4 h-4" />
             线索 &amp; 公海
           </TabsTrigger>
-          <TabsTrigger value="dashboard" className="gap-1">
-            <Eye className="w-4 h-4" />
-            仪表盘 &amp; 文案
-          </TabsTrigger>
           <TabsTrigger value="analytics" className="gap-1">
             <Database className="w-4 h-4" />
             数据统计
@@ -914,63 +864,14 @@ function BusinessRulesTab() {
 
         <TabsContent value="leads">
           <div className="space-y-6">
+            <CrmSalesSettings />
             <Card className="max-w-2xl">
               <CardHeader>
-                <CardTitle>业务规则配置</CardTitle>
-                <CardDescription>配置线索管理和跟进规则</CardDescription>
+                <CardTitle>合同续费提醒</CardTitle>
+                <CardDescription>为已签合同配置企业微信续费提醒。</CardDescription>
                 {loadError && <p className="mt-2 text-xs text-destructive/80">{loadError}</p>}
               </CardHeader>
               <CardContent className="space-y-6">
-                <div className="grid gap-6">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="space-y-1">
-                      <Label htmlFor="preventPreviousOwnerReclaim">禁止原负责人再次认领</Label>
-                      <p className="text-xs text-muted-foreground">
-                        开启后，销售退回公海的线索不能由原负责人再次认领。默认关闭。
-                      </p>
-                    </div>
-                    <Switch
-                      id="preventPreviousOwnerReclaim"
-                      checked={preventPreviousOwnerReclaim}
-                      onCheckedChange={setPreventPreviousOwnerReclaim}
-                      disabled={isLoading || isSaving}
-                    />
-                  </div>
-                  <Separator />
-                  <div className="space-y-2">
-                    <Label htmlFor="warningHours">预警阈值（黄色）</Label>
-                    <div className="flex items-center gap-2">
-                      <Input
-                        id="warningHours"
-                        type="number"
-                        value={warningHours}
-                        onChange={(e) => setWarningHours(e.target.value)}
-                        className="w-24"
-                        disabled={isLoading || isSaving}
-                      />
-                      <span className="text-sm text-muted-foreground">小时</span>
-                    </div>
-                    <p className="text-xs text-muted-foreground">超过此时间未跟进将显示黄色预警标识</p>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="dangerHours">风险阈值（红色）</Label>
-                    <div className="flex items-center gap-2">
-                      <Input
-                        id="dangerHours"
-                        type="number"
-                        value={dangerHours}
-                        onChange={(e) => setDangerHours(e.target.value)}
-                        className="w-24"
-                        disabled={isLoading || isSaving}
-                      />
-                      <span className="text-sm text-muted-foreground">小时</span>
-                    </div>
-                    <p className="text-xs text-muted-foreground">超过此时间未跟进将显示红色风险标识</p>
-                  </div>
-                </div>
-
-                <Separator />
-
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <div>
@@ -1009,23 +910,18 @@ function BusinessRulesTab() {
 
                 <Button onClick={handleSave} disabled={isSaving || isLoading}>
                   <Save className="w-4 h-4 mr-2" />
-                  {isSaving ? "保存中..." : "保存规则"}
+                  {isSaving ? "保存中..." : "保存续费提醒"}
                 </Button>
 
               </CardContent>
             </Card>
 
-            <CrmSalesSettings />
             <LeadGradesAndSourcesSettingsCard />
             <BusinessTypesSettingsCard />
 
           </div>
         </TabsContent>
 
-
-        <TabsContent value="dashboard">
-          <DashboardTextSettingsCard />
-        </TabsContent>
 
         <TabsContent value="analytics">
           <div className="space-y-6">
@@ -1041,270 +937,6 @@ function BusinessRulesTab() {
         </TabsContent>
       </Tabs>
     </div>
-  )
-}
-
-function DashboardTextSettingsCard() {
-  type DashboardStageKey = "L1" | "L2" | "L3" | "L4" | "Won"
-
-  const DASHBOARD_STAGE_KEYS: DashboardStageKey[] = ["L1", "L2", "L3", "L4", "Won"]
-
-  const DEFAULT_STAGE_CONFIG: Record<DashboardStageKey, { label: string; fullName: string }> = {
-    L1: { label: "L1 询盘", fullName: "L1 询盘" },
-    L2: { label: "L2 意向", fullName: "L2 意向" },
-    L3: { label: "L3 关键意向", fullName: "L3 关键意向" },
-    L4: { label: "L4 谈判", fullName: "L4 谈判" },
-    Won: { label: "成交", fullName: "成交客户" },
-  }
-
-  const [stageConfig, setStageConfig] = useState<Record<DashboardStageKey, { label: string; fullName: string }>>(
-    DEFAULT_STAGE_CONFIG,
-  )
-  const [welcomeTemplate, setWelcomeTemplate] = useState("欢迎回来，{fullName}。以下是您的销售概览。")
-  const [fallbackName, setFallbackName] = useState("伙伴")
-  const [isLoading, setIsLoading] = useState(true)
-  const [isSaving, setIsSaving] = useState(false)
-  const [loadError, setLoadError] = useState<string | null>(null)
-
-  useEffect(() => {
-    let isMounted = true
-
-    async function loadDashboardSettings() {
-      try {
-        setIsLoading(true)
-        const supabase = getBrowserSupabaseClient()
-        const { data, error } = await supabase
-          .from("settings")
-          .select("key, value")
-          .in("key", ["dashboard.pipeline_stages", "dashboard.welcome_template"])
-
-        if (!isMounted) return
-
-        if (error) {
-          console.error("Failed to load dashboard settings", error)
-          const message = error.message ?? ""
-          if (message.includes("ERR_NO_PERMISSION:settings.read")) {
-            setLoadError("当前账号无权查看仪表盘配置")
-          } else {
-            setLoadError("仪表盘配置加载失败，请稍后重试")
-          }
-          setIsLoading(false)
-          return
-        }
-
-        const rows = (data ?? []) as any[]
-
-        const pipelineRow = rows.find((row) => row.key === "dashboard.pipeline_stages") as any
-        const welcomeRow = rows.find((row) => row.key === "dashboard.welcome_template") as any
-
-        let nextStageConfig: Record<DashboardStageKey, { label: string; fullName: string }> = {
-          ...DEFAULT_STAGE_CONFIG,
-        }
-
-        if (pipelineRow && pipelineRow.value) {
-          const raw = pipelineRow.value as any
-          if (raw && typeof raw === "object") {
-            for (const stage of DASHBOARD_STAGE_KEYS) {
-              const cfg = raw[stage]
-              if (cfg && typeof cfg === "object") {
-                nextStageConfig[stage] = {
-                  label: (cfg.label as string) || DEFAULT_STAGE_CONFIG[stage].label,
-                  fullName: (cfg.fullName as string) || DEFAULT_STAGE_CONFIG[stage].fullName,
-                }
-              }
-            }
-          }
-        }
-
-        setStageConfig(nextStageConfig)
-
-        if (welcomeRow && welcomeRow.value) {
-          const raw = welcomeRow.value as any
-          if (raw && typeof raw === "object") {
-            if (typeof raw.template === "string" && raw.template.trim()) {
-              setWelcomeTemplate(raw.template as string)
-            }
-            if (typeof raw.fallback_name === "string" && raw.fallback_name.trim()) {
-              setFallbackName(raw.fallback_name as string)
-            }
-          }
-        }
-
-        setLoadError(null)
-        setIsLoading(false)
-      } catch (error) {
-        console.error("Unexpected error while loading dashboard settings", error)
-        if (isMounted) {
-          setLoadError("仪表盘配置加载失败，请稍后重试")
-          setIsLoading(false)
-        }
-      }
-    }
-
-    void loadDashboardSettings()
-
-    return () => {
-      isMounted = false
-    }
-  }, [])
-
-  const handleSave = async () => {
-    const trimmedTemplate = welcomeTemplate.trim() || "欢迎回来，{fullName}。以下是您的销售概览。"
-    const trimmedFallback = fallbackName.trim() || "伙伴"
-
-    try {
-      setIsSaving(true)
-      const supabase = getBrowserSupabaseClient()
-
-      const { error } = await supabase
-        .from("settings")
-        .upsert(
-          [
-            {
-              key: "dashboard.pipeline_stages",
-              value: DASHBOARD_STAGE_KEYS.reduce((acc, key) => {
-                acc[key] = {
-                  label: stageConfig[key].label || DEFAULT_STAGE_CONFIG[key].label,
-                  fullName: stageConfig[key].fullName || DEFAULT_STAGE_CONFIG[key].fullName,
-                }
-                return acc
-              }, {} as Record<DashboardStageKey, { label: string; fullName: string }>),
-            },
-            {
-              key: "dashboard.welcome_template",
-              value: {
-                template: trimmedTemplate,
-                fallback_name: trimmedFallback,
-              },
-            },
-          ],
-          { onConflict: "key" },
-        )
-
-      if (error) {
-        console.error("Failed to save dashboard settings", error)
-        const message = error.message ?? ""
-        if (
-          message.includes("ERR_NO_PERMISSION:settings.ui.manage") ||
-          message.includes("ERR_NO_PERMISSION:settings.pipeline.manage")
-        ) {
-          toast.error("保存失败", {
-            description: "当前账号无权修改仪表盘配置，请联系系统管理员开通相应设置权限",
-          })
-        } else {
-          toast.error("保存失败", { description: "保存仪表盘配置时出错，请稍后重试" })
-        }
-        return
-      }
-
-      toast.success("仪表盘配置已保存")
-    } catch (error) {
-      console.error("Unexpected error while saving dashboard settings", error)
-      toast.error("保存失败", { description: "保存仪表盘配置时发生异常，请稍后重试或联系管理员" })
-    } finally {
-      setIsSaving(false)
-    }
-  }
-
-  return (
-    <Card className="max-w-2xl">
-      <CardHeader>
-        <CardTitle>仪表盘文案配置</CardTitle>
-        <CardDescription>配置仪表盘欢迎语和各阶段文案，支持按需自定义。</CardDescription>
-        {loadError && <p className="mt-2 text-xs text-destructive/80">{loadError}</p>}
-      </CardHeader>
-      <CardContent className="space-y-6">
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="dashboardWelcomeTemplate">仪表盘欢迎语模板</Label>
-            <Textarea
-              id="dashboardWelcomeTemplate"
-              value={welcomeTemplate}
-              onChange={(e) => setWelcomeTemplate(e.target.value)}
-              disabled={isLoading || isSaving}
-              rows={3}
-            />
-            <p className="text-xs text-muted-foreground">
-              支持占位符 {"{fullName}"}，系统会自动替换为当前用户姓名或邮箱。
-            </p>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="dashboardFallbackName">未登录或无姓名时的称呼</Label>
-            <Input
-              id="dashboardFallbackName"
-              value={fallbackName}
-              onChange={(e) => setFallbackName(e.target.value)}
-              disabled={isLoading || isSaving}
-              className="max-w-xs"
-            />
-            <p className="text-xs text-muted-foreground">用于欢迎语中替代 {"{fullName}"} 的称呼，例如“伙伴”。</p>
-          </div>
-        </div>
-
-        <Separator />
-
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-sm font-medium">漏斗阶段文案</h3>
-              <p className="text-xs text-muted-foreground">
-                调整各阶段在仪表盘/看板中显示的简称和全称，建议与业务阶段保持一致。
-              </p>
-            </div>
-          </div>
-          <div className="grid gap-4">
-            {DASHBOARD_STAGE_KEYS.map((stageKey) => (
-              <div key={stageKey} className="grid grid-cols-1 sm:grid-cols-[80px,1fr,1fr] gap-3 items-start">
-                <div className="text-sm font-medium text-muted-foreground">{stageKey}</div>
-                <div className="space-y-1">
-                  <Label className="text-xs" htmlFor={`stage-label-${stageKey}`}>
-                    阶段简称
-                  </Label>
-                  <Input
-                    id={`stage-label-${stageKey}`}
-                    value={stageConfig[stageKey].label}
-                    onChange={(e) =>
-                      setStageConfig((prev) => ({
-                        ...prev,
-                        [stageKey]: {
-                          ...prev[stageKey],
-                          label: e.target.value,
-                        },
-                      }))
-                    }
-                    disabled={isLoading || isSaving}
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs" htmlFor={`stage-full-${stageKey}`}>
-                    阶段全称
-                  </Label>
-                  <Input
-                    id={`stage-full-${stageKey}`}
-                    value={stageConfig[stageKey].fullName}
-                    onChange={(e) =>
-                      setStageConfig((prev) => ({
-                        ...prev,
-                        [stageKey]: {
-                          ...prev[stageKey],
-                          fullName: e.target.value,
-                        },
-                      }))
-                    }
-                    disabled={isLoading || isSaving}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <Button onClick={handleSave} disabled={isSaving || isLoading}>
-          <Save className="w-4 h-4 mr-2" />
-          {isSaving ? "保存中..." : "保存仪表盘配置"}
-        </Button>
-      </CardContent>
-    </Card>
   )
 }
 

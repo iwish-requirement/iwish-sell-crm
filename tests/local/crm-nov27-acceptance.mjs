@@ -68,6 +68,7 @@ const browserRpc = new Set([
   "rpc_crm_visit_save", "rpc_crm_visit_invalidate", "rpc_crm_protection_configure", "rpc_crm_protection_request",
   "rpc_crm_protection_review", "rpc_crm_protection_notices", "rpc_crm_protection_notice_read",
   "rpc_crm_dashboard_monthly_revenue", "rpc_crm_analytics_exclusions", "rpc_crm_reportable_deals",
+  "rpc_crm_dashboard_next_actions", "rpc_crm_dashboard_quotas",
   "rpc_crm_operating_dashboard", "rpc_crm_operating_visit_details", "rpc_crm_visit_details", "rpc_crm_resource_details", "rpc_crm_sales_settings",
   "rpc_crm_save_visit_goal", "rpc_crm_save_lead_quota", "rpc_crm_protection_admin", "rpc_crm_restore_release",
   "rpc_crm_can_confirm_finance",

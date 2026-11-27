@@ -28,6 +28,11 @@ async function insertLead(key, assignedTo, leadTeam, name, stage, createdAt) {
 try {
   await loadAllocationFixture(db, async (filename) => {
     if (!filename.endsWith("_crm_first_release.sql")) return
+    await db.exec(
+      "update public.settings set value=value || " +
+      "'{\"warning_hours\":1,\"danger_hours\":1,\"public_pool_days\":2,\"lead_protection_days\":2,\"quota_limit\":99," +
+      "\"prevent_previous_owner_reclaim\":true,\"test_other_key\":true}'::jsonb where key='pipeline.business_rules'"
+    )
     await db.exec("insert into public.teams(id,name) values (8101,'测试团队'), (8102,'独立团队')")
     for (const [user, role, assignedTeam] of [[admin, "SuperAdmin", team], [owner, "Sales", team], [companion, "Sales", team], [outsider, "Sales", 8102]]) {
       await rows("insert into auth.users(id,email,raw_user_meta_data) values($1,$2,$3)", [
@@ -39,6 +44,7 @@ try {
     await db.exec("alter table public.leads disable trigger trg_lead_pipeline_defaults")
     await insertLead(historic, owner, team, "历史客户", "online_communication", "2026-11-01T04:00:00Z")
     await rows("update public.leads set locked_until='2026-11-02T04:00:00Z' where id=$1", [historic])
+    await rows("update public.leads set next_contact_at='2026-11-02T04:00:00Z' where id=$1", [historic])
     await rows("insert into public.lead_notes(lead_id,author_id,content,note_type) values($1,$2,'原线下拜访内容','visit')", [historic,owner])
     await db.exec("alter table public.leads enable trigger trg_lead_pipeline_defaults")
   })
@@ -46,6 +52,9 @@ try {
     follow_up_stage: "online_communication", crm_protection_review_required: true, locked_until: new Date("2026-11-02T04:00:00Z"),
   }])
   assert.equal(await value("select count(*)::integer as value from public.lead_notes where lead_id=$1 and note_type='visit'",[historic]),1)
+  assert.deepEqual(await value("select value from public.settings where key='pipeline.business_rules'"),
+    { prevent_previous_owner_reclaim: true, test_other_key: true })
+  assert.equal(await value("select is_enabled as value from public.permissions where key='leads.quota.override'"),false)
 
   const day = await value("select iwish.crm_today()::text as value")
   const tomorrow = await value("select (iwish.crm_today()+1)::text as value")
@@ -58,6 +67,9 @@ try {
   await rejects("select public.rpc_leads_export_request('public_pool','xlsx','{}')",[],"ERR_NO_PERMISSION:leads.export")
   await rejects("select public.rpc_leads_export_request(null,'xlsx','{}')",[],"ERR_NO_PERMISSION:leads.export")
   await actor(admin)
+  assert.equal((await value("select public.rpc_crm_protection_admin() as value")).preventPreviousOwnerReclaim,true)
+  assert.equal((await value("select public.rpc_crm_protection_admin(p_prevent_previous_owner_reclaim=>false) as value")).enabled,false)
+  assert.equal((await value("select public.rpc_crm_protection_admin() as value")).preventPreviousOwnerReclaim,false)
   await rejects("select public.rpc_crm_protection_configure($1,'key_intent')",[lead],"ERR_CRM_PROTECTION_CLASS")
   await actor(null)
   const originalDeadline = await value("select iwish.crm_protection_deadline(l)::text as value from public.leads l where id=$1",[lead])
@@ -72,6 +84,7 @@ try {
   )
   const report = () => value("select public.rpc_crm_operating_dashboard($1,$2,'month') as value", [day,tomorrow])
   await actor(owner)
+  await rejects("select public.rpc_crm_protection_admin(p_prevent_previous_owner_reclaim=>true)",[],"ERR_NO_PERMISSION")
   const recordContact = (note, confirmed, content) => rows(
     "select public.rpc_crm_record_contact($1,$2,'wechat',$3,$4)", [lead,note,content,confirmed],
   )
@@ -94,10 +107,14 @@ try {
   await rejects("insert into public.lead_notes(lead_id,author_id,content,note_type) values($1,$2,'新的旧备注','visit')",
     [lead,owner],"ERR_CRM_VISIT_REQUIRED")
   await save(visitA,{...data,meetingUrl:"https://example.com/meeting",missingReason:"会议没有文档"})
+  const nextActions = (keys) => rows(
+    "select lead_id,(next_contact_at at time zone 'Asia/Shanghai')::date::text as day from public.rpc_crm_dashboard_next_actions($1)",
+    [keys])
+  assert.deepEqual(await nextActions([lead,historic]),[{lead_id:lead,day:tomorrow}])
   assert.equal((await events()).find((event) => event.next_stage==="offline_visit").visit_id,visitA)
   const filePath = [lead,visitB,id(19)].join("/")
   await rows("insert into storage.objects(bucket_id,name,owner_id) values ('crm-visit-materials',$1,$2)",[filePath,owner])
-  await save(visitB,{...data,meetingUrl:"https://example.com/second",files:[{path:filePath,name:"会议文档.pdf",kind:"meeting"}]})
+  await save(visitB,{...data,nextContactOn:day,meetingUrl:"https://example.com/second",files:[{path:filePath,name:"会议文档.pdf",kind:"meeting"}]})
   const result = await value("select public.rpc_crm_lead_workflow($1) as value",[lead])
   assert.equal(result.firstVisitSatisfied,true)
   assert.equal(result.protectionClass,"key_intent")
@@ -108,6 +125,7 @@ try {
   assert.equal((await report()).people[0].accompanied,1)
   assert.equal((await value("select public.rpc_crm_visit_details($1,$2,$3) as value",[day,tomorrow,companion])).length,1)
   await actor(outsider)
+  assert.deepEqual(await nextActions([lead]),[])
   assert.equal((await report()).teamVisits,0)
   assert.deepEqual(await events(),[])
   await assert.rejects(() => recordContact(id(27),true,"越权记录"), /ERR_NO_PERMISSION/)
@@ -123,11 +141,13 @@ try {
   const dashboard = await value("select public.rpc_sales_dashboard('overview',$1::date::timestamp at time zone 'Asia/Shanghai'," +
     "$2::date::timestamp at time zone 'Asia/Shanghai',$1::date::timestamp at time zone 'Asia/Shanghai','Asia/Shanghai') as value",[day,tomorrow])
   assert.equal(dashboard.totals.visits,1)
-  assert.equal(dashboard.totals.pendingToday,0)
+  assert.equal(dashboard.totals.pendingToday,1)
+  assert.equal(dashboard.totals.overdueLeads,0)
   assert.equal(await value("select follow_up_stage as value from public.leads where id=$1",[lead]),"offline_visit")
   await rows("select public.rpc_crm_visit_invalidate($1,'重复内容')",[visitA])
   assert.equal((await report()).teamVisits,1)
   await rows("select public.rpc_crm_visit_invalidate($1,'会议无效')",[visitB])
+  assert.deepEqual(await nextActions([lead]),[])
   assert.equal((await report()).teamVisits,0)
   assert.equal((await value("select public.rpc_crm_lead_workflow($1) as value",[lead])).expiresOn,originalDeadline)
 

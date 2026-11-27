@@ -1,5 +1,32 @@
 -- Sales operating reports use the established account and team exclusions.
 
+-- Both the lead list and dashboard read the latest effective action for the current owner.
+create function public.rpc_crm_dashboard_next_actions(p_lead_ids uuid[])
+returns table(lead_id uuid,next_contact_at timestamptz,last_visit_at timestamptz)
+language sql stable security definer set search_path = '' as $$
+  select distinct on(v.lead_id) v.lead_id,(v.data->>'nextContactOn')::date::timestamp at time zone 'Asia/Shanghai',
+    case when (v.created_at at time zone 'Asia/Shanghai')::date=v.visited_on then v.created_at
+      else v.visited_on::timestamp at time zone 'Asia/Shanghai' end
+  from iwish.crm_visits v join public.leads l on l.id=v.lead_id
+  where (p_lead_ids is null or v.lead_id=any(p_lead_ids))
+    and iwish.is_active_user(auth.uid()) and v.invalidated_at is null and l.status='open'
+    and not coalesce(l.is_deleted,false) and l.customer_attribute is distinct from 'invalid'
+    and l.follow_up_stage not in ('won','payment_received') and v.owner_id=l.owner_id
+    and v.created_at>=coalesce(l.ownership_started_at,l.created_at)
+    and v.visited_on>=(coalesce(l.ownership_started_at,l.created_at) at time zone 'Asia/Shanghai')::date
+    and iwish.crm_visit_access(l.id,false)
+  order by v.lead_id,v.visited_on desc,v.created_at desc,v.id;
+$$;
+
+create or replace function public.rpc_crm_dashboard_next_actions()
+returns table(lead_id uuid,next_contact_at timestamptz,last_visit_at timestamptz)
+language sql stable security invoker set search_path = '' as $$
+  select * from public.rpc_crm_dashboard_next_actions(null::uuid[]);
+$$;
+
+revoke all on function public.rpc_crm_dashboard_next_actions(uuid[]) from public,anon,authenticated;
+grant execute on function public.rpc_crm_dashboard_next_actions(uuid[]) to authenticated;
+
 create or replace function iwish.rpc_leads_export_request(p_source text,p_format text,p_filters jsonb)
 returns uuid language plpgsql security definer set search_path = '' as $$
 declare
@@ -408,9 +435,6 @@ security invoker
 set search_path = ''
 begin atomic
 with exclusions as materialized (select * from iwish.crm_reporting_exclusions(true)),
-rules as materialized (
-  select public.rpc_get_pipeline_business_rules() as value
-),
 -- The requested dashboard mode can only narrow the data allowed by RLS.
 scope_filter as materialized (
   select case when p_scope = 'self' then auth.uid() end as owner_id,
@@ -444,10 +468,8 @@ scope_leads as materialized (
 leads as materialized (
   select l.*, not l.invalid and l.qualified_stage as qualified,
     l.status = 'open' and not l.invalid and l.stage_key not in ('won', 'payment_received') as active,
-    l.status = 'open' and coalesce(l.next_contact_at < now(),
-      l.sort_at <= now() - make_interval(hours => coalesce((r.value->>'danger_hours')::integer, 168))
-    ) as overdue
-  from scope_leads l cross join rules r
+    coalesce(l.next_contact_at < ((now() at time zone 'Asia/Shanghai')::date::timestamp at time zone 'Asia/Shanghai'),false) as overdue
+  from scope_leads l
 ),
 notes as materialized (
   select n.lead_id, n.author_id, n.created_at, btrim(n.note_type) as note_type,
